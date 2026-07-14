@@ -1,0 +1,6 @@
+/.gradle/
+/.sdk/
+/.sdk-download/
+/local.properties
+/**/build/
+*.iml
