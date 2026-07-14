@@ -7,6 +7,10 @@ plugins {
     id("com.google.dagger.hilt.android")
 }
 
+val loverApiBaseUrl = providers.gradleProperty("LOVER_API_BASE_URL")
+    .orElse(providers.environmentVariable("LOVER_API_BASE_URL"))
+    .orElse("http://10.0.2.2:4000/")
+
 android {
     namespace = "com.lover.app"
     compileSdk = 36
@@ -14,21 +18,23 @@ android {
     defaultConfig {
         applicationId = "com.lover.app"
         minSdk = 26
-        targetSdk = 35
+        targetSdk = 36
         versionCode = 1
         versionName = "1.0.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables.useSupportLibrary = true
-        buildConfigField("String", "API_BASE_URL", "\"http://10.0.2.2:4000/\"")
+        buildConfigField("String", "API_BASE_URL", "\"${loverApiBaseUrl.get()}\"")
     }
 
     buildTypes {
         debug {
             applicationIdSuffix = ".debug"
             versionNameSuffix = "-dev"
+            manifestPlaceholders["usesCleartextTraffic"] = "true"
         }
         release {
             isMinifyEnabled = false
+            manifestPlaceholders["usesCleartextTraffic"] = "false"
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
         }
     }
