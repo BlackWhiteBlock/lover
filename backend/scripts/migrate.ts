@@ -1,6 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import pg from 'pg';
+import { orderedMigrationNames } from '../src/migrations.js';
 
 const databaseUrl = process.env.DATABASE_URL ?? 'postgres://postgres:postgres@localhost:5432/lover';
 const migrationsDir = path.resolve(process.cwd(), 'db/migrations');
@@ -13,7 +14,7 @@ try {
       applied_at timestamptz not null default now()
     )
   `);
-  const files = (await fs.readdir(migrationsDir)).filter((name) => name.endsWith('.sql')).sort();
+  const files = orderedMigrationNames(await fs.readdir(migrationsDir));
   for (const name of files) {
     const applied = await pool.query(`select 1 from schema_migrations where name = $1`, [name]);
     if (applied.rowCount) continue;

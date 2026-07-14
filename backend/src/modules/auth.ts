@@ -37,7 +37,9 @@ function tokenHash(token: string) {
 export function registerAuth(app: FastifyInstance, context: AppContext) {
   const { db, config } = context;
 
-  app.post('/api/auth/sms/send', async (request) => {
+  app.post('/api/auth/sms/send', {
+    config: { rateLimit: { max: 5, timeWindow: '10 minutes' } },
+  }, async (request) => {
     const { phone } = sendSchema.parse(request.body);
     const recent = await db.query(
       `select 1 from sms_codes where phone = $1 and created_at > now() - make_interval(secs => $2) limit 1`,
@@ -60,7 +62,9 @@ export function registerAuth(app: FastifyInstance, context: AppContext) {
     };
   });
 
-  app.post('/api/auth/sms/login', async (request, reply) => {
+  app.post('/api/auth/sms/login', {
+    config: { rateLimit: { max: 10, timeWindow: '10 minutes' } },
+  }, async (request, reply) => {
     const input = loginSchema.parse(request.body);
     const matches = await db.query<{ id: string; code_hash: string }>(
       `select id, code_hash from sms_codes

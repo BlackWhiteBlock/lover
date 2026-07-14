@@ -91,14 +91,18 @@ create table media_assets (
   id uuid primary key,
   space_id uuid not null references couple_spaces(id) on delete restrict,
   owner_id uuid not null references users(id) on delete restrict,
-  provider varchar(16) not null check (provider in ('local')),
+  provider varchar(16) not null check (provider in ('local', 'qiniu')),
+  bucket varchar(128),
   object_key text not null unique check (object_key !~ '(^/|(^|/)\.\.?(/|$)|\\)'),
   mime_type varchar(100) not null,
   expected_size bigint not null check (expected_size > 0),
   size_bytes bigint,
+  object_hash text,
   status varchar(16) not null default 'pending' check (status in ('pending', 'ready', 'deleted')),
   completed_at timestamptz,
-  created_at timestamptz not null default now()
+  created_at timestamptz not null default now(),
+  constraint media_assets_qiniu_bucket_check
+    check ((provider = 'qiniu' and bucket is not null and bucket <> '') or provider = 'local')
 );
 create index media_assets_space_idx on media_assets(space_id, status);
 

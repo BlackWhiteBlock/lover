@@ -7,7 +7,11 @@ types.setTypeParser(1082, (value: string) => value);
 export type Database = ReturnType<typeof createDatabase>;
 
 export function createDatabase(config: Config) {
-  const pool = new Pool({ connectionString: config.databaseUrl });
+  const pool = new Pool({
+    connectionString: config.databaseUrl,
+    connectionTimeoutMillis: config.databaseTimeoutMs,
+    query_timeout: config.databaseTimeoutMs,
+  });
   return {
     pool,
     query<T extends QueryResultRow = QueryResultRow>(text: string, values: unknown[] = []) {

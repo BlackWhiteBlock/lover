@@ -72,7 +72,10 @@ export function registerCouples(app: FastifyInstance, context: AppContext, auth:
     return result.rows[0];
   });
 
-  app.post('/api/couple-invites', { preHandler: auth }, async (request, reply) => {
+  app.post('/api/couple-invites', {
+    preHandler: auth,
+    config: { rateLimit: { max: 10, timeWindow: '1 hour' } },
+  }, async (request, reply) => {
     const input = createInviteSchema.parse(request.body);
     const code = randomBytes(5).toString('hex').toUpperCase();
     const invite = await db.transaction(async (client) => {
@@ -114,7 +117,10 @@ export function registerCouples(app: FastifyInstance, context: AppContext, auth:
     return reply.code(201).send({ ...invite, code });
   });
 
-  app.post('/api/couple-invites/accept', { preHandler: auth }, async (request) => {
+  app.post('/api/couple-invites/accept', {
+    preHandler: auth,
+    config: { rateLimit: { max: 20, timeWindow: '1 hour' } },
+  }, async (request) => {
     const { code } = acceptSchema.parse(request.body);
     return db.transaction(async (client) => {
       const inviteResult = await client.query<{

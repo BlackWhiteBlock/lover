@@ -19,6 +19,7 @@
     "@alicloud/openapi-core": "^1.0.7",
     "@fastify/cors": "^11.3.0",
     "@fastify/multipart": "^10.1.0",
+    "@fastify/rate-limit": "^11.1.0",
     "@fastify/swagger": "^9.8.1",
     "@fastify/swagger-ui": "^6.1.0",
     "bcryptjs": "^3.0.3",
@@ -26,6 +27,7 @@
     "fastify": "^5.10.0",
     "jsonwebtoken": "^9.0.3",
     "pg": "^8.22.0",
+    "qiniu": "^7.15.2",
     "zod": "^4.4.3"
   },
   "devDependencies": {
