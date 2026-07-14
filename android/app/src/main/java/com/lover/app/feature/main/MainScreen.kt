@@ -33,7 +33,6 @@ import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -42,9 +41,7 @@ import androidx.compose.ui.window.DialogProperties
 import coil.compose.AsyncImage
 import com.lover.app.core.design.*
 import com.lover.app.core.model.*
-import com.lover.app.core.util.DateUtils
 import java.time.LocalDate
-import java.time.format.DateTimeFormatter
 
 private enum class Editor { MEDIA, ANNIVERSARY, LETTER }
 
@@ -57,7 +54,6 @@ fun MainScreen(viewModel: MainViewModel) {
     var pickedUri by remember { mutableStateOf<Uri?>(null) }
     var mediaDetail by remember { mutableStateOf<MediaItem?>(null) }
     var letterDetail by remember { mutableStateOf<Letter?>(null) }
-    val context = LocalContext.current
     val picker = rememberLauncherForActivityResult(PickVisualMedia()) { uri ->
         if (uri != null) {
             pickedUri = uri
@@ -66,6 +62,7 @@ fun MainScreen(viewModel: MainViewModel) {
     }
     val snackbar = remember { SnackbarHostState() }
 
+    LaunchedEffect(Unit) { viewModel.refresh() }
     LaunchedEffect(message) {
         message?.let {
             snackbar.showSnackbar(it)
@@ -88,7 +85,7 @@ fun MainScreen(viewModel: MainViewModel) {
                 FloatingActionButton(
                     onClick = {
                         if (target == Editor.MEDIA) {
-                            picker.launch(PickVisualMediaRequest(PickVisualMedia.ImageAndVideo))
+                            picker.launch(PickVisualMediaRequest(PickVisualMedia.ImageOnly))
                         } else editor = target
                     },
                     containerColor = Rose,
@@ -107,11 +104,11 @@ fun MainScreen(viewModel: MainViewModel) {
                     MainTab.HOME -> HomePage(
                         state,
                         onMedia = { mediaDetail = it },
-                        onCapture = { picker.launch(PickVisualMediaRequest(PickVisualMedia.ImageAndVideo)) },
+                        onCapture = { picker.launch(PickVisualMediaRequest(PickVisualMedia.ImageOnly)) },
                         onWrite = { viewModel.selectTab(MainTab.LETTERS); editor = Editor.LETTER },
                     )
                     MainTab.TIMELINE -> TimelinePage(state.media, { mediaDetail = it }) {
-                        picker.launch(PickVisualMediaRequest(PickVisualMedia.ImageAndVideo))
+                        picker.launch(PickVisualMediaRequest(PickVisualMedia.ImageOnly))
                     }
                     MainTab.ANNIVERSARY -> AnniversaryPage(state.anniversaries) {
                         editor = Editor.ANNIVERSARY
@@ -122,7 +119,9 @@ fun MainScreen(viewModel: MainViewModel) {
                     MainTab.PROFILE -> ProfilePage(
                         state = state,
                         onLogout = viewModel::logout,
-                        onUnbind = viewModel::unbind,
+                        onRequestUnbinding = viewModel::requestUnbinding,
+                        onConfirmUnbinding = viewModel::confirmUnbinding,
+                        onCancelUnbinding = viewModel::cancelUnbinding,
                     )
                 }
             }
@@ -135,8 +134,7 @@ fun MainScreen(viewModel: MainViewModel) {
             onDismiss = { editor = null; pickedUri = null },
             onSave = { caption, date ->
                 viewModel.addMedia(
-                    pickedUri.toString(),
-                    context.contentResolver.getType(pickedUri!!),
+                    pickedUri!!,
                     caption,
                     date,
                 )
@@ -225,13 +223,12 @@ private fun PageHeader(title: String, subtitle: String, action: (@Composable () 
 
 @Composable
 private fun HomePage(
-    state: LocalState,
+    state: AppState,
     onMedia: (MediaItem) -> Unit,
     onCapture: () -> Unit,
     onWrite: () -> Unit,
 ) {
-    val together = state.couple?.togetherDate?.let { runCatching { LocalDate.parse(it) }.getOrNull() }
-    val days = together?.let { DateUtils.lovingDays(it) } ?: 0
+    val days = state.lovingDays ?: 0
     LazyColumn(contentPadding = PaddingValues(bottom = 28.dp)) {
         item {
             Column(Modifier.padding(horizontal = 22.dp, vertical = 14.dp)) {
@@ -320,6 +317,13 @@ private fun TimelinePage(media: List<MediaItem>, onMedia: (MediaItem) -> Unit, o
         PageHeader("相爱时光", "Visual Memories") {
             IconButton(onClick = onAdd) { Icon(Icons.Rounded.AddCircle, "新增", tint = Rose) }
         }
+        Text(
+            "当前版本先支持图片上传；视频需要封面资产，暂不开放。",
+            style = MaterialTheme.typography.bodySmall,
+            color = Stone,
+            modifier = Modifier.padding(horizontal = 22.dp),
+        )
+        Spacer(Modifier.height(8.dp))
         if (media.isEmpty()) {
             EmptyHint("选择照片或视频，记录共同的故事", Icons.Rounded.PhotoLibrary)
         } else {
@@ -381,11 +385,7 @@ private fun AnniversaryPage(anniversaries: List<Anniversary>, onAdd: () -> Unit)
         ) {
             if (anniversaries.isEmpty()) item { EmptyHint("把重要的日子珍藏在这里", Icons.Rounded.Event) }
             items(anniversaries, key = { it.id }) { anniversary ->
-                val parsed = runCatching { LocalDate.parse(anniversary.date) }.getOrNull()
-                val countdown = parsed?.let {
-                    if (anniversary.type == AnniversaryType.YEARLY) DateUtils.yearlyCountdown(it)
-                    else DateUtils.milestoneCountdown(it)
-                }
+                val countdown = anniversary.countdown
                 Card(colors = CardDefaults.cardColors(containerColor = Color.White)) {
                     Row(Modifier.fillMaxWidth().padding(20.dp), verticalAlignment = Alignment.CenterVertically) {
                         Box(Modifier.size(64.dp).background(Blush, CircleShape), contentAlignment = Alignment.Center) {
@@ -400,8 +400,12 @@ private fun AnniversaryPage(anniversaries: List<Anniversary>, onAdd: () -> Unit)
                             )
                         }
                         Column(horizontalAlignment = Alignment.End) {
-                            Text(countdown?.toString() ?: "✓", style = MaterialTheme.typography.headlineMedium, color = Rose)
-                            Text(if (countdown == null) "已达成" else "天", color = Stone)
+                            Text(
+                                if (countdown?.reached == true) "✓" else countdown?.days?.toString() ?: "—",
+                                style = MaterialTheme.typography.headlineMedium,
+                                color = Rose,
+                            )
+                            Text(if (countdown?.reached == true) "已达成" else "天", color = Stone)
                         }
                     }
                 }
@@ -428,7 +432,7 @@ private fun LettersPage(letters: List<Letter>, onLetter: (Letter) -> Unit, onAdd
         ) {
             if (letters.isEmpty()) item { EmptyHint("给 TA 写第一封信吧", Icons.Rounded.MarkEmailUnread) }
             items(letters, key = { it.id }) { letter ->
-                val unlocked = DateUtils.isLetterUnlocked(letter.unlockDate)
+                val unlocked = letter.isUnlocked
                 Card(
                     modifier = Modifier.fillMaxWidth().clickable { onLetter(letter) },
                     colors = CardDefaults.cardColors(containerColor = if (unlocked) Color.White else Blush),
@@ -443,16 +447,17 @@ private fun LettersPage(letters: List<Letter>, onLetter: (Letter) -> Unit, onAdd
                         Column(Modifier.weight(1f).padding(start = 16.dp)) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Text(letter.title, style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
-                                Text(letter.createdDate, style = MaterialTheme.typography.labelSmall, color = Stone)
+                                Text(letter.createdAt.take(10), style = MaterialTheme.typography.labelSmall, color = Stone)
                             }
                             Spacer(Modifier.height(6.dp))
                             Text(
-                                if (unlocked) letter.content else "时间胶囊 · ${letter.unlockDate} 解锁",
+                                if (unlocked) letter.summary ?: letter.content.orEmpty()
+                                else "时间胶囊 · ${letter.unlockAt?.take(10)} 解锁",
                                 maxLines = 2,
                                 overflow = TextOverflow.Ellipsis,
                                 color = Stone,
                             )
-                            Text("来自 ${letter.sender}", style = MaterialTheme.typography.labelSmall, color = Rose)
+                            Text("来自 ${letter.senderNickname}", style = MaterialTheme.typography.labelSmall, color = Rose)
                         }
                     }
                 }
@@ -462,8 +467,17 @@ private fun LettersPage(letters: List<Letter>, onLetter: (Letter) -> Unit, onAdd
 }
 
 @Composable
-private fun ProfilePage(state: LocalState, onLogout: () -> Unit, onUnbind: () -> Unit) {
+private fun ProfilePage(
+    state: AppState,
+    onLogout: () -> Unit,
+    onRequestUnbinding: (String?) -> Unit,
+    onConfirmUnbinding: (String) -> Unit,
+    onCancelUnbinding: (String) -> Unit,
+) {
     var confirm by remember { mutableStateOf<String?>(null) }
+    var reason by rememberSaveable { mutableStateOf("") }
+    val partner = state.couple?.members?.firstOrNull { it.id != state.user?.id }
+    val pending = state.couple?.pendingUnbinding
     LazyColumn(contentPadding = PaddingValues(horizontal = 20.dp, vertical = 12.dp)) {
         item {
             PageHeader("我们的小宇宙", "Our Private World")
@@ -471,14 +485,16 @@ private fun ProfilePage(state: LocalState, onLogout: () -> Unit, onUnbind: () ->
                 Column(Modifier.padding(28.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                     Row {
                         Avatar(state.user?.nickname?.take(1) ?: "我")
-                        Avatar(state.couple?.partnerNickname?.take(1) ?: "TA", Modifier.offset(x = (-12).dp))
+                        Avatar(partner?.nickname?.take(1) ?: "TA", Modifier.offset(x = (-12).dp))
                     }
-                    Text("我们", style = MaterialTheme.typography.headlineMedium)
+                    Text(state.couple?.name ?: "我们", style = MaterialTheme.typography.headlineMedium)
                     Text(
                         "Established ${state.couple?.togetherDate?.replace('-', '.') ?: "—"}",
                         color = Stone,
                     )
-                    Text("邀请码 ${state.couple?.inviteCode}", style = MaterialTheme.typography.labelSmall, color = Rose)
+                    state.couple?.inviteCode?.let {
+                        Text("邀请码 $it", style = MaterialTheme.typography.labelSmall, color = Rose)
+                    }
                 }
             }
         }
@@ -488,18 +504,66 @@ private fun ProfilePage(state: LocalState, onLogout: () -> Unit, onUnbind: () ->
         item { SettingRow(Icons.Rounded.Info, "关于 Lover", "版本 1.0.0") }
         item {
             Spacer(Modifier.height(20.dp))
-            OutlinedButton(onClick = { confirm = "unbind" }, modifier = Modifier.fillMaxWidth()) { Text("解除情侣绑定") }
+            if (pending == null) {
+                OutlinedButton(onClick = { confirm = "request" }, modifier = Modifier.fillMaxWidth()) {
+                    Text("申请解除情侣绑定")
+                }
+            } else if (pending.requestedBy == state.user?.id) {
+                Text("解绑申请等待伴侣确认", color = Stone)
+                OutlinedButton(onClick = { confirm = "cancel" }, modifier = Modifier.fillMaxWidth()) {
+                    Text("取消解绑申请")
+                }
+            } else {
+                Text("伴侣发起了解绑申请", color = MaterialTheme.colorScheme.error)
+                Button(onClick = { confirm = "confirm" }, modifier = Modifier.fillMaxWidth()) {
+                    Text("确认解除绑定")
+                }
+                TextButton(onClick = { confirm = "cancel" }, modifier = Modifier.fillMaxWidth()) {
+                    Text("拒绝并取消申请")
+                }
+            }
             TextButton(onClick = { confirm = "logout" }, modifier = Modifier.fillMaxWidth()) { Text("退出登录") }
         }
     }
     confirm?.let { action ->
         AlertDialog(
             onDismissRequest = { confirm = null },
-            title = { Text(if (action == "unbind") "确认解绑？" else "确认退出？") },
-            text = { Text(if (action == "unbind") "本地情侣内容将清空，此操作不可撤销。" else "退出后可再次使用手机号登录。") },
+            title = {
+                Text(
+                    when (action) {
+                        "request" -> "申请解绑？"
+                        "confirm" -> "确认双方解绑？"
+                        "cancel" -> "取消解绑申请？"
+                        else -> "确认退出？"
+                    },
+                )
+            },
+            text = {
+                if (action == "request") {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text("申请提交后，需要伴侣确认才会正式解绑。")
+                        OutlinedTextField(
+                            reason,
+                            { reason = it.take(300) },
+                            label = { Text("原因（可选）") },
+                        )
+                    }
+                } else {
+                    Text(
+                        if (action == "confirm") "确认后情侣空间将解散，请谨慎操作。"
+                        else if (action == "logout") "退出后可再次使用手机号登录。"
+                        else "该待处理申请将被取消。",
+                    )
+                }
+            },
             confirmButton = {
                 TextButton(onClick = {
-                    if (action == "unbind") onUnbind() else onLogout()
+                    when (action) {
+                        "request" -> onRequestUnbinding(reason)
+                        "confirm" -> pending?.id?.let(onConfirmUnbinding)
+                        "cancel" -> pending?.id?.let(onCancelUnbinding)
+                        else -> onLogout()
+                    }
                     confirm = null
                 }) { Text("确认") }
             },
@@ -648,16 +712,16 @@ private fun MediaDetail(item: MediaItem, onDismiss: () -> Unit) {
 
 @Composable
 private fun LetterDetail(letter: Letter, onDismiss: () -> Unit) {
-    val unlocked = DateUtils.isLetterUnlocked(letter.unlockDate)
+    val unlocked = letter.isUnlocked
     AlertDialog(
         onDismissRequest = onDismiss,
         icon = { Icon(if (unlocked) Icons.Rounded.Favorite else Icons.Rounded.Lock, null, tint = Rose) },
         title = { Text(letter.title) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text(if (unlocked) letter.content else "这封时间胶囊将在 ${letter.unlockDate} 解锁。")
+                Text(if (unlocked) letter.content.orEmpty() else "这封时间胶囊将在 ${letter.unlockAt?.take(10)} 解锁。")
                 HorizontalDivider()
-                Text("${letter.sender} · ${letter.createdDate}", color = Stone)
+                Text("${letter.senderNickname} · ${letter.createdAt.take(10)}", color = Stone)
             }
         },
         confirmButton = { TextButton(onClick = onDismiss) { Text("收好") } },

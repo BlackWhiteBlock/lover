@@ -30,7 +30,7 @@ class MainActivity : ComponentActivity() {
                     val mainViewModel: MainViewModel = hiltViewModel()
                     val state by mainViewModel.data.collectAsStateWithLifecycle()
                     when {
-                        state.token == null -> {
+                        state.accessToken == null -> {
                             val authViewModel: AuthViewModel = hiltViewModel()
                             AuthScreen(authViewModel)
                         }

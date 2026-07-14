@@ -17,6 +17,4 @@ object DateUtils {
     fun milestoneCountdown(date: LocalDate, today: LocalDate = LocalDate.now()): Long? =
         if (date.isBefore(today)) null else ChronoUnit.DAYS.between(today, date)
 
-    fun isLetterUnlocked(unlockDate: String?, today: LocalDate = LocalDate.now()): Boolean =
-        unlockDate == null || !LocalDate.parse(unlockDate).isAfter(today)
 }

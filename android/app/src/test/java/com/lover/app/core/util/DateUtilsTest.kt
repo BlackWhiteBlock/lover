@@ -2,9 +2,7 @@ package com.lover.app.core.util
 
 import java.time.LocalDate
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
-import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class DateUtilsTest {
@@ -40,10 +38,4 @@ class DateUtilsTest {
         )
     }
 
-    @Test
-    fun `capsule unlocks on date`() {
-        val today = LocalDate.of(2026, 7, 14)
-        assertTrue(DateUtils.isLetterUnlocked("2026-07-14", today))
-        assertFalse(DateUtils.isLetterUnlocked("2026-07-15", today))
-    }
 }

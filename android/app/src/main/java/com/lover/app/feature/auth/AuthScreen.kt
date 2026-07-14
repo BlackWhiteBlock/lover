@@ -85,10 +85,10 @@ fun AuthScreen(viewModel: AuthViewModel) {
                     Button(
                         onClick = { viewModel.login(phone, code) },
                         modifier = Modifier.fillMaxWidth().height(52.dp),
-                        enabled = phone.isNotBlank() && code.isNotBlank(),
+                        enabled = phone.length == 11 && code.length == 6,
                     ) { Text("登录 / 注册") }
                     Text(
-                        "开发环境可直接输入验证码（例如 123456）",
+                        "请先获取验证码；开发后端会返回测试验证码",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )

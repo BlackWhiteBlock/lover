@@ -57,20 +57,20 @@ fun CoupleScreen(viewModel: CoupleViewModel) {
         Spacer(Modifier.height(24.dp))
         Card(Modifier.fillMaxWidth()) {
             Column(Modifier.padding(24.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                Text("我们在一起的日期", fontWeight = FontWeight.SemiBold)
-                OutlinedTextField(
-                    value = date,
-                    onValueChange = { date = it.take(10) },
-                    label = { Text("YYYY-MM-DD") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
-                )
                 if (mode == "create") {
+                    Text("我们在一起的日期", fontWeight = FontWeight.SemiBold)
+                    OutlinedTextField(
+                        value = date,
+                        onValueChange = { date = it.take(10) },
+                        label = { Text("YYYY-MM-DD") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
                     if (generatedCode == null) {
                         Button(
-                            onClick = viewModel::prepareInvite,
+                            onClick = { viewModel.createInvite(date) },
                             modifier = Modifier.fillMaxWidth(),
-                        ) { Text("生成邀请码") }
+                        ) { Text("创建空间并生成邀请码") }
                     } else {
                         Text("把邀请码发给 TA", color = MaterialTheme.colorScheme.onSurfaceVariant)
                         Surface(color = Blush, shape = MaterialTheme.shapes.medium, modifier = Modifier.fillMaxWidth()) {
@@ -81,12 +81,10 @@ fun CoupleScreen(viewModel: CoupleViewModel) {
                                 modifier = Modifier.padding(24.dp),
                             )
                         }
-                        Button(
-                            onClick = { viewModel.enterCreatedSpace(date) },
-                            modifier = Modifier.fillMaxWidth(),
-                        ) { Text("进入情侣空间") }
+                        Text("空间已创建，正在进入…", color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 } else {
+                    Text("接受后将使用邀请空间设置的在一起日期", color = MaterialTheme.colorScheme.onSurfaceVariant)
                     OutlinedTextField(
                         value = code,
                         onValueChange = { code = it.uppercase().take(8) },
@@ -95,8 +93,8 @@ fun CoupleScreen(viewModel: CoupleViewModel) {
                         modifier = Modifier.fillMaxWidth(),
                     )
                     Button(
-                        onClick = { viewModel.bind(code, date) },
-                        enabled = code.length >= 4,
+                        onClick = { viewModel.bind(code) },
+                        enabled = code.length >= 6,
                         modifier = Modifier.fillMaxWidth(),
                     ) { Text("确认绑定") }
                 }

@@ -4,7 +4,6 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.lover.app.core.data.AppRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
-import java.util.UUID
 import javax.inject.Inject
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -19,18 +18,14 @@ class CoupleViewModel @Inject constructor(
     private val _error = MutableStateFlow<String?>(null)
     val error = _error.asStateFlow()
 
-    fun prepareInvite() {
-        _inviteCode.value = UUID.randomUUID().toString().take(6).uppercase()
-    }
-
-    fun enterCreatedSpace(togetherDate: String) = viewModelScope.launch {
-        val code = _inviteCode.value ?: return@launch
-        runCatching { repository.createInvite(togetherDate, code) }
+    fun createInvite(togetherDate: String) = viewModelScope.launch {
+        runCatching { repository.createInvite(togetherDate) }
+            .onSuccess { _inviteCode.value = it }
             .onFailure { _error.value = it.message }
     }
 
-    fun bind(code: String, togetherDate: String) = viewModelScope.launch {
-        runCatching { repository.bindInvite(code.trim(), togetherDate) }
+    fun bind(code: String) = viewModelScope.launch {
+        runCatching { repository.acceptInvite(code.trim()) }
             .onFailure { _error.value = it.message }
     }
 }

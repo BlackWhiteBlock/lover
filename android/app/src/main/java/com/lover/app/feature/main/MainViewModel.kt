@@ -1,5 +1,6 @@
 package com.lover.app.feature.main
 
+import android.net.Uri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.lover.app.core.data.AppRepository
@@ -27,10 +28,9 @@ class MainViewModel @Inject constructor(
         _selectedTab.value = tab
     }
 
-    fun addMedia(uri: String, mimeType: String?, caption: String, date: String) = launchAction {
+    fun addMedia(uri: Uri, caption: String, date: String) = launchAction {
         LocalDate.parse(date)
-        val type = if (mimeType?.startsWith("video") == true) MediaType.VIDEO else MediaType.IMAGE
-        repository.addMedia(uri, type, caption, date)
+        repository.addImage(uri, caption, date)
     }
 
     fun addAnniversary(title: String, date: String, type: AnniversaryType) = launchAction {
@@ -44,8 +44,14 @@ class MainViewModel @Inject constructor(
         repository.addLetter(title, content, type, unlockDate)
     }
 
+    fun refresh() = viewModelScope.launch {
+        runCatching { repository.restoreSession() }
+            .onFailure { _message.value = it.message ?: "刷新失败" }
+    }
     fun logout() = launchAction { repository.logout() }
-    fun unbind() = launchAction { repository.unbind() }
+    fun requestUnbinding(reason: String?) = launchAction { repository.requestUnbinding(reason) }
+    fun confirmUnbinding(id: String) = launchAction { repository.confirmUnbinding(id) }
+    fun cancelUnbinding(id: String) = launchAction { repository.cancelUnbinding(id) }
     fun clearMessage() { _message.value = null }
 
     private fun launchAction(block: suspend () -> Unit) = viewModelScope.launch {
