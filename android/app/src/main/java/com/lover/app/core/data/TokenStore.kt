@@ -40,6 +40,9 @@ class TokenStore @Inject constructor(
                 ?.let { runCatching { json.decodeFromString<AppState>(it) }.getOrNull() }
                 ?: AppState()
         }
+        .map {
+            it.copy(sessionLoaded = true)
+        }
         .onEach {
             if (!tokensWrittenInProcess) {
                 currentAccessToken = it.accessToken

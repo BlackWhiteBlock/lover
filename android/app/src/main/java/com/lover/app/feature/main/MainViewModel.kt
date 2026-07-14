@@ -10,6 +10,7 @@ import java.time.LocalDate
 import javax.inject.Inject
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
 enum class MainTab { HOME, TIMELINE, ANNIVERSARY, LETTERS, PROFILE }
@@ -23,6 +24,19 @@ class MainViewModel @Inject constructor(
     val selectedTab = _selectedTab.asStateFlow()
     private val _message = MutableStateFlow<String?>(null)
     val message = _message.asStateFlow()
+    private val _restoreComplete = MutableStateFlow(false)
+    val restoreComplete = _restoreComplete.asStateFlow()
+
+    init {
+        viewModelScope.launch {
+            val loaded = repository.state.first { it.sessionLoaded }
+            if (loaded.accessToken != null) {
+                runCatching { repository.restoreSession() }
+                    .onFailure { _message.value = it.message ?: "刷新失败，已显示缓存" }
+            }
+            _restoreComplete.value = true
+        }
+    }
 
     fun selectTab(tab: MainTab) {
         _selectedTab.value = tab
@@ -30,7 +44,7 @@ class MainViewModel @Inject constructor(
 
     fun addMedia(uri: Uri, caption: String, date: String) = launchAction {
         LocalDate.parse(date)
-        repository.addImage(uri, caption, date)
+        repository.addMedia(uri, caption, date)
     }
 
     fun addAnniversary(title: String, date: String, type: AnniversaryType) = launchAction {

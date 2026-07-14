@@ -2,7 +2,9 @@ package com.lover.app.core.network
 
 import com.lover.app.core.model.TokenAssetResponse
 import kotlinx.serialization.json.Json
+import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
+import okhttp3.RequestBody.Companion.toRequestBody
 import okio.Buffer
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -19,8 +21,7 @@ class AssetUploaderTest {
         val request = uploader.buildRequest(
             grant(provider = "local", uploadToken = "local-storage-token"),
             "photo.jpg",
-            "image/jpeg",
-            bytes,
+            bytes.toRequestBody("image/jpeg".toMediaType()),
         )
 
         assertEquals("Bearer local-storage-token", request.header("Authorization"))
@@ -37,8 +38,7 @@ class AssetUploaderTest {
                 uploadFields = mapOf("key" to "couples/space/photo.jpg", "x:trace" to "trace-value"),
             ),
             "photo.jpg",
-            "image/jpeg",
-            bytes,
+            bytes.toRequestBody("image/jpeg".toMediaType()),
         )
         val body = body(request)
 
@@ -54,7 +54,11 @@ class AssetUploaderTest {
     @Test
     fun `unknown provider is rejected before network request`() {
         assertThrows(BackendException::class.java) {
-            uploader.buildRequest(grant(provider = "unknown"), "photo.jpg", "image/jpeg", bytes)
+            uploader.buildRequest(
+                grant(provider = "unknown"),
+                "photo.jpg",
+                bytes.toRequestBody("image/jpeg".toMediaType()),
+            )
         }
     }
 

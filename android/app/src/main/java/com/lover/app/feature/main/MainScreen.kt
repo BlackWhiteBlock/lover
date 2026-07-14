@@ -33,11 +33,16 @@ import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import androidx.media3.common.MediaItem as PlayerMediaItem
+import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.ui.PlayerView
 import coil.compose.AsyncImage
 import com.lover.app.core.design.*
 import com.lover.app.core.model.*
@@ -62,7 +67,6 @@ fun MainScreen(viewModel: MainViewModel) {
     }
     val snackbar = remember { SnackbarHostState() }
 
-    LaunchedEffect(Unit) { viewModel.refresh() }
     LaunchedEffect(message) {
         message?.let {
             snackbar.showSnackbar(it)
@@ -85,7 +89,7 @@ fun MainScreen(viewModel: MainViewModel) {
                 FloatingActionButton(
                     onClick = {
                         if (target == Editor.MEDIA) {
-                            picker.launch(PickVisualMediaRequest(PickVisualMedia.ImageOnly))
+                            picker.launch(PickVisualMediaRequest(PickVisualMedia.ImageAndVideo))
                         } else editor = target
                     },
                     containerColor = Rose,
@@ -104,11 +108,11 @@ fun MainScreen(viewModel: MainViewModel) {
                     MainTab.HOME -> HomePage(
                         state,
                         onMedia = { mediaDetail = it },
-                        onCapture = { picker.launch(PickVisualMediaRequest(PickVisualMedia.ImageOnly)) },
+                        onCapture = { picker.launch(PickVisualMediaRequest(PickVisualMedia.ImageAndVideo)) },
                         onWrite = { viewModel.selectTab(MainTab.LETTERS); editor = Editor.LETTER },
                     )
                     MainTab.TIMELINE -> TimelinePage(state.media, { mediaDetail = it }) {
-                        picker.launch(PickVisualMediaRequest(PickVisualMedia.ImageOnly))
+                        picker.launch(PickVisualMediaRequest(PickVisualMedia.ImageAndVideo))
                     }
                     MainTab.ANNIVERSARY -> AnniversaryPage(state.anniversaries) {
                         editor = Editor.ANNIVERSARY
@@ -317,13 +321,6 @@ private fun TimelinePage(media: List<MediaItem>, onMedia: (MediaItem) -> Unit, o
         PageHeader("相爱时光", "Visual Memories") {
             IconButton(onClick = onAdd) { Icon(Icons.Rounded.AddCircle, "新增", tint = Rose) }
         }
-        Text(
-            "当前版本先支持图片上传；视频需要封面资产，暂不开放。",
-            style = MaterialTheme.typography.bodySmall,
-            color = Stone,
-            modifier = Modifier.padding(horizontal = 22.dp),
-        )
-        Spacer(Modifier.height(8.dp))
         if (media.isEmpty()) {
             EmptyHint("选择照片或视频，记录共同的故事", Icons.Rounded.PhotoLibrary)
         } else {
@@ -608,12 +605,32 @@ private fun EmptyHint(text: String, icon: androidx.compose.ui.graphics.vector.Im
 private fun MediaEditor(uri: Uri, onDismiss: () -> Unit, onSave: (String, String) -> Unit) {
     var caption by rememberSaveable { mutableStateOf("") }
     var date by rememberSaveable { mutableStateOf(LocalDate.now().toString()) }
+    val context = LocalContext.current
+    val isVideo = remember(uri) { context.contentResolver.getType(uri)?.startsWith("video/") == true }
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("存下这个瞬间") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                AsyncImage(uri, null, Modifier.fillMaxWidth().height(220.dp).clip(MaterialTheme.shapes.medium), contentScale = ContentScale.Crop)
+                if (isVideo) {
+                    Box(
+                        Modifier.fillMaxWidth().height(180.dp)
+                            .clip(MaterialTheme.shapes.medium).background(Blush),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Icon(Icons.Rounded.VideoFile, null, tint = Rose, modifier = Modifier.size(54.dp))
+                            Text("已选择视频", color = Stone)
+                        }
+                    }
+                } else {
+                    AsyncImage(
+                        uri,
+                        null,
+                        Modifier.fillMaxWidth().height(220.dp).clip(MaterialTheme.shapes.medium),
+                        contentScale = ContentScale.Crop,
+                    )
+                }
                 OutlinedTextField(caption, { caption = it.take(200) }, label = { Text("这一刻想说…") }, modifier = Modifier.fillMaxWidth())
                 OutlinedTextField(date, { date = it.take(10) }, label = { Text("日期 YYYY-MM-DD") }, modifier = Modifier.fillMaxWidth())
             }
@@ -686,14 +703,42 @@ private fun LetterEditor(onDismiss: () -> Unit, onSave: (String, String, LetterT
 
 @Composable
 private fun MediaDetail(item: MediaItem, onDismiss: () -> Unit) {
+    val context = LocalContext.current
+    val player = if (item.type == MediaType.VIDEO) {
+        remember(item.url) {
+            ExoPlayer.Builder(context).build().apply {
+                setMediaItem(PlayerMediaItem.fromUri(item.url))
+                prepare()
+                playWhenReady = true
+            }
+        }
+    } else {
+        null
+    }
+    DisposableEffect(player) {
+        onDispose { player?.release() }
+    }
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         Box(Modifier.fillMaxSize().background(Color.Black)) {
-            AsyncImage(
-                item.url,
-                item.caption,
-                Modifier.fillMaxSize(),
-                contentScale = ContentScale.Fit,
-            )
+            if (player != null) {
+                AndroidView(
+                    factory = { viewContext ->
+                        PlayerView(viewContext).apply {
+                            useController = true
+                            this.player = player
+                        }
+                    },
+                    update = { it.player = player },
+                    modifier = Modifier.fillMaxSize(),
+                )
+            } else {
+                AsyncImage(
+                    item.url,
+                    item.caption,
+                    Modifier.fillMaxSize(),
+                    contentScale = ContentScale.Fit,
+                )
+            }
             IconButton(onClick = onDismiss, modifier = Modifier.align(Alignment.TopEnd).statusBarsPadding().padding(12.dp)) {
                 Icon(Icons.Rounded.Close, "关闭", tint = Color.White)
             }
@@ -704,7 +749,6 @@ private fun MediaDetail(item: MediaItem, onDismiss: () -> Unit) {
             ) {
                 Text(item.caption, color = Color.White, style = MaterialTheme.typography.titleLarge)
                 Text(item.mediaDate, color = Color.White.copy(alpha = .7f))
-                if (item.type == MediaType.VIDEO) Text("视频预览（MVP 展示封面）", color = Rose)
             }
         }
     }

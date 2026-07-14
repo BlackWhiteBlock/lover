@@ -10,11 +10,10 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
-import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.MultipartBody
 import okhttp3.OkHttpClient
 import okhttp3.Request
-import okhttp3.RequestBody.Companion.toRequestBody
+import okhttp3.RequestBody
 
 @Singleton
 class AssetUploader @Inject constructor(
@@ -24,10 +23,9 @@ class AssetUploader @Inject constructor(
     suspend fun upload(
         grant: TokenAssetResponse,
         fileName: String,
-        mimeType: String,
-        bytes: ByteArray,
+        fileBody: RequestBody,
     ) = withContext(Dispatchers.IO) {
-        val request = buildRequest(grant, fileName, mimeType, bytes)
+        val request = buildRequest(grant, fileName, fileBody)
         try {
             client.newCall(request).execute().use { response ->
                 if (!response.isSuccessful) {
@@ -48,8 +46,7 @@ class AssetUploader @Inject constructor(
     fun buildRequest(
         grant: TokenAssetResponse,
         fileName: String,
-        mimeType: String,
-        bytes: ByteArray,
+        fileBody: RequestBody,
     ): Request {
         val multipart = MultipartBody.Builder().setType(MultipartBody.FORM)
         val request = Request.Builder().url(grant.uploadUrl)
@@ -69,7 +66,7 @@ class AssetUploader @Inject constructor(
         multipart.addFormDataPart(
             "file",
             fileName,
-            bytes.toRequestBody(mimeType.toMediaType()),
+            fileBody,
         )
         return request.post(multipart.build()).build()
     }

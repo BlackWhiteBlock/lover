@@ -2,6 +2,7 @@ package com.lover.app.core.model
 
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.Transient
 
 @Serializable
 data class User(
@@ -104,6 +105,7 @@ data class AppState(
     val anniversaries: List<Anniversary> = emptyList(),
     val letters: List<Letter> = emptyList(),
     val loading: Boolean = false,
+    @Transient val sessionLoaded: Boolean = false,
 )
 
 @Serializable data class SendSmsRequest(val phone: String)

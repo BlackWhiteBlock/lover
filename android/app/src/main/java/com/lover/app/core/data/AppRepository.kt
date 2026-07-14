@@ -1,13 +1,13 @@
 package com.lover.app.core.data
 
-import android.content.Context
 import android.net.Uri
-import android.provider.OpenableColumns
+import com.lover.app.core.media.ContentMediaResolver
+import com.lover.app.core.media.ResolvedMedia
+import com.lover.app.core.media.VideoThumbnailExtractor
 import com.lover.app.core.model.*
 import com.lover.app.core.network.ApiService
 import com.lover.app.core.network.AssetUploader
 import com.lover.app.core.network.toUserFacing
-import dagger.hilt.android.qualifiers.ApplicationContext
 import java.time.LocalDate
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -16,14 +16,20 @@ import javax.inject.Singleton
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.RequestBody
+import okhttp3.RequestBody.Companion.toRequestBody
 
 @Singleton
 class AppRepository @Inject constructor(
-    @ApplicationContext private val context: Context,
     private val json: Json,
     private val api: ApiService,
     private val assetUploader: AssetUploader,
+    private val mediaResolver: ContentMediaResolver,
+    private val thumbnailExtractor: VideoThumbnailExtractor,
     private val tokenStore: TokenStore,
 ) {
     val state = tokenStore.state
@@ -119,26 +125,29 @@ class AppRepository @Inject constructor(
         }.awaitAll()
     }
 
-    suspend fun addImage(uri: Uri, caption: String, date: String) {
+    suspend fun addMedia(uri: Uri, caption: String, date: String) {
         LocalDate.parse(date)
-        val resolver = context.contentResolver
-        val mimeType = resolver.getType(uri) ?: throw IllegalArgumentException("无法识别图片类型")
-        require(mimeType in setOf("image/jpeg", "image/png", "image/webp", "image/heic")) {
-            "暂仅支持 JPEG、PNG、WebP 与 HEIC 图片"
+        val source = withContext(Dispatchers.IO) { mediaResolver.resolve(uri) }
+        val thumbnailAssetId = if (source.isVideo) {
+            val thumbnail = withContext(Dispatchers.IO) {
+                thumbnailExtractor.extract(source.uri, source.fileName)
+            }
+            uploadAsset(
+                fileName = thumbnail.fileName,
+                mimeType = "image/jpeg",
+                sizeBytes = thumbnail.bytes.size.toLong(),
+                body = thumbnail.bytes.toRequestBody("image/jpeg".toMediaType()),
+            )
+        } else {
+            null
         }
-        val bytes = resolver.openInputStream(uri)?.use { it.readBytes() }
-            ?: throw IllegalArgumentException("无法读取所选图片")
-        require(bytes.isNotEmpty()) { "图片内容为空" }
-        require(bytes.size <= 30 * 1024 * 1024) { "图片不能超过 30 MB" }
-        val fileName = queryFileName(uri) ?: "lover-${System.currentTimeMillis()}.${extension(mimeType)}"
-        val token = call { api.assetToken(TokenAssetRequest(fileName, mimeType, bytes.size.toLong())) }
-        call { assetUploader.upload(token, fileName, mimeType, bytes) }
-        call { api.completeAsset(AssetRequest(token.assetId)) }
+        val assetId = uploadAsset(source)
         call {
             api.createMedia(
                 CreateMediaRequest(
-                    type = MediaType.IMAGE,
-                    assetId = token.assetId,
+                    type = if (source.isVideo) MediaType.VIDEO else MediaType.IMAGE,
+                    assetId = assetId,
+                    thumbnailAssetId = thumbnailAssetId,
                     caption = caption.trim(),
                     mediaDate = date,
                 ),
@@ -200,19 +209,19 @@ class AppRepository @Inject constructor(
         result.getOrThrow()
     }
 
-    private fun queryFileName(uri: Uri): String? {
-        if (uri.scheme != "content") return uri.lastPathSegment
-        return context.contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)
-            ?.use { cursor ->
-                if (cursor.moveToFirst()) cursor.getString(0) else null
-            }
-    }
+    private suspend fun uploadAsset(source: ResolvedMedia): String =
+        uploadAsset(source.fileName, source.mimeType, source.sizeBytes, source.body)
 
-    private fun extension(mimeType: String) = when (mimeType) {
-        "image/png" -> "png"
-        "image/webp" -> "webp"
-        "image/heic" -> "heic"
-        else -> "jpg"
+    private suspend fun uploadAsset(
+        fileName: String,
+        mimeType: String,
+        sizeBytes: Long,
+        body: RequestBody,
+    ): String {
+        val token = call { api.assetToken(TokenAssetRequest(fileName, mimeType, sizeBytes)) }
+        call { assetUploader.upload(token, fileName, body) }
+        call { api.completeAsset(AssetRequest(token.assetId)) }
+        return token.assetId
     }
 
     private suspend fun <T> call(block: suspend () -> T): T =
