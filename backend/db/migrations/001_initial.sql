@@ -1,4 +1,5 @@
-create extension if not exists pgcrypto;
+-- UUID defaults use core gen_random_uuid() (PostgreSQL 13+).
+-- Do not require pgcrypto: Baota's packaged PostgreSQL often ships without contrib extensions.
 
 create table users (
   id uuid primary key default gen_random_uuid(),
