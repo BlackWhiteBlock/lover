@@ -42,3 +42,5 @@ cd android
 `LOVER_API_BASE_URL=https://api.example.com/` 配置 HTTPS API 地址。
 
 详细配置与安全要求见 `backend/README.md` 和 `android/README.md`。
+
+后端生产部署（与同机 Family 隔离、GitHub Actions + 宝塔）见 `docs/后端部署.md`。

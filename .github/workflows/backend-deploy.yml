@@ -1,0 +1,330 @@
+name: Backend Deploy
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'backend/**'
+      - '.github/workflows/backend-deploy.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: lover-backend-deploy-production
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    name: Validate backend
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test
+        run: npm test
+
+      - name: Build backend
+        run: npm run build
+
+  deploy:
+    name: Deploy backend
+    runs-on: ubuntu-latest
+    needs: validate
+    env:
+      # Defaults are deliberately different from the co-hosted Family service
+      # (typically /opt/family/backend, port 4000, PM2 name family-backend).
+      SSH_PORT: ${{ vars.BACKEND_DEPLOY_SSH_PORT || '22' }}
+      DEPLOY_PATH: ${{ vars.BACKEND_DEPLOY_PATH || '/opt/lover/backend' }}
+      DEPLOY_PORT: ${{ vars.BACKEND_DEPLOY_PORT || '4001' }}
+      PM2_APP_NAME: ${{ vars.BACKEND_PM2_APP_NAME || 'lover-backend' }}
+      NPM_REGISTRY: ${{ vars.BACKEND_NPM_REGISTRY || 'https://registry.npmmirror.com' }}
+      BACKEND_ENV_FILE: ${{ secrets.BACKEND_ENV_FILE }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Check deployment configuration
+        id: deployment-config
+        env:
+          DEPLOY_HOST: ${{ secrets.BACKEND_DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.BACKEND_DEPLOY_USER }}
+          DEPLOY_SSH_KEY: ${{ secrets.BACKEND_DEPLOY_SSH_KEY }}
+        run: |
+          if [ -n "$DEPLOY_HOST" ] && [ -n "$DEPLOY_USER" ] && [ -n "$DEPLOY_SSH_KEY" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::Backend deployment skipped because one or more deployment secrets are missing."
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+          fi
+          if [ -n "$BACKEND_ENV_FILE" ]; then
+            echo "has_env_seed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_env_seed=false" >> "$GITHUB_OUTPUT"
+          fi
+
+          # Refuse overlapping with the co-hosted Family deployment.
+          case "$DEPLOY_PATH" in
+            */family/*|/opt/family|/opt/family/*)
+              echo "::error::DEPLOY_PATH='$DEPLOY_PATH' overlaps Family. Use /opt/lover/backend (GitHub Variable BACKEND_DEPLOY_PATH)."
+              exit 1
+              ;;
+          esac
+          if [ "$DEPLOY_PATH" = "/opt/family/backend" ]; then
+            echo "::error::DEPLOY_PATH must not be Family's path /opt/family/backend."
+            exit 1
+          fi
+          if [ "$PM2_APP_NAME" = "family-backend" ]; then
+            echo "::error::PM2_APP_NAME must not be family-backend. Use lover-backend."
+            exit 1
+          fi
+          if [ "$DEPLOY_PORT" = "4000" ]; then
+            echo "::error::DEPLOY_PORT=4000 is reserved for Family on this host. Use 4001 (or another free port) via BACKEND_DEPLOY_PORT."
+            exit 1
+          fi
+
+          echo "Deploy path: $DEPLOY_PATH"
+          echo "Deploy port fallback: $DEPLOY_PORT"
+          echo "PM2 app name: $PM2_APP_NAME"
+
+      - name: Configure SSH
+        if: steps.deployment-config.outputs.enabled == 'true'
+        env:
+          DEPLOY_HOST: ${{ secrets.BACKEND_DEPLOY_HOST }}
+          DEPLOY_SSH_KEY: ${{ secrets.BACKEND_DEPLOY_SSH_KEY }}
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -p "$SSH_PORT" "$DEPLOY_HOST" >> ~/.ssh/known_hosts
+
+      - name: Install rsync on runner
+        if: steps.deployment-config.outputs.enabled == 'true'
+        run: |
+          if ! command -v rsync >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install -y rsync
+          fi
+
+      - name: Bootstrap server runtime
+        if: steps.deployment-config.outputs.enabled == 'true'
+        env:
+          DEPLOY_HOST: ${{ secrets.BACKEND_DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.BACKEND_DEPLOY_USER }}
+        run: |
+          ssh -i ~/.ssh/deploy_key -p "$SSH_PORT" "$DEPLOY_USER@$DEPLOY_HOST" \
+            "DEPLOY_PATH='$DEPLOY_PATH' NPM_REGISTRY='$NPM_REGISTRY' bash -s" <<'REMOTE'
+          set -euo pipefail
+
+          if [ "$(id -u)" -eq 0 ]; then
+            SUDO=""
+          else
+            if ! command -v sudo >/dev/null 2>&1; then
+              echo "sudo is required for first-time bootstrap when deploy user is not root." >&2
+              exit 1
+            fi
+            SUDO="sudo -n"
+            $SUDO true
+          fi
+
+          install_debian_packages() {
+            $SUDO apt-get update
+            $SUDO env DEBIAN_FRONTEND=noninteractive apt-get install -y curl ca-certificates gnupg rsync postgresql-client tar xz-utils
+          }
+
+          install_rhel_packages() {
+            local installer="yum"
+            if command -v dnf >/dev/null 2>&1; then
+              installer="dnf"
+            fi
+            $SUDO "$installer" install -y curl ca-certificates rsync postgresql tar xz
+          }
+
+          install_node_binary() {
+            local node_version="20.19.5"
+            local machine_arch
+            local node_arch
+            machine_arch="$(uname -m)"
+            case "$machine_arch" in
+              x86_64) node_arch="x64" ;;
+              aarch64|arm64) node_arch="arm64" ;;
+              *)
+                echo "Unsupported CPU architecture for Node.js binary install: $machine_arch" >&2
+                exit 1
+                ;;
+            esac
+
+            local node_dist="node-v${node_version}-linux-${node_arch}"
+            local node_archive="/tmp/${node_dist}.tar.xz"
+            curl -fsSL "https://nodejs.org/dist/v${node_version}/${node_dist}.tar.xz" -o "$node_archive"
+            $SUDO mkdir -p /usr/local/lib/nodejs
+            $SUDO rm -rf "/usr/local/lib/nodejs/${node_dist}"
+            $SUDO tar -xJf "$node_archive" -C /usr/local/lib/nodejs
+            $SUDO ln -sf "/usr/local/lib/nodejs/${node_dist}/bin/node" /usr/local/bin/node
+            $SUDO ln -sf "/usr/local/lib/nodejs/${node_dist}/bin/npm" /usr/local/bin/npm
+            $SUDO ln -sf "/usr/local/lib/nodejs/${node_dist}/bin/npx" /usr/local/bin/npx
+            $SUDO ln -sf "/usr/local/lib/nodejs/${node_dist}/bin/corepack" /usr/local/bin/corepack
+            rm -f "$node_archive"
+            hash -r || true
+          }
+
+          if command -v apt-get >/dev/null 2>&1; then
+            install_debian_packages
+          elif command -v yum >/dev/null 2>&1 || command -v dnf >/dev/null 2>&1; then
+            install_rhel_packages
+          else
+            echo "Unsupported Linux distribution: apt-get/yum/dnf not found." >&2
+            exit 1
+          fi
+
+          node_major="$(node -v 2>/dev/null | sed -E 's/^v([0-9]+).*/\1/' || true)"
+          if [ "${node_major:-0}" -lt 20 ]; then
+            install_node_binary
+          fi
+
+          npm config set registry "$NPM_REGISTRY"
+          npm config get registry
+
+          if ! command -v pm2 >/dev/null 2>&1; then
+            $SUDO npm install -g pm2
+          fi
+
+          # Only touch Lover directories — never /opt/family.
+          $SUDO mkdir -p "$DEPLOY_PATH/data/uploads"
+          if [ "$(id -u)" -ne 0 ]; then
+            $SUDO chown -R "$(id -un):$(id -gn)" "$(dirname "$DEPLOY_PATH")"
+          fi
+
+          node -v
+          npm -v
+          pm2 -v
+          rsync --version
+          psql --version
+          REMOTE
+
+      - name: Prepare first-deploy env seed
+        if: steps.deployment-config.outputs.enabled == 'true' && steps.deployment-config.outputs.has_env_seed == 'true'
+        run: |
+          printf '%s\n' "$BACKEND_ENV_FILE" > backend.deploy.env
+          chmod 600 backend.deploy.env
+
+      - name: Sync backend source
+        if: steps.deployment-config.outputs.enabled == 'true'
+        env:
+          DEPLOY_HOST: ${{ secrets.BACKEND_DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.BACKEND_DEPLOY_USER }}
+        run: |
+          rsync -az --delete \
+            -e "ssh -i ~/.ssh/deploy_key -p $SSH_PORT" \
+            --exclude node_modules \
+            --exclude '/dist' \
+            --exclude data/uploads \
+            --exclude .env \
+            --exclude .env.seed \
+            backend/ "$DEPLOY_USER@$DEPLOY_HOST:$DEPLOY_PATH/"
+          if [ -f backend.deploy.env ]; then
+            rsync -az \
+              -e "ssh -i ~/.ssh/deploy_key -p $SSH_PORT" \
+              backend.deploy.env "$DEPLOY_USER@$DEPLOY_HOST:$DEPLOY_PATH/.env.seed"
+          fi
+
+      - name: Install, migrate, and restart PM2 service
+        if: steps.deployment-config.outputs.enabled == 'true'
+        env:
+          DEPLOY_HOST: ${{ secrets.BACKEND_DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.BACKEND_DEPLOY_USER }}
+        run: |
+          ssh -i ~/.ssh/deploy_key -p "$SSH_PORT" "$DEPLOY_USER@$DEPLOY_HOST" \
+            "DEPLOY_PATH='$DEPLOY_PATH' DEPLOY_PORT='$DEPLOY_PORT' PM2_APP_NAME='$PM2_APP_NAME' NPM_REGISTRY='$NPM_REGISTRY' bash -s" <<'REMOTE'
+          set -euo pipefail
+          cd "$DEPLOY_PATH"
+
+          case "$DEPLOY_PATH" in
+            */family/*|/opt/family|/opt/family/*)
+              echo "Refusing to deploy into Family path: $DEPLOY_PATH" >&2
+              exit 1
+              ;;
+          esac
+          if [ "$PM2_APP_NAME" = "family-backend" ]; then
+            echo "Refusing to restart Family PM2 process." >&2
+            exit 1
+          fi
+
+          if [ ! -f .env ]; then
+            if [ -f .env.seed ]; then
+              mv .env.seed .env
+              chmod 600 .env
+              echo "Created .env from GitHub secret BACKEND_ENV_FILE (first deploy only)."
+            elif [ -f .env.example ]; then
+              cp .env.example .env
+              echo "Created .env from .env.example. Configure $DEPLOY_PATH/.env before production use." >&2
+            else
+              echo "Missing .env on server. Create $DEPLOY_PATH/.env manually." >&2
+              exit 1
+            fi
+          else
+            rm -f .env.seed
+            echo "Keeping existing server .env (not overwritten by deploy)."
+          fi
+
+          # Guard: .env PORT must not collide with Family default 4000.
+          ENV_PORT="$(grep -E '^PORT=' .env | tail -n1 | cut -d= -f2- | tr -d '[:space:]' || true)"
+          if [ "$ENV_PORT" = "4000" ]; then
+            echo "Refusing start: $DEPLOY_PATH/.env has PORT=4000 which collides with Family. Set PORT=4001 (or another free port)." >&2
+            exit 1
+          fi
+
+          npm config set registry "$NPM_REGISTRY"
+          npm config get registry
+          npm ci
+          npm run build
+
+          set -a
+          # shellcheck disable=SC1091
+          . ./.env
+          set +a
+
+          npm run db:migrate
+
+          mkdir -p data/uploads
+
+          if pm2 describe "$PM2_APP_NAME" >/dev/null 2>&1; then
+            pm2 restart "$PM2_APP_NAME" --update-env
+          else
+            # Lover compiles to dist/src/server.js (tsconfig rootDir=.).
+            pm2 start dist/src/server.js --name "$PM2_APP_NAME" --cwd "$DEPLOY_PATH" --update-env
+          fi
+          pm2 save || true
+
+          sleep 3
+          HEALTH_PORT="${PORT:-$DEPLOY_PORT}"
+          echo "Checking lover-backend health on port $HEALTH_PORT (PM2=$PM2_APP_NAME)"
+          if ! curl -fsS "http://127.0.0.1:$HEALTH_PORT/health"; then
+            echo "Health check failed. PM2 status:"
+            pm2 describe "$PM2_APP_NAME" || true
+            echo "Recent PM2 logs:"
+            pm2 logs "$PM2_APP_NAME" --lines 80 --nostream || true
+            exit 1
+          fi
+
+          # Soft check: ensure Family process still listed if it was already running.
+          if pm2 describe family-backend >/dev/null 2>&1; then
+            echo "Co-hosted family-backend is still present in PM2 (untouched)."
+          fi
+          REMOTE
