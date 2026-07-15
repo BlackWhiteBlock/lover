@@ -85,11 +85,24 @@ test('qiniu sign endpoint cannot sign an asset outside the active space', async 
       if (text.includes('from users u join auth_sessions')) {
         return {
           rowCount: 1,
-          rows: [{ id: 'user-a', phone: '13800138000', nickname: 'A', avatarUrl: null }],
+          rows: [{
+            id: 'user-a',
+            phone: '13800138000',
+            nickname: 'A',
+            avatarUrl: null,
+            gender: null,
+            birthday: null,
+            profileCompleted: true,
+            personalSpaceId: 'space-a',
+          }],
         };
       }
-      if (text.includes('from couple_members where user_id')) {
-        return { rowCount: 1, rows: [{ space_id: 'space-a' }] };
+      // writeSpaceId: unbound user → personal space
+      if (text.includes('from couple_links')) {
+        return { rowCount: 0, rows: [] };
+      }
+      if (text.includes('personal_space_id from users')) {
+        return { rowCount: 1, rows: [{ personal_space_id: 'space-a' }] };
       }
       return { rowCount: 0, rows: [] };
     },
@@ -131,11 +144,23 @@ test('qiniu complete looks up the exact asset owner and active space before stat
       if (text.includes('from users u join auth_sessions')) {
         return {
           rowCount: 1,
-          rows: [{ id: 'user-a', phone: '13800138000', nickname: 'A', avatarUrl: null }],
+          rows: [{
+            id: 'user-a',
+            phone: '13800138000',
+            nickname: 'A',
+            avatarUrl: null,
+            gender: null,
+            birthday: null,
+            profileCompleted: true,
+            personalSpaceId: 'space-a',
+          }],
         };
       }
-      if (text.includes('from couple_members where user_id')) {
-        return { rowCount: 1, rows: [{ space_id: 'space-a' }] };
+      if (text.includes('from couple_links')) {
+        return { rowCount: 0, rows: [] };
+      }
+      if (text.includes('personal_space_id from users')) {
+        return { rowCount: 1, rows: [{ personal_space_id: 'space-a' }] };
       }
       if (text.includes('from media_assets') && text.includes('owner_id = $3')) {
         assert.deepEqual(values, [assetId, 'space-a', 'user-a']);
