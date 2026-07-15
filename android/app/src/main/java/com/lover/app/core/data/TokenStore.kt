@@ -32,6 +32,7 @@ class TokenStore @Inject constructor(
     @Volatile private var currentAccessToken: String? = null
     @Volatile private var currentRefreshToken: String? = null
     @Volatile private var tokensWrittenInProcess = false
+    @Volatile private var memoryState: AppState = AppState()
 
     val state = context.sessionDataStore.data
         .catch { emit(emptyPreferences()) }
@@ -44,6 +45,7 @@ class TokenStore @Inject constructor(
             it.copy(sessionLoaded = true)
         }
         .onEach {
+            memoryState = it
             if (!tokensWrittenInProcess) {
                 currentAccessToken = it.accessToken
                 currentRefreshToken = it.refreshToken
@@ -52,17 +54,21 @@ class TokenStore @Inject constructor(
         .stateIn(scope, SharingStarted.Eagerly, AppState())
 
     val snapshot: AppState
-        get() = state.value.copy(
-            accessToken = if (tokensWrittenInProcess) currentAccessToken else currentAccessToken ?: state.value.accessToken,
-            refreshToken = if (tokensWrittenInProcess) currentRefreshToken else currentRefreshToken ?: state.value.refreshToken,
+        get() = memoryState.copy(
+            accessToken = if (tokensWrittenInProcess) currentAccessToken else currentAccessToken ?: memoryState.accessToken,
+            refreshToken = if (tokensWrittenInProcess) currentRefreshToken else currentRefreshToken ?: memoryState.refreshToken,
+            sessionLoaded = true,
         )
 
     suspend fun update(transform: (AppState) -> AppState) {
         context.sessionDataStore.edit { preferences ->
-            val current = preferences[stateKey]
+            val persisted = preferences[stateKey]
                 ?.let { runCatching { json.decodeFromString<AppState>(it) }.getOrNull() }
-                ?: AppState()
-            preferences[stateKey] = json.encodeToString(transform(current).copy(loading = false))
+            // 反序列化失败时用内存态，避免把已写入的绑定邀请冲成空 AppState
+            val current = persisted ?: memoryState
+            val next = transform(current).copy(loading = false)
+            memoryState = next.copy(sessionLoaded = true)
+            preferences[stateKey] = json.encodeToString(next)
         }
     }
 
@@ -70,13 +76,21 @@ class TokenStore @Inject constructor(
         tokensWrittenInProcess = true
         currentAccessToken = accessToken
         currentRefreshToken = refreshToken
-        update { it.copy(accessToken = accessToken, refreshToken = refreshToken) }
+        // 登录过程中先挡住主界面，等 refreshAll 完成再 sessionReady=true
+        update {
+            it.copy(
+                accessToken = accessToken,
+                refreshToken = refreshToken,
+                sessionReady = false,
+            )
+        }
     }
 
     suspend fun clearSession() {
         tokensWrittenInProcess = true
         currentAccessToken = null
         currentRefreshToken = null
+        memoryState = AppState(sessionLoaded = true)
         // 写成空状态（不只 remove），保证 StateFlow 立即发布 accessToken=null，UI 回登录页
         context.sessionDataStore.edit { preferences ->
             preferences[stateKey] = json.encodeToString(AppState())

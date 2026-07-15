@@ -57,7 +57,9 @@ class MainActivity : ComponentActivity() {
 
                     Box(Modifier.fillMaxSize()) {
                         when {
-                            !state.sessionLoaded || (state.accessToken != null && !restoreComplete) -> {
+                            // 含重新登录：sessionReady=false 时继续转圈，等绑定数据写完再进主界面
+                            !state.sessionLoaded ||
+                                (state.accessToken != null && (!restoreComplete || !state.sessionReady)) -> {
                                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                                     CircularProgressIndicator()
                                 }

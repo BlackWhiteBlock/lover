@@ -31,13 +31,20 @@ class MainViewModel @Inject constructor(
     val promptTogetherDate = _promptTogetherDate.asStateFlow()
 
     init {
+        // 登出后 Tab 立刻回到 HOME，避免再次登录时先闪「我们」再切「空间」
+        viewModelScope.launch {
+            repository.state.collect { state ->
+                if (state.accessToken == null) {
+                    _selectedTab.value = MainTab.HOME
+                }
+            }
+        }
         viewModelScope.launch {
             val loaded = repository.state.first { it.sessionLoaded }
             if (loaded.accessToken != null) {
                 runCatching { repository.restoreSession() }
                     .onFailure { error ->
                         if (error.isUnauthorized() || repository.state.value.accessToken == null) {
-                            // token 失效：清会话后回到登录页，不再提示「已显示缓存」
                             noticeStore.clear()
                         } else {
                             noticeStore.error(error.message ?: "刷新失败，已显示缓存")
@@ -50,11 +57,6 @@ class MainViewModel @Inject constructor(
 
     fun selectTab(tab: MainTab) {
         _selectedTab.value = tab
-    }
-
-    /** 重新进入主界面（登录 / 冷启动恢复）时固定落在「空间」 */
-    fun resetToHome() {
-        _selectedTab.value = MainTab.HOME
     }
 
     fun requestBind(phone: String) = launchAction("已发送绑定请求") {

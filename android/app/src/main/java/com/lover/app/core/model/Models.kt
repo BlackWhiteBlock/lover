@@ -160,12 +160,20 @@ data class AppState(
     val profileCompleted: Boolean = false,
     val linked: Boolean = false,
     val couple: CoupleSpace? = null,
+    /** 与 CoupleSpace 同步；单独存放避免嵌套反序列化丢失 */
+    val pendingIncomingBinds: List<IncomingBindRequest> = emptyList(),
+    val pendingOutgoingBind: OutgoingBindRequest? = null,
     val lovingDays: Int? = null,
     val needsTogetherDate: Boolean = false,
     val media: List<MediaItem> = emptyList(),
     val anniversaries: List<Anniversary> = emptyList(),
     val letters: List<Letter> = emptyList(),
     val loading: Boolean = false,
+    /**
+     * 登录/恢复会话完成且绑定数据已写入后才为 true。
+     * 避免 saveTokens 后立刻进主界面、绑定状态还是空的。
+     */
+    val sessionReady: Boolean = false,
     @Transient val sessionLoaded: Boolean = false,
 )
 
@@ -217,6 +225,8 @@ data class AppState(
     val id: String,
     val requesterId: String? = null,
     val targetUserId: String? = null,
+    val targetNickname: String? = null,
+    val targetPhone: String? = null,
     val status: String = "pending",
     val expiresAt: String? = null,
     val createdAt: String? = null,

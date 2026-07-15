@@ -65,21 +65,17 @@ fun MainScreen(viewModel: MainViewModel) {
     val composing = editor != null
     val mediaDetailOpen = mediaDetail != null
     val overlayOpen = composing || mediaDetailOpen
-    val incomingBind = remember(state.couple?.pendingIncomingBinds, state.linked) {
+    val incomingBind = remember(state.pendingIncomingBinds, state.couple?.pendingIncomingBinds, state.linked) {
         if (state.linked) {
             null
         } else {
-            state.couple?.pendingIncomingBinds.orEmpty().firstOrNull { it.id.isNotBlank() }
+            state.pendingIncomingBinds.firstOrNull { it.id.isNotBlank() }
+                ?: state.couple?.pendingIncomingBinds.orEmpty().firstOrNull { it.id.isNotBlank() }
         }
     }
     val showBindPrompt = incomingBind != null &&
         tab != MainTab.PROFILE &&
         incomingBind.id !in postponedBindIds
-
-    // MainViewModel 在登出后仍存活；每次重新进入主界面固定落到「空间」
-    LaunchedEffect(Unit) {
-        viewModel.resetToHome()
-    }
 
     Box(Modifier.fillMaxSize()) {
         Scaffold(
@@ -663,8 +659,11 @@ private fun ProfilePage(
     val partner = state.couple?.members?.firstOrNull { it.id != state.user?.id }
     val hasPartner = state.linked && partner != null
     val pending = state.couple?.pendingUnbinding
-    val incoming = state.couple?.pendingIncomingBinds.orEmpty()
-    val outgoing = state.couple?.pendingOutgoingBind
+    val incoming = state.pendingIncomingBinds.ifEmpty {
+        state.couple?.pendingIncomingBinds.orEmpty()
+    }
+    val outgoing = state.pendingOutgoingBind
+        ?: state.couple?.pendingOutgoingBind
 
     LaunchedEffect(hasPartner) {
         if (hasPartner) showBindSheet = false
@@ -674,7 +673,7 @@ private fun ProfilePage(
         item {
             PageHeader("我们的小宇宙", "Our Private World")
             if (!hasPartner) {
-                val invite = incoming.firstOrNull()
+                val invite = incoming.firstOrNull { it.id.isNotBlank() }
                 if (invite != null) {
                     IncomingBindCard(
                         inviterLabel = bindInviterLabel(invite.requesterNickname, invite.requesterPhone),

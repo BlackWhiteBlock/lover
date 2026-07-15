@@ -43,7 +43,11 @@ class AppRepository @Inject constructor(
         tokenStore.saveTokens(auth.accessToken, auth.refreshToken)
         try {
             applyMe(call { api.me() }, clearContent = true)
-            if (tokenStore.snapshot.profileCompleted) refreshAll()
+            if (tokenStore.snapshot.profileCompleted) {
+                refreshAll()
+            } else {
+                tokenStore.update { it.copy(sessionReady = true) }
+            }
         } catch (error: Throwable) {
             tokenStore.clearSession()
             throw error
@@ -52,8 +56,19 @@ class AppRepository @Inject constructor(
 
     suspend fun restoreSession() {
         if (tokenStore.snapshot.accessToken == null) return
-        applyMe(call { api.me() }, clearContent = false)
-        if (tokenStore.snapshot.profileCompleted) refreshAll()
+        tokenStore.update { it.copy(sessionReady = false) }
+        try {
+            applyMe(call { api.me() }, clearContent = false)
+            if (tokenStore.snapshot.profileCompleted) {
+                refreshAll()
+            } else {
+                tokenStore.update { it.copy(sessionReady = true) }
+            }
+        } catch (error: Throwable) {
+            // 失败时仍放行主界面（展示缓存），避免一直转圈
+            tokenStore.update { it.copy(sessionReady = true) }
+            throw error
+        }
     }
 
     private suspend fun applyMe(me: MeResponse, clearContent: Boolean) {
@@ -66,6 +81,8 @@ class AppRepository @Inject constructor(
                 profileCompleted = me.profileCompleted || me.user.profileCompleted,
                 linked = me.linked,
                 couple = if (clearContent || !me.profileCompleted) null else it.couple,
+                pendingIncomingBinds = if (clearContent || !me.profileCompleted) emptyList() else it.pendingIncomingBinds,
+                pendingOutgoingBind = if (clearContent || !me.profileCompleted) null else it.pendingOutgoingBind,
                 lovingDays = if (clearContent || !me.profileCompleted) null else it.lovingDays,
                 media = if (clearContent || !me.profileCompleted) emptyList() else it.media,
                 anniversaries = if (clearContent || !me.profileCompleted) emptyList() else it.anniversaries,
@@ -81,6 +98,7 @@ class AppRepository @Inject constructor(
         spaceName: String,
         avatarUri: Uri? = null,
     ) {
+        tokenStore.update { it.copy(sessionReady = false) }
         val result = call {
             api.onboarding(
                 OnboardingRequest(
@@ -102,7 +120,6 @@ class AppRepository @Inject constructor(
                 linked = false,
             )
         }
-        // 空间创建后才能上传私有媒体；有选择头像时再写入 avatar_asset_id
         var avatarError: Throwable? = null
         if (avatarUri != null) {
             runCatching {
@@ -116,7 +133,23 @@ class AppRepository @Inject constructor(
     }
 
     suspend fun requestBind(phone: String) {
-        call { api.createBind(CreateBindRequest(phone.trim())) }
+        val created = call { api.createBind(CreateBindRequest(phone.trim())) }
+        val outgoing = OutgoingBindRequest(
+            id = created.id,
+            targetUserId = created.targetUserId.orEmpty(),
+            targetNickname = created.targetNickname.orEmpty(),
+            targetPhone = created.targetPhone?.ifBlank { null } ?: phone.trim(),
+            status = created.status.ifBlank { "pending" },
+            expiresAt = created.expiresAt,
+            createdAt = created.createdAt,
+        )
+        // 先本地落出发状态，避免 refresh 慢/失败时界面回到「绑定另一半」
+        tokenStore.update {
+            it.copy(
+                pendingOutgoingBind = outgoing,
+                couple = (it.couple ?: CoupleSpace()).copy(pendingOutgoingBind = outgoing),
+            )
+        }
         refreshAll()
     }
 
@@ -133,6 +166,12 @@ class AppRepository @Inject constructor(
 
     suspend fun cancelBind(id: String) {
         call { api.cancelBind(id) }
+        tokenStore.update {
+            it.copy(
+                pendingOutgoingBind = null,
+                couple = it.couple?.copy(pendingOutgoingBind = null),
+            )
+        }
         refreshAll()
     }
 
@@ -142,40 +181,9 @@ class AppRepository @Inject constructor(
     }
 
     suspend fun refreshAll() = coroutineScope {
-        // 先拉空间与绑定状态并立刻落盘：后续媒体签名失败时也不能把邀请状态清空
         val bootstrapDeferred = async { runCatching { call { api.bootstrap() } }.getOrNull() }
         val coupleDeferred = async { runCatching { call { api.coupleSpace() } }.getOrNull() }
         val pendingDeferred = async { runCatching { call { api.pendingBinds() } }.getOrNull() }
-        val bootstrap = bootstrapDeferred.await()
-        val coupleBase = coupleDeferred.await()
-        val pending = pendingDeferred.await()
-        if (bootstrap == null && coupleBase == null && pending == null) {
-            error("刷新失败，请检查网络后重试")
-        }
-        val couple = when {
-            coupleBase != null && pending != null -> coupleBase.copy(
-                pendingIncomingBinds = pending.incoming,
-                pendingOutgoingBind = pending.outgoing.firstOrNull(),
-            )
-            coupleBase != null -> coupleBase
-            pending != null -> CoupleSpace(
-                pendingIncomingBinds = pending.incoming,
-                pendingOutgoingBind = pending.outgoing.firstOrNull(),
-            )
-            else -> tokenStore.snapshot.couple
-        }
-        tokenStore.update {
-            it.copy(
-                activeSpaceId = bootstrap?.space?.id ?: couple?.id ?: it.activeSpaceId,
-                personalSpaceId = couple?.personalSpaceId ?: it.personalSpaceId,
-                loverSpaceId = couple?.loverSpaceId ?: bootstrap?.coupleLinkId ?: it.loverSpaceId,
-                linked = bootstrap?.linked == true || couple?.linked == true,
-                couple = couple,
-                lovingDays = bootstrap?.lovingJourney?.days ?: it.lovingDays,
-                needsTogetherDate = bootstrap?.lovingJourney?.needsTogetherDate ?: it.needsTogetherDate,
-            )
-        }
-
         val mediaDeferred = async {
             runCatching { signMedia(call { api.media().items }) }.getOrDefault(emptyList())
         }
@@ -185,14 +193,62 @@ class AppRepository @Inject constructor(
         val lettersDeferred = async {
             runCatching { call { api.letters().items } }.getOrDefault(emptyList())
         }
+
+        val bootstrap = bootstrapDeferred.await()
+        val coupleBase = coupleDeferred.await()
+        val pending = pendingDeferred.await()
         val media = mediaDeferred.await()
         val anniversaries = anniversariesDeferred.await()
         val letters = lettersDeferred.await()
+
+        if (bootstrap == null && coupleBase == null && pending == null) {
+            error("刷新失败，请检查网络后重试")
+        }
+
+        // pending == null 表示接口失败，保留本地；pending != null 则以服务端为准（含空列表）
+        val previous = tokenStore.snapshot
+        val incoming = when {
+            pending != null -> pending.incoming
+            coupleBase != null -> coupleBase.pendingIncomingBinds
+            else -> previous.pendingIncomingBinds
+        }
+        val outgoing = when {
+            pending != null -> pending.outgoing.firstOrNull()
+            coupleBase?.pendingOutgoingBind != null -> coupleBase.pendingOutgoingBind
+            else -> previous.pendingOutgoingBind
+        }
+
+        val couple = when {
+            coupleBase != null -> coupleBase.copy(
+                pendingIncomingBinds = incoming,
+                pendingOutgoingBind = outgoing,
+            )
+            pending != null -> CoupleSpace(
+                pendingIncomingBinds = incoming,
+                pendingOutgoingBind = outgoing,
+            )
+            else -> previous.couple?.copy(
+                pendingIncomingBinds = incoming,
+                pendingOutgoingBind = outgoing,
+            )
+        }
+
+        // 一次原子写入：绑定状态 + 列表，避免二次 update 冲掉邀请
         tokenStore.update {
             it.copy(
+                activeSpaceId = bootstrap?.space?.id ?: couple?.id ?: it.activeSpaceId,
+                personalSpaceId = couple?.personalSpaceId ?: it.personalSpaceId,
+                loverSpaceId = couple?.loverSpaceId ?: it.loverSpaceId,
+                linked = bootstrap?.linked == true || couple?.linked == true,
+                couple = couple,
+                pendingIncomingBinds = incoming,
+                pendingOutgoingBind = outgoing,
+                lovingDays = bootstrap?.lovingJourney?.days ?: it.lovingDays,
+                needsTogetherDate = bootstrap?.lovingJourney?.needsTogetherDate ?: it.needsTogetherDate,
                 media = media,
                 anniversaries = anniversaries,
                 letters = letters,
+                sessionReady = true,
             )
         }
     }
@@ -218,9 +274,6 @@ class AppRepository @Inject constructor(
         addMediaBatch(listOf(uri), caption, date)
     }
 
-    /**
-     * Uploads all selected media, then creates **one** timeline record with ordered assets.
-     */
     suspend fun addMediaBatch(
         uris: List<Uri>,
         caption: String,
@@ -269,31 +322,22 @@ class AppRepository @Inject constructor(
         )
     }
 
+    suspend fun updateMedia(id: String, caption: String, date: String) {
+        call { api.updateMedia(id, UpdateMediaRequest(caption.trim(), date)) }
+        refreshAll()
+    }
+
+    suspend fun deleteMedia(id: String) {
+        call { api.deleteMedia(id) }
+        refreshAll()
+    }
+
     suspend fun addAnniversary(title: String, date: String, type: AnniversaryType) {
         call {
             api.createAnniversary(
                 CreateAnniversaryRequest(title.trim(), date, type),
             )
         }
-        refreshAll()
-    }
-
-    suspend fun updateMedia(id: String, caption: String, date: String) {
-        LocalDate.parse(date)
-        call {
-            api.updateMedia(
-                id,
-                UpdateMediaRequest(
-                    caption = caption.trim(),
-                    mediaDate = date,
-                ),
-            )
-        }
-        refreshAll()
-    }
-
-    suspend fun deleteMedia(id: String) {
-        call { api.deleteMedia(id) }
         refreshAll()
     }
 
@@ -307,7 +351,7 @@ class AppRepository @Inject constructor(
         val unlockAt = when {
             type != LetterType.CAPSULE -> null
             unlockOnPartnerBind -> null
-            else -> localMidnightWithOffset(requireNotNull(unlockDate))
+            else -> unlockDate?.let { localMidnightWithOffset(it) }
         }
         call {
             api.createLetter(
@@ -330,8 +374,7 @@ class AppRepository @Inject constructor(
 
     suspend fun confirmUnbinding(id: String) {
         call { api.confirmUnbinding(id) }
-        applyMe(call { api.me() }, clearContent = true)
-        if (tokenStore.snapshot.profileCompleted) refreshAll()
+        refreshAll()
     }
 
     suspend fun cancelUnbinding(id: String) {
@@ -341,7 +384,6 @@ class AppRepository @Inject constructor(
 
     suspend fun logout() {
         runCatching { call { api.logout() } }
-        // 无论服务端是否仍接受旧 token，本地都结束会话
         tokenStore.clearSession()
     }
 
@@ -374,7 +416,6 @@ class AppRepository @Inject constructor(
             block()
         } catch (error: Throwable) {
             val facing = error.toUserFacing(json)
-            // 鉴权失败：清掉本地会话，MainActivity 会切回登录页
             if (facing.isUnauthorized()) {
                 runCatching { tokenStore.clearSession() }
             }

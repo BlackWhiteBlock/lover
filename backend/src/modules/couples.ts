@@ -324,10 +324,20 @@ export function registerCouples(app: FastifyInstance, context: AppContext, auth:
         `insert into couple_bind_requests(requester_id, target_user_id, expires_at)
          values ($1, $2, now() + interval '24 hours')
          returning id, requester_id as "requesterId", target_user_id as "targetUserId",
-                   status, expires_at as "expiresAt", created_at as "createdAt"`,
+                   status,
+                   expires_at::text as "expiresAt",
+                   created_at::text as "createdAt"`,
         [request.user.id, targetUser.id],
       );
-      return reply.code(201).send(created.rows[0]);
+      const targetProfile = await db.query<{ nickname: string; phone: string }>(
+        `select nickname, phone from users where id = $1`,
+        [targetUser.id],
+      );
+      return reply.code(201).send({
+        ...created.rows[0],
+        targetNickname: targetProfile.rows[0]?.nickname ?? '',
+        targetPhone: targetProfile.rows[0]?.phone ?? phone,
+      });
     } catch (error: unknown) {
       if ((error as { code?: string }).code === '23505') {
         throw conflict('BIND_PENDING', '对方已有待处理的绑定邀请，或你已有待确认请求');
