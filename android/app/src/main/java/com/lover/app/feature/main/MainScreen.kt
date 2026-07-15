@@ -6,7 +6,12 @@ import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.SizeTransform
 import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -17,6 +22,7 @@ import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -42,7 +48,9 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.DialogProperties
 import coil.compose.AsyncImage
@@ -676,13 +684,18 @@ private fun ProfilePage(
                 val invite = incoming.firstOrNull { it.id.isNotBlank() }
                 if (invite != null) {
                     IncomingBindCard(
+                        meNickname = state.user?.nickname,
+                        meAvatarUrl = state.user?.avatarUrl,
+                        inviterNickname = invite.requesterNickname,
+                        inviterAvatarUrl = invite.requesterAvatarUrl,
                         inviterLabel = bindInviterLabel(invite.requesterNickname, invite.requesterPhone),
                         onAccept = { viewModel.acceptBind(invite.id) },
                         onReject = { viewModel.rejectBind(invite.id) },
                     )
                 } else {
                     EmptyCoupleCard(
-                        nickname = state.user?.nickname,
+                        meNickname = state.user?.nickname,
+                        meAvatarUrl = state.user?.avatarUrl,
                         outgoing = outgoing?.takeIf { it.id.isNotBlank() },
                         onBind = { showBindSheet = true },
                         onCancelOutgoing = outgoing?.id?.takeIf { it.isNotBlank() }?.let { id ->
@@ -697,12 +710,18 @@ private fun ProfilePage(
                     shape = RoundedCornerShape(32.dp),
                     elevation = CardDefaults.cardElevation(0.dp),
                 ) {
-                    Column(Modifier.padding(28.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                        Row {
-                            Avatar(state.user?.nickname?.take(1) ?: "我")
-                            Avatar(partner!!.nickname.take(1), Modifier.offset(x = (-12).dp))
-                        }
-                        Spacer(Modifier.height(8.dp))
+                    Column(
+                        Modifier.padding(28.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(12.dp),
+                    ) {
+                        CoupleBondVisual(
+                            mode = CoupleBondMode.Bound,
+                            leftNickname = state.user?.nickname ?: "我",
+                            leftAvatarUrl = state.user?.avatarUrl,
+                            rightNickname = partner!!.nickname,
+                            rightAvatarUrl = partner.avatarUrl,
+                        )
                         Text(state.couple?.name ?: "我们", style = MaterialTheme.typography.headlineMedium)
                         Text(
                             "Established ${state.couple?.togetherDate?.replace('-', '.') ?: "待设置"}",
@@ -856,7 +875,8 @@ private fun ProfilePage(
 
 @Composable
 private fun EmptyCoupleCard(
-    nickname: String?,
+    meNickname: String?,
+    meAvatarUrl: String?,
     outgoing: OutgoingBindRequest?,
     onBind: () -> Unit,
     onCancelOutgoing: (() -> Unit)?,
@@ -875,11 +895,21 @@ private fun EmptyCoupleCard(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
-            Row {
-                Avatar(nickname?.take(1) ?: "我")
-                Avatar(
-                    outgoingLabel?.take(1) ?: "?",
-                    Modifier.offset(x = (-12).dp),
+            if (outgoing != null) {
+                CoupleBondVisual(
+                    mode = CoupleBondMode.Linking,
+                    leftNickname = meNickname ?: "我",
+                    leftAvatarUrl = meAvatarUrl,
+                    rightNickname = outgoing.targetNickname.ifBlank { outgoingLabel ?: "对方" },
+                    rightAvatarUrl = outgoing.targetAvatarUrl,
+                )
+            } else {
+                CoupleBondVisual(
+                    mode = CoupleBondMode.Empty,
+                    leftNickname = meNickname ?: "我",
+                    leftAvatarUrl = meAvatarUrl,
+                    rightNickname = "?",
+                    rightAvatarUrl = null,
                 )
             }
             Text("我们的小宇宙", style = MaterialTheme.typography.headlineMedium)
@@ -888,6 +918,7 @@ private fun EmptyCoupleCard(
                     "已向 $outgoingLabel 发送绑定邀请",
                     color = Stone,
                     style = MaterialTheme.typography.bodyLarge,
+                    textAlign = TextAlign.Center,
                 )
                 Text(
                     "状态：等待对方确认",
@@ -902,6 +933,7 @@ private fun EmptyCoupleCard(
                     "现在还没有我们喔，快去绑定另一半吧",
                     color = Stone,
                     style = MaterialTheme.typography.bodyLarge,
+                    textAlign = TextAlign.Center,
                 )
                 Button(
                     onClick = onBind,
@@ -916,6 +948,10 @@ private fun EmptyCoupleCard(
 
 @Composable
 private fun IncomingBindCard(
+    meNickname: String?,
+    meAvatarUrl: String?,
+    inviterNickname: String,
+    inviterAvatarUrl: String?,
     inviterLabel: String,
     onAccept: () -> Unit,
     onReject: () -> Unit,
@@ -931,15 +967,19 @@ private fun IncomingBindCard(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
-            Row {
-                Avatar(inviterLabel.take(1))
-                Avatar("我", Modifier.offset(x = (-12).dp))
-            }
+            CoupleBondVisual(
+                mode = CoupleBondMode.Linking,
+                leftNickname = inviterNickname.ifBlank { "对方" },
+                leftAvatarUrl = inviterAvatarUrl,
+                rightNickname = meNickname ?: "我",
+                rightAvatarUrl = meAvatarUrl,
+            )
             Text("我们的小宇宙", style = MaterialTheme.typography.headlineMedium)
             Text(
                 "${inviterLabel}邀请您绑定",
                 color = Stone,
                 style = MaterialTheme.typography.bodyLarge,
+                textAlign = TextAlign.Center,
             )
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
                 OutlinedButton(
@@ -958,6 +998,208 @@ private fun IncomingBindCard(
         }
     }
 }
+
+private enum class CoupleBondMode { Empty, Linking, Bound }
+
+@Composable
+private fun CoupleBondVisual(
+    mode: CoupleBondMode,
+    leftNickname: String,
+    leftAvatarUrl: String?,
+    rightNickname: String,
+    rightAvatarUrl: String?,
+) {
+    when (mode) {
+        CoupleBondMode.Bound -> {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    PersonAvatar(nickname = leftNickname, avatarUrl = leftAvatarUrl, size = 72.dp)
+                    PersonAvatar(
+                        nickname = rightNickname,
+                        avatarUrl = rightAvatarUrl,
+                        size = 72.dp,
+                        modifier = Modifier.offset(x = (-14).dp),
+                    )
+                }
+                Spacer(Modifier.height(10.dp))
+                Text(
+                    "${displayName(leftNickname)} · ${displayName(rightNickname)}",
+                    color = Stone,
+                    style = MaterialTheme.typography.bodyMedium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
+        CoupleBondMode.Linking -> {
+            Row(
+                verticalAlignment = Alignment.Top,
+                horizontalArrangement = Arrangement.Center,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                PersonAvatarWithName(nickname = leftNickname, avatarUrl = leftAvatarUrl)
+                LinkingPulse(Modifier = Modifier.padding(top = 28.dp, start = 6.dp, end = 6.dp))
+                PersonAvatarWithName(nickname = rightNickname, avatarUrl = rightAvatarUrl)
+            }
+        }
+        CoupleBondMode.Empty -> {
+            Row(
+                verticalAlignment = Alignment.Top,
+                horizontalArrangement = Arrangement.Center,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                PersonAvatarWithName(nickname = leftNickname, avatarUrl = leftAvatarUrl)
+                Spacer(Modifier.width(18.dp))
+                PersonAvatarWithName(
+                    nickname = rightNickname,
+                    avatarUrl = null,
+                    placeholderMark = true,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun PersonAvatarWithName(
+    nickname: String,
+    avatarUrl: String?,
+    placeholderMark: Boolean = false,
+) {
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        modifier = Modifier.widthIn(max = 96.dp),
+    ) {
+        PersonAvatar(
+            nickname = nickname,
+            avatarUrl = avatarUrl,
+            size = 72.dp,
+            placeholderMark = placeholderMark,
+        )
+        Spacer(Modifier.height(8.dp))
+        Text(
+            if (placeholderMark) "待绑定" else displayName(nickname),
+            color = Stone,
+            style = MaterialTheme.typography.bodySmall,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            textAlign = TextAlign.Center,
+        )
+    }
+}
+
+@Composable
+private fun LinkingPulse(modifier: Modifier = Modifier) {
+    val transition = rememberInfiniteTransition(label = "link")
+    val travel by transition.animateFloat(
+        initialValue = 0f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(1400, easing = LinearEasing),
+            repeatMode = RepeatMode.Restart,
+        ),
+        label = "travel",
+    )
+    val glow by transition.animateFloat(
+        initialValue = 0.35f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(900, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse,
+        ),
+        label = "glow",
+    )
+    Box(
+        modifier = modifier.width(56.dp).height(20.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .height(2.dp)
+                .background(Rose.copy(alpha = 0.22f * glow), RoundedCornerShape(2.dp)),
+        )
+        Row(
+            Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            repeat(3) { index ->
+                val phase = ((travel + index / 3f) % 1f)
+                val alpha = (1f - kotlin.math.abs(phase - 0.5f) * 2f).coerceIn(0.2f, 1f)
+                Box(
+                    Modifier
+                        .size(6.dp)
+                        .graphicsLayer { this.alpha = alpha * glow }
+                        .background(Rose, CircleShape),
+                )
+            }
+        }
+        Icon(
+            Icons.Rounded.Favorite,
+            contentDescription = null,
+            tint = Rose.copy(alpha = 0.55f + 0.35f * glow),
+            modifier = Modifier
+                .size(14.dp)
+                .graphicsLayer {
+                    translationX = (travel - 0.5f) * 36f
+                    scaleX = 0.85f + 0.2f * glow
+                    scaleY = 0.85f + 0.2f * glow
+                },
+        )
+    }
+}
+
+@Composable
+private fun PersonAvatar(
+    nickname: String,
+    avatarUrl: String?,
+    size: Dp = 72.dp,
+    placeholderMark: Boolean = false,
+    modifier: Modifier = Modifier,
+) {
+    val initial = displayName(nickname).take(1).ifBlank { "我" }
+    Box(
+        modifier
+            .size(size)
+            .background(Color.White, CircleShape)
+            .border(2.dp, Color.White, CircleShape)
+            .padding(3.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Box(
+            Modifier
+                .fillMaxSize()
+                .clip(CircleShape)
+                .background(if (placeholderMark) Blush else Rose.copy(alpha = 0.9f)),
+            contentAlignment = Alignment.Center,
+        ) {
+            when {
+                !avatarUrl.isNullOrBlank() -> {
+                    AsyncImage(
+                        model = avatarUrl,
+                        contentDescription = nickname,
+                        modifier = Modifier.fillMaxSize(),
+                        contentScale = ContentScale.Crop,
+                    )
+                }
+                placeholderMark -> {
+                    Text("?", color = Rose, style = MaterialTheme.typography.headlineMedium)
+                }
+                else -> {
+                    Text(
+                        initial,
+                        color = Color.White,
+                        style = MaterialTheme.typography.headlineMedium,
+                    )
+                }
+            }
+        }
+    }
+}
+
+private fun displayName(nickname: String): String =
+    nickname.trim().ifBlank { "我" }.take(12)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -994,26 +1236,6 @@ private fun PhoneBindSheet(
                 shape = RoundedCornerShape(22.dp),
                 colors = ButtonDefaults.buttonColors(containerColor = Rose),
             ) { Text("发送绑定请求") }
-        }
-    }
-}
-
-@Composable
-private fun Avatar(label: String, modifier: Modifier = Modifier) {
-    Box(
-        modifier
-            .size(72.dp)
-            .background(Color.White, CircleShape)
-            .padding(3.dp),
-        contentAlignment = Alignment.Center,
-    ) {
-        Box(
-            Modifier
-                .fillMaxSize()
-                .background(Rose.copy(alpha = 0.9f), CircleShape),
-            contentAlignment = Alignment.Center,
-        ) {
-            Text(label, color = Color.White, style = MaterialTheme.typography.headlineMedium)
         }
     }
 }

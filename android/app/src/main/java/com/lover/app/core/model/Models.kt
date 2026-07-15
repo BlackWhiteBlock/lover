@@ -227,6 +227,7 @@ data class AppState(
     val targetUserId: String? = null,
     val targetNickname: String? = null,
     val targetPhone: String? = null,
+    val targetAvatarUrl: String? = null,
     val status: String = "pending",
     val expiresAt: String? = null,
     val createdAt: String? = null,

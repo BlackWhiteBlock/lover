@@ -329,14 +329,24 @@ export function registerCouples(app: FastifyInstance, context: AppContext, auth:
                    created_at::text as "createdAt"`,
         [request.user.id, targetUser.id],
       );
-      const targetProfile = await db.query<{ nickname: string; phone: string }>(
-        `select nickname, phone from users where id = $1`,
+      const targetProfile = await db.query<{
+        nickname: string; phone: string; avatarUrl: string | null; avatarAssetId: string | null;
+      }>(
+        `select nickname, phone, avatar_url as "avatarUrl", avatar_asset_id as "avatarAssetId"
+         from users where id = $1`,
         [targetUser.id],
+      );
+      const profile = targetProfile.rows[0];
+      const targetAvatarUrl = await presentUserAvatar(
+        context,
+        { avatarUrl: profile?.avatarUrl, avatarAssetId: profile?.avatarAssetId },
+        request.user.id,
       );
       return reply.code(201).send({
         ...created.rows[0],
-        targetNickname: targetProfile.rows[0]?.nickname ?? '',
-        targetPhone: targetProfile.rows[0]?.phone ?? phone,
+        targetNickname: profile?.nickname ?? '',
+        targetPhone: profile?.phone ?? phone,
+        targetAvatarUrl,
       });
     } catch (error: unknown) {
       if ((error as { code?: string }).code === '23505') {
@@ -355,30 +365,62 @@ export function registerCouples(app: FastifyInstance, context: AppContext, auth:
       [request.user.id],
     );
     const [incoming, outgoing] = await Promise.all([
-      db.query(
+      db.query<{
+        id: string; requesterId: string; status: string; expiresAt: string; createdAt: string;
+        requesterNickname: string; requesterPhone: string;
+        requesterAvatarUrl: string | null; requesterAvatarAssetId: string | null;
+      }>(
         `select r.id, r.requester_id as "requesterId", r.status,
                 r.expires_at::text as "expiresAt",
                 r.created_at::text as "createdAt",
                 u.nickname as "requesterNickname", u.phone as "requesterPhone",
-                u.avatar_url as "requesterAvatarUrl"
+                u.avatar_url as "requesterAvatarUrl",
+                u.avatar_asset_id as "requesterAvatarAssetId"
          from couple_bind_requests r join users u on u.id = r.requester_id
          where r.target_user_id = $1 and r.status = 'pending' and r.expires_at > now()
          order by r.created_at desc`,
         [request.user.id],
       ),
-      db.query(
+      db.query<{
+        id: string; targetUserId: string; status: string; expiresAt: string; createdAt: string;
+        targetNickname: string; targetPhone: string;
+        targetAvatarUrl: string | null; targetAvatarAssetId: string | null;
+      }>(
         `select r.id, r.target_user_id as "targetUserId", r.status,
                 r.expires_at::text as "expiresAt",
                 r.created_at::text as "createdAt",
                 u.nickname as "targetNickname", u.phone as "targetPhone",
-                u.avatar_url as "targetAvatarUrl"
+                u.avatar_url as "targetAvatarUrl",
+                u.avatar_asset_id as "targetAvatarAssetId"
          from couple_bind_requests r join users u on u.id = r.target_user_id
          where r.requester_id = $1 and r.status = 'pending' and r.expires_at > now()
          order by r.created_at desc`,
         [request.user.id],
       ),
     ]);
-    return { incoming: incoming.rows, outgoing: outgoing.rows };
+    const incomingCards = await Promise.all(
+      incoming.rows.map(async (row) => {
+        const requesterAvatarUrl = await presentUserAvatar(
+          context,
+          { avatarUrl: row.requesterAvatarUrl, avatarAssetId: row.requesterAvatarAssetId },
+          request.user.id,
+        );
+        const { requesterAvatarAssetId: _a, ...rest } = row;
+        return { ...rest, requesterAvatarUrl };
+      }),
+    );
+    const outgoingCards = await Promise.all(
+      outgoing.rows.map(async (row) => {
+        const targetAvatarUrl = await presentUserAvatar(
+          context,
+          { avatarUrl: row.targetAvatarUrl, avatarAssetId: row.targetAvatarAssetId },
+          request.user.id,
+        );
+        const { targetAvatarAssetId: _a, ...rest } = row;
+        return { ...rest, targetAvatarUrl };
+      }),
+    );
+    return { incoming: incomingCards, outgoing: outgoingCards };
   });
 
   app.post('/api/couple-binds/:id/accept', { preHandler: auth }, async (request) => {

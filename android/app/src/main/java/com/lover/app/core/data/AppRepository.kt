@@ -139,6 +139,7 @@ class AppRepository @Inject constructor(
             targetUserId = created.targetUserId.orEmpty(),
             targetNickname = created.targetNickname.orEmpty(),
             targetPhone = created.targetPhone?.ifBlank { null } ?: phone.trim(),
+            targetAvatarUrl = created.targetAvatarUrl,
             status = created.status.ifBlank { "pending" },
             expiresAt = created.expiresAt,
             createdAt = created.createdAt,
