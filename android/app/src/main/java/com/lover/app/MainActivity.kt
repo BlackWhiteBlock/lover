@@ -46,7 +46,7 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         setContent {
             LoverTheme {
-                Surface(modifier.fillMaxSize()) {
+                Surface(Modifier.fillMaxSize()) {
                     val mainViewModel: MainViewModel = hiltViewModel()
                     val state by mainViewModel.data.collectAsStateWithLifecycle()
                     val restoreComplete by mainViewModel.restoreComplete.collectAsStateWithLifecycle()
