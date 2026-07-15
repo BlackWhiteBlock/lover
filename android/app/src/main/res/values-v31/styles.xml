@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- API 31+ 额外关掉品牌图，避免系统启动图出现桌面图标 -->
+    <style name="Theme.Lover.Splash" parent="Theme.SplashScreen">
+        <item name="windowSplashScreenBackground">#FFFCFB</item>
+        <item name="windowSplashScreenAnimatedIcon">@drawable/splash_empty_icon</item>
+        <item name="windowSplashScreenIconBackgroundColor">@android:color/transparent</item>
+        <item name="android:windowSplashScreenAnimatedIcon">@drawable/splash_empty_icon</item>
+        <item name="android:windowSplashScreenBackground">#FFFCFB</item>
+        <item name="android:windowSplashScreenBrandingImage">@null</item>
+        <item name="postSplashScreenTheme">@style/Theme.Lover</item>
+    </style>
+</resources>

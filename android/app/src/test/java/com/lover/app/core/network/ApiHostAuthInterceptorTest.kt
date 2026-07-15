@@ -24,6 +24,18 @@ class ApiHostAuthInterceptorTest {
     }
 
     @Test
+    fun `stale authorization header is replaced with latest access token`() {
+        val secured = interceptor.secureRequest(
+            Request.Builder()
+                .url("https://api.lover.example/api/me")
+                .header("Authorization", "Bearer expired-token")
+                .build(),
+        )
+
+        assertEquals("Bearer lover-access-token", secured.header("Authorization"))
+    }
+
+    @Test
     fun `third party upload never receives authorization`() {
         val external = Request.Builder()
             .url("https://upload.qiniup.com/")

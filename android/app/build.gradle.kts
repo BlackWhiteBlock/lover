@@ -11,6 +11,15 @@ val loverApiBaseUrl = providers.gradleProperty("LOVER_API_BASE_URL")
     .orElse(providers.environmentVariable("LOVER_API_BASE_URL"))
     .orElse("http://10.0.2.2:4000/")
 
+val loverInviteBaseUrl = providers.gradleProperty("LOVER_INVITE_BASE_URL")
+    .orElse(providers.environmentVariable("LOVER_INVITE_BASE_URL"))
+    .orElse(loverApiBaseUrl)
+
+val inviteBase = loverInviteBaseUrl.get().trimEnd('/')
+val inviteUri = java.net.URI(inviteBase)
+val inviteHost = inviteUri.host ?: "localhost"
+val inviteHttpsScheme = inviteUri.scheme ?: "https"
+
 android {
     namespace = "com.lover.app"
     compileSdk = 36
@@ -24,6 +33,9 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables.useSupportLibrary = true
         buildConfigField("String", "API_BASE_URL", "\"${loverApiBaseUrl.get()}\"")
+        buildConfigField("String", "INVITE_BASE_URL", "\"$inviteBase/\"")
+        manifestPlaceholders["inviteHost"] = inviteHost
+        manifestPlaceholders["inviteHttpsScheme"] = inviteHttpsScheme
     }
 
     buildTypes {
@@ -54,6 +66,7 @@ android {
 dependencies {
     implementation(platform("androidx.compose:compose-bom:2025.03.01"))
     implementation("androidx.activity:activity-compose:1.10.1")
+    implementation("androidx.core:core-splashscreen:1.0.1")
     implementation("androidx.compose.material3:material3")
     implementation("androidx.compose.material:material-icons-extended")
     implementation("androidx.compose.foundation:foundation")

@@ -1,9 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <!-- Android 12+ 系统启动窗：仅暖白底，不显示图标，无缝衔接到 Compose 动画 -->
+    <style name="Theme.Lover.Splash" parent="Theme.SplashScreen">
+        <item name="windowSplashScreenBackground">#FFFCFB</item>
+        <item name="windowSplashScreenAnimatedIcon">@drawable/splash_empty_icon</item>
+        <item name="windowSplashScreenIconBackgroundColor">@android:color/transparent</item>
+        <item name="postSplashScreenTheme">@style/Theme.Lover</item>
+    </style>
+
     <style name="Theme.Lover" parent="android:style/Theme.Material.Light.NoActionBar">
         <item name="android:fontFamily">sans</item>
         <item name="android:windowLightStatusBar">true</item>
         <item name="android:statusBarColor">#FFFCFB</item>
         <item name="android:navigationBarColor">#FFFCFB</item>
+        <item name="android:windowBackground">#FFFCFB</item>
         <item name="android:windowActionModeOverlay">true</item>
     </style>
 </resources>

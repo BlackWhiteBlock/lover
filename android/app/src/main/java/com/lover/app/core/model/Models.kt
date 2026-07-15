@@ -154,6 +154,7 @@ data class AppState(
     val spaceId: String,
     val expiresAt: String,
     val code: String,
+    val inviteUrl: String? = null,
 )
 @Serializable data class AcceptInviteRequest(val code: String)
 @Serializable data class AcceptInviteResponse(val spaceId: String)

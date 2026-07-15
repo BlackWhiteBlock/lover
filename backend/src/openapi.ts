@@ -97,9 +97,17 @@ export const openApiDocument = {
     '/api/me': secured('当前用户'),
     '/api/bootstrap': secured('首页 bootstrap'),
     '/api/couple-space': secured('情侣空间详情/更新', ['get', 'patch']),
-    '/api/couple-invites': secured('创建邀请', ['post']),
+    '/api/couple-invites': secured('创建邀请（返回 code + inviteUrl；新建空间须带 togetherDate）', ['post']),
     '/api/couple-invites/accept': secured('接受邀请', ['post']),
     '/api/couple-invites/{id}': secured('取消邀请', ['delete']),
+    '/invite/{code}': {
+      get: {
+        tags: ['Couple'],
+        summary: '邀请 H5 落地页（打开 App / 复制邀请码）',
+        parameters: [{ name: 'code', in: 'path', required: true, schema: { type: 'string' } }],
+        responses: { '200': { description: 'text/html' } },
+      },
+    },
     '/api/couple-space/unbinding': secured('申请解绑', ['post']),
     '/api/couple-space/unbinding/{id}/confirm': secured('伴侣确认解绑', ['post']),
     '/api/couple-space/unbinding/{id}/cancel': secured('取消解绑', ['post']),

@@ -16,14 +16,11 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.Favorite
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.FilledTonalButton
-import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -39,6 +36,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.lover.app.BuildConfig
 import com.lover.app.core.design.Blush
+import com.lover.app.core.design.LoverWordmark
 import com.lover.app.core.design.Peach
 import com.lover.app.core.design.Rose
 import com.lover.app.core.design.SoftTextField
@@ -68,15 +66,8 @@ fun AuthScreen(viewModel: AuthViewModel) {
                 .padding(24.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            Icon(
-                Icons.Rounded.Favorite,
-                contentDescription = null,
-                tint = Rose,
-                modifier = Modifier.size(54.dp),
-            )
-            Text("lover.", style = MaterialTheme.typography.displayLarge)
-            Text("TWO HEARTS · ONE WORLD", style = MaterialTheme.typography.labelMedium)
-            Spacer(Modifier.height(42.dp))
+            LoverWordmark(logoSize = 72.dp, usePhoto = true)
+            Spacer(Modifier.height(36.dp))
             Card(
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface.copy(alpha = .94f)),
                 elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),

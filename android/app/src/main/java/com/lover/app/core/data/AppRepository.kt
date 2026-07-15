@@ -77,11 +77,13 @@ class AppRepository @Inject constructor(
         if (me.activeSpaceId != null) refreshAll()
     }
 
-    suspend fun createInvite(togetherDate: String): String {
-        val invite = call { api.createInvite(CreateInviteRequest(togetherDate = togetherDate)) }
+    suspend fun createInvite(togetherDate: String? = null): InviteResponse {
+        val invite = call {
+            api.createInvite(CreateInviteRequest(togetherDate = togetherDate))
+        }
         tokenStore.update { it.copy(activeSpaceId = invite.spaceId) }
         refreshAll(invite.code)
-        return invite.code
+        return invite
     }
 
     suspend fun acceptInvite(code: String) {
@@ -252,9 +254,9 @@ class AppRepository @Inject constructor(
     }
 
     suspend fun logout() {
-        val result = runCatching { call { api.logout() } }
+        runCatching { call { api.logout() } }
+        // 无论服务端是否仍接受旧 token，本地都结束会话
         tokenStore.clearSession()
-        result.getOrThrow()
     }
 
     private suspend fun uploadAsset(source: ResolvedMedia): String =

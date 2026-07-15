@@ -34,10 +34,12 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -54,26 +56,16 @@ enum class Editor { MEDIA, ANNIVERSARY, LETTER }
 fun MainScreen(viewModel: MainViewModel) {
     val state by viewModel.data.collectAsState()
     val tab by viewModel.selectedTab.collectAsState()
-    val message by viewModel.message.collectAsState()
     var editor by remember { mutableStateOf<Editor?>(null) }
     var mediaDetail by remember { mutableStateOf<MediaItem?>(null) }
     var letterDetail by remember { mutableStateOf<Letter?>(null) }
-    val snackbar = remember { SnackbarHostState() }
     val composing = editor != null
     val mediaDetailOpen = mediaDetail != null
     val overlayOpen = composing || mediaDetailOpen
 
-    LaunchedEffect(message) {
-        message?.let {
-            snackbar.showSnackbar(it)
-            viewModel.clearMessage()
-        }
-    }
-
     Box(Modifier.fillMaxSize()) {
         Scaffold(
             containerColor = WarmBackground,
-            snackbarHost = { SnackbarHost(snackbar) },
             bottomBar = {
                 if (!overlayOpen) {
                     LoverNavigation(tab, viewModel::selectTab)
@@ -142,6 +134,7 @@ fun MainScreen(viewModel: MainViewModel) {
                         }
                         MainTab.PROFILE -> ProfilePage(
                             state = state,
+                            viewModel = viewModel,
                             onLogout = viewModel::logout,
                             onRequestUnbinding = viewModel::requestUnbinding,
                             onConfirmUnbinding = viewModel::confirmUnbinding,
@@ -286,10 +279,10 @@ private fun HomePage(
     val days = state.lovingDays ?: 0
     LazyColumn(contentPadding = PaddingValues(bottom = 28.dp)) {
         item {
-            Column(Modifier.padding(horizontal = 22.dp, vertical = 14.dp)) {
-                Text("lover.", style = MaterialTheme.typography.displayLarge)
-                Text("TWO HEARTS · ONE WORLD", style = MaterialTheme.typography.labelSmall, color = Stone)
-            }
+            LoverBrandRow(
+                modifier = Modifier.padding(horizontal = 22.dp, vertical = 18.dp),
+                logoSize = 44.dp,
+            )
         }
         item {
             Card(
@@ -316,11 +309,13 @@ private fun HomePage(
                         }
                         Text("每一天，都算数", color = Stone)
                     }
-                    Icon(
-                        Icons.Rounded.Favorite,
-                        null,
-                        tint = Rose.copy(alpha = .22f),
-                        modifier = Modifier.align(Alignment.CenterEnd).size(96.dp),
+                    LoverLogoPhoto(
+                        modifier = Modifier
+                            .align(Alignment.CenterStart)
+                            .padding(start = 18.dp)
+                            .graphicsLayer { rotationZ = -14f }
+                            .alpha(0.28f),
+                        size = 96.dp,
                     )
                 }
             }
@@ -573,37 +568,65 @@ private fun LettersPage(letters: List<Letter>, onLetter: (Letter) -> Unit, onAdd
 @Composable
 private fun ProfilePage(
     state: AppState,
+    viewModel: MainViewModel,
     onLogout: () -> Unit,
     onRequestUnbinding: (String?) -> Unit,
     onConfirmUnbinding: (String) -> Unit,
     onCancelUnbinding: (String) -> Unit,
 ) {
+    val context = androidx.compose.ui.platform.LocalContext.current
     var confirm by remember { mutableStateOf<String?>(null) }
     var reason by rememberSaveable { mutableStateOf("") }
+    var showInviteSheet by rememberSaveable { mutableStateOf(false) }
+    var showBindSheet by rememberSaveable { mutableStateOf(false) }
+    val openBindFromDeepLink by viewModel.openBindSheet.collectAsState()
+    val pendingInviteCode by viewModel.pendingInviteCode.collectAsState()
+    val lastInvite by viewModel.lastInvite.collectAsState()
     val partner = state.couple?.members?.firstOrNull { it.id != state.user?.id }
+    val hasPartner = partner != null
     val pending = state.couple?.pendingUnbinding
+
+    LaunchedEffect(openBindFromDeepLink) {
+        if (openBindFromDeepLink) {
+            showBindSheet = true
+            viewModel.dismissBindSheet()
+        }
+    }
+    LaunchedEffect(hasPartner) {
+        if (hasPartner) {
+            showBindSheet = false
+            showInviteSheet = false
+        }
+    }
+
     LazyColumn(contentPadding = PaddingValues(horizontal = 20.dp, vertical = 12.dp)) {
         item {
             PageHeader("我们的小宇宙", "Our Private World")
-            Card(
-                colors = CardDefaults.cardColors(containerColor = Blush.copy(alpha = 0.85f)),
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(32.dp),
-                elevation = CardDefaults.cardElevation(0.dp),
-            ) {
-                Column(Modifier.padding(28.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                    Row {
-                        Avatar(state.user?.nickname?.take(1) ?: "我")
-                        Avatar(partner?.nickname?.take(1) ?: "TA", Modifier.offset(x = (-12).dp))
-                    }
-                    Spacer(Modifier.height(8.dp))
-                    Text(state.couple?.name ?: "我们", style = MaterialTheme.typography.headlineMedium)
-                    Text(
-                        "Established ${state.couple?.togetherDate?.replace('-', '.') ?: "—"}",
-                        color = Stone,
-                    )
-                    state.couple?.inviteCode?.let {
-                        Text("邀请码 $it", style = MaterialTheme.typography.labelSmall, color = Rose)
+            if (!hasPartner) {
+                EmptyCoupleCard(
+                    nickname = state.user?.nickname,
+                    inviteCode = state.couple?.inviteCode ?: lastInvite?.code,
+                    onBind = { showBindSheet = true },
+                    onInvite = { showInviteSheet = true },
+                )
+            } else {
+                Card(
+                    colors = CardDefaults.cardColors(containerColor = Blush.copy(alpha = 0.85f)),
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(32.dp),
+                    elevation = CardDefaults.cardElevation(0.dp),
+                ) {
+                    Column(Modifier.padding(28.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                        Row {
+                            Avatar(state.user?.nickname?.take(1) ?: "我")
+                            Avatar(partner.nickname.take(1), Modifier.offset(x = (-12).dp))
+                        }
+                        Spacer(Modifier.height(8.dp))
+                        Text(state.couple?.name ?: "我们", style = MaterialTheme.typography.headlineMedium)
+                        Text(
+                            "Established ${state.couple?.togetherDate?.replace('-', '.') ?: "—"}",
+                            color = Stone,
+                        )
                     }
                 }
             }
@@ -614,41 +637,81 @@ private fun ProfilePage(
         item { SettingRow(Icons.Rounded.Info, "关于 Lover", "版本 1.0.0") }
         item {
             Spacer(Modifier.height(20.dp))
-            if (pending == null) {
-                OutlinedButton(
-                    onClick = { confirm = "request" },
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(22.dp),
-                    border = BorderStroke(1.dp, SoftOutline),
-                ) {
-                    Text("申请解除情侣绑定")
-                }
-            } else if (pending.requestedBy == state.user?.id) {
-                Text("解绑申请等待伴侣确认", color = Stone)
-                OutlinedButton(
-                    onClick = { confirm = "cancel" },
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(22.dp),
-                ) {
-                    Text("取消解绑申请")
-                }
-            } else {
-                Text("伴侣发起了解绑申请", color = MaterialTheme.colorScheme.error)
-                Button(
-                    onClick = { confirm = "confirm" },
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(22.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = Rose),
-                ) {
-                    Text("确认解除绑定")
-                }
-                TextButton(onClick = { confirm = "cancel" }, modifier = Modifier.fillMaxWidth()) {
-                    Text("拒绝并取消申请")
+            if (hasPartner) {
+                if (pending == null) {
+                    OutlinedButton(
+                        onClick = { confirm = "request" },
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(22.dp),
+                        border = BorderStroke(1.dp, SoftOutline),
+                    ) {
+                        Text("申请解除情侣绑定")
+                    }
+                } else if (pending.requestedBy == state.user?.id) {
+                    Text("解绑申请等待伴侣确认", color = Stone)
+                    OutlinedButton(
+                        onClick = { confirm = "cancel" },
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(22.dp),
+                    ) {
+                        Text("取消解绑申请")
+                    }
+                } else {
+                    Text("伴侣发起了解绑申请", color = MaterialTheme.colorScheme.error)
+                    Button(
+                        onClick = { confirm = "confirm" },
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(22.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = Rose),
+                    ) {
+                        Text("确认解除绑定")
+                    }
+                    TextButton(onClick = { confirm = "cancel" }, modifier = Modifier.fillMaxWidth()) {
+                        Text("拒绝并取消申请")
+                    }
                 }
             }
             TextButton(onClick = { confirm = "logout" }, modifier = Modifier.fillMaxWidth()) { Text("退出登录") }
         }
     }
+
+    if (showInviteSheet) {
+        InviteBottomSheet(
+            needsTogetherDate = state.activeSpaceId == null,
+            existingCode = state.couple?.inviteCode ?: lastInvite?.code,
+            existingUrl = lastInvite?.let(viewModel::resolveInviteUrl)
+                ?: state.couple?.inviteCode?.let(com.lover.app.core.util.InviteLinks::buildUrl),
+            onDismiss = { showInviteSheet = false },
+            onCreate = { date ->
+                viewModel.createInvite(date) { showInviteSheet = true }
+            },
+            onCopy = { text ->
+                val clipboard = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE)
+                    as android.content.ClipboardManager
+                clipboard.setPrimaryClip(android.content.ClipData.newPlainText("lover-invite", text))
+                android.widget.Toast.makeText(context, "已复制", android.widget.Toast.LENGTH_SHORT).show()
+            },
+            onShare = { text ->
+                val intent = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+                    type = "text/plain"
+                    putExtra(android.content.Intent.EXTRA_TEXT, text)
+                }
+                context.startActivity(android.content.Intent.createChooser(intent, "分享邀请"))
+            },
+        )
+    }
+
+    if (showBindSheet) {
+        BindBottomSheet(
+            initialCode = pendingInviteCode.orEmpty(),
+            onDismiss = {
+                showBindSheet = false
+                viewModel.clearPendingInvite()
+            },
+            onConfirm = { code -> viewModel.acceptInvite(code) },
+        )
+    }
+
     confirm?.let { action ->
         AlertDialog(
             onDismissRequest = { confirm = null },
@@ -707,6 +770,198 @@ private fun ProfilePage(
                 ) { Text("取消") }
             },
         )
+    }
+}
+
+@Composable
+private fun EmptyCoupleCard(
+    nickname: String?,
+    inviteCode: String?,
+    onBind: () -> Unit,
+    onInvite: () -> Unit,
+) {
+    Card(
+        colors = CardDefaults.cardColors(containerColor = Blush.copy(alpha = 0.85f)),
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(32.dp),
+        elevation = CardDefaults.cardElevation(0.dp),
+    ) {
+        Column(
+            Modifier.padding(28.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(14.dp),
+        ) {
+            Row {
+                Avatar(nickname?.take(1) ?: "我")
+                Avatar("?", Modifier.offset(x = (-12).dp))
+            }
+            Text("我们的小宇宙", style = MaterialTheme.typography.headlineMedium)
+            Text(
+                "现在还没有我们喔，快去邀请或者绑定另一半吧",
+                color = Stone,
+                style = MaterialTheme.typography.bodyLarge,
+            )
+            if (!inviteCode.isNullOrBlank()) {
+                Text("当前邀请码 $inviteCode", style = MaterialTheme.typography.labelSmall, color = Rose)
+            }
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                OutlinedButton(
+                    onClick = onBind,
+                    modifier = Modifier.weight(1f).height(48.dp),
+                    shape = RoundedCornerShape(20.dp),
+                    border = BorderStroke(1.dp, SoftOutline),
+                ) { Text("绑定另一半") }
+                Button(
+                    onClick = onInvite,
+                    modifier = Modifier.weight(1f).height(48.dp),
+                    shape = RoundedCornerShape(20.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = Rose),
+                ) { Text("邀请") }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun InviteBottomSheet(
+    needsTogetherDate: Boolean,
+    existingCode: String?,
+    existingUrl: String?,
+    onDismiss: () -> Unit,
+    onCreate: (String?) -> Unit,
+    onCopy: (String) -> Unit,
+    onShare: (String) -> Unit,
+) {
+    var date by rememberSaveable { mutableStateOf(java.time.LocalDate.now().minusYears(1).toString()) }
+    val code = existingCode.orEmpty()
+    val url = existingUrl.orEmpty()
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
+        containerColor = WarmBackground,
+        shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
+    ) {
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 24.dp)
+                .padding(bottom = 32.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp),
+        ) {
+            Text("邀请另一半", style = MaterialTheme.typography.headlineMedium)
+            if (code.isBlank()) {
+                if (needsTogetherDate) {
+                    Text("创建你们的小宇宙时，先记下在一起的那天", color = Stone)
+                    LoverDateField(
+                        value = date,
+                        onValueChange = { date = it },
+                        label = "在一起的那天",
+                        maxDate = java.time.LocalDate.now(),
+                        modifier = Modifier.fillMaxWidth(),
+                        supportingText = "只需设置这一次",
+                    )
+                } else {
+                    Text("生成专属邀请链接，发给 TA 即可", color = Stone)
+                }
+                Button(
+                    onClick = { onCreate(if (needsTogetherDate) date else null) },
+                    modifier = Modifier.fillMaxWidth().height(52.dp),
+                    shape = RoundedCornerShape(22.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = Rose),
+                ) {
+                    Text(if (needsTogetherDate) "创建空间并生成邀请" else "生成邀请链接")
+                }
+            } else {
+                Text("把链接或邀请码发给 TA", color = Stone)
+                Surface(color = Blush, shape = RoundedCornerShape(22.dp), modifier = Modifier.fillMaxWidth()) {
+                    Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text(code, style = MaterialTheme.typography.headlineMedium, color = Rose)
+                        if (url.isNotBlank()) {
+                            Text(url, style = MaterialTheme.typography.bodySmall, color = Stone)
+                        }
+                    }
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
+                    OutlinedButton(
+                        onClick = { onCopy(url.ifBlank { code }) },
+                        modifier = Modifier.weight(1f).height(48.dp),
+                        shape = RoundedCornerShape(20.dp),
+                    ) { Text(if (url.isNotBlank()) "复制链接" else "复制邀请码") }
+                    Button(
+                        onClick = {
+                            onShare(
+                                com.lover.app.core.util.InviteLinks.shareText(
+                                    code = code,
+                                    inviteUrl = url.ifBlank {
+                                        com.lover.app.core.util.InviteLinks.buildUrl(code)
+                                    },
+                                ),
+                            )
+                        },
+                        modifier = Modifier.weight(1f).height(48.dp),
+                        shape = RoundedCornerShape(20.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = Rose),
+                    ) { Text("分享") }
+                }
+                TextButton(
+                    onClick = { onCreate(null) },
+                    modifier = Modifier.fillMaxWidth(),
+                ) { Text("重新生成邀请") }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun BindBottomSheet(
+    initialCode: String,
+    onDismiss: () -> Unit,
+    onConfirm: (String) -> Unit,
+) {
+    var code by rememberSaveable(initialCode) { mutableStateOf(initialCode) }
+    LaunchedEffect(initialCode) {
+        if (initialCode.isNotBlank()) code = initialCode
+    }
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
+        containerColor = WarmBackground,
+        shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
+    ) {
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 24.dp)
+                .padding(bottom = 32.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp),
+        ) {
+            Text("绑定另一半", style = MaterialTheme.typography.headlineMedium)
+            Text("输入对方分享的邀请码，确认后组成我们的小宇宙", color = Stone)
+            SoftTextField(
+                value = code,
+                onValueChange = { code = it.uppercase().take(8) },
+                label = "邀请码",
+                placeholder = "输入邀请码",
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Button(
+                onClick = { onConfirm(code) },
+                enabled = code.length >= 6,
+                modifier = Modifier.fillMaxWidth().height(52.dp),
+                shape = RoundedCornerShape(22.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = Rose),
+            ) { Text("确认绑定") }
+        }
     }
 }
 

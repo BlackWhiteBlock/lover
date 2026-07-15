@@ -86,9 +86,12 @@ export function registerCouples(app: FastifyInstance, context: AppContext, auth:
       );
       let spaceId = membership.rows[0]?.space_id;
       if (!spaceId) {
+        if (!input.togetherDate) {
+          throw badRequest('TOGETHER_DATE_REQUIRED', '创建空间时需要设置在一起的日期');
+        }
         const created = await client.query<{ id: string }>(
           `insert into couple_spaces(name, together_date) values ($1, $2) returning id`,
-          [input.spaceName ?? '我们的小宇宙', input.togetherDate ?? null],
+          [input.spaceName ?? '我们的小宇宙', input.togetherDate],
         );
         spaceId = created.rows[0]!.id;
         await client.query(
@@ -114,7 +117,33 @@ export function registerCouples(app: FastifyInstance, context: AppContext, auth:
       );
       return result.rows[0];
     });
-    return reply.code(201).send({ ...invite, code });
+    return reply.code(201).send({
+      ...invite,
+      code,
+      inviteUrl: buildInviteUrl(context.config.publicBaseUrl, code),
+    });
+  });
+
+  /** H5 落地：微信等内打开 → 引导打开 App / 复制邀请码 */
+  app.get('/invite/:code', async (request, reply) => {
+    const { code } = z.object({
+      code: z.string().trim().min(6).max(32),
+    }).parse(request.params);
+    const normalized = code.toUpperCase();
+    const existing = await db.query(
+      `select 1 from couple_invites
+       where code_hash = $1 and status = 'pending' and expires_at > now()`,
+      [hashCode(normalized)],
+    );
+    const valid = Boolean(existing.rowCount);
+    return reply
+      .type('text/html; charset=utf-8')
+      .header('Cache-Control', 'no-store')
+      .send(inviteLandingHtml({
+        code: normalized,
+        valid,
+        appDeepLink: `lover://invite/${encodeURIComponent(normalized)}`,
+      }));
   });
 
   app.post('/api/couple-invites/accept', {
@@ -236,4 +265,91 @@ export function registerCouples(app: FastifyInstance, context: AppContext, auth:
     if (!result.rowCount) throw notFound('解绑申请不存在');
     return { ok: true };
   });
+}
+
+function buildInviteUrl(publicBaseUrl: string, code: string) {
+  return `${publicBaseUrl.replace(/\/+$/, '')}/invite/${encodeURIComponent(code)}`;
+}
+
+function inviteLandingHtml(input: { code: string; valid: boolean; appDeepLink: string }) {
+  const { code, valid, appDeepLink } = input;
+  const statusLine = valid
+    ? '对方在等你一起进入小宇宙'
+    : '这个邀请可能已使用或已过期，仍可尝试打开 App 绑定';
+  const safeCode = escapeHtml(code);
+  const safeLink = escapeHtml(appDeepLink);
+  return `<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Lover 邀请</title>
+  <style>
+    :root { color-scheme: light; }
+    body {
+      margin: 0; min-height: 100vh; display: grid; place-items: center;
+      font-family: "PingFang SC", "Noto Sans SC", system-ui, sans-serif;
+      background: linear-gradient(180deg, #ffe9e6 0%, #fffcfb 55%, #fff 100%);
+      color: #332927;
+    }
+    .card {
+      width: min(92vw, 380px); background: rgba(255,255,255,.96);
+      border-radius: 28px; padding: 28px 24px 24px; box-shadow: 0 12px 40px rgba(184,79,102,.12);
+      text-align: center;
+    }
+    .brand { font-size: 34px; color: #9f1239; opacity: .55; margin: 0 0 8px; font-family: Georgia, "Pinyon Script", cursive; }
+    h1 { font-size: 20px; margin: 0 0 8px; }
+    p { margin: 0 0 18px; color: #857a78; font-size: 14px; line-height: 1.5; }
+    .code {
+      font-size: 28px; letter-spacing: .12em; font-weight: 700; color: #b84f66;
+      background: #ffe9e6; border-radius: 18px; padding: 16px; margin-bottom: 16px;
+    }
+    .btn {
+      display: block; width: 100%; border: 0; border-radius: 18px; padding: 14px 16px;
+      font-size: 16px; font-weight: 600; margin-bottom: 10px; cursor: pointer; text-decoration: none;
+      box-sizing: border-box;
+    }
+    .primary { background: #e88998; color: #fff; }
+    .secondary { background: #fff; color: #b84f66; border: 1px solid #e9dad6; }
+    .hint { font-size: 12px; color: #a8a29e; margin-top: 8px; }
+  </style>
+</head>
+<body>
+  <main class="card">
+    <div class="brand">lover.</div>
+    <h1>一起组成小宇宙</h1>
+    <p>${statusLine}</p>
+    <div class="code" id="code">${safeCode}</div>
+    <a class="btn primary" href="${safeLink}">打开 Lover</a>
+    <button class="btn secondary" type="button" id="copy">复制邀请码</button>
+    <p class="hint">若无法直接打开，请先安装 Lover，再粘贴邀请码完成绑定</p>
+  </main>
+  <script>
+    const code = ${JSON.stringify(code)};
+    document.getElementById('copy').addEventListener('click', async () => {
+      try {
+        await navigator.clipboard.writeText(code);
+        document.getElementById('copy').textContent = '已复制';
+      } catch (_) {
+        const range = document.createRange();
+        range.selectNodeContents(document.getElementById('code'));
+        const sel = window.getSelection();
+        sel.removeAllRanges();
+        sel.addRange(range);
+        document.execCommand('copy');
+        document.getElementById('copy').textContent = '已复制';
+      }
+    });
+  </script>
+</body>
+</html>`;
+}
+
+function escapeHtml(value: string) {
+  return value
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;');
 }

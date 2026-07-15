@@ -22,9 +22,12 @@ class ApiHostAuthInterceptor(
         if (!isApiHost(request.url)) {
             return builder.removeHeader("Authorization").build()
         }
-        val token = accessToken()
-        if (token != null && request.header("Authorization") == null) {
+        val token = accessToken()?.trim().orEmpty()
+        if (token.isNotEmpty()) {
+            // 始终写入最新 access token，避免并行请求仍带着旧 Bearer
             builder.header("Authorization", "Bearer $token")
+        } else {
+            builder.removeHeader("Authorization")
         }
         return builder.build()
     }

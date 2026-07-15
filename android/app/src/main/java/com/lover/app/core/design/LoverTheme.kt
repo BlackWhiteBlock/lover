@@ -8,10 +8,13 @@ import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.lover.app.R
 
 val Rose = Color(0xFFE88998)
 val DeepRose = Color(0xFFB84F66)
@@ -21,6 +24,20 @@ val Peach = Color(0xFFFFDCC8)
 val Stone = Color(0xFF857A78)
 val SoftOutline = Color(0xFFE9DAD6)
 val SoftSurface = Color(0xFFFFF7F5)
+
+/** Google Fonts — Pinyon Script; only for the "lover." app name. */
+val PinyonScript = FontFamily(Font(R.font.pinyon_script_regular))
+
+/** rose-900 @ 50% — brand wordmark color */
+val LoverAppNameColor = Color(0xFF9F1239).copy(alpha = 0.5f)
+
+fun loverAppNameStyle(fontSize: TextUnit = 56.sp): TextStyle = TextStyle(
+    fontFamily = PinyonScript,
+    fontWeight = FontWeight.Normal,
+    fontSize = fontSize,
+    letterSpacing = 0.sp,
+    color = LoverAppNameColor,
+)
 
 private val LoverColors = lightColorScheme(
     primary = Rose,

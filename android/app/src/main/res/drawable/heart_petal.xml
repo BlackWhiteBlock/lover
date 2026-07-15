@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Single heart petal; tip at (50, 84) in 100×96 viewBox — matches SplashScreen.tsx -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="100dp"
+    android:height="96dp"
+    android:viewportWidth="100"
+    android:viewportHeight="96">
+    <group
+        android:translateX="50"
+        android:translateY="84">
+        <path
+            android:fillColor="#FB7185"
+            android:fillAlpha="0.45"
+            android:pathData="M0,0 C-10,-18 -34,-18 -34,-38 C-34,-58 -17,-66 0,-50 C17,-66 34,-58 34,-38 C34,-18 10,-18 0,0 Z" />
+    </group>
+</vector>

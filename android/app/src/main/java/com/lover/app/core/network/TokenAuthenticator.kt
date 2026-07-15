@@ -19,21 +19,36 @@ class TokenAuthenticator @Inject constructor(
 
     override fun authenticate(route: Route?, response: Response): Request? {
         if (responseCount(response) >= 2) return null
-        val failedToken = response.request.header("Authorization")?.removePrefix("Bearer ") ?: return null
-        if (failedToken != tokenStore.snapshot.accessToken) return null
+        val failedToken = response.request.header("Authorization")
+            ?.removePrefix("Bearer ")
+            ?.trim()
+            ?.takeIf { it.isNotEmpty() }
+            ?: return null
 
         return synchronized(refreshLock) {
             val current = tokenStore.snapshot
-            if (current.accessToken != null && current.accessToken != failedToken) {
-                return@synchronized retry(response.request, current.accessToken)
+            val latestAccess = current.accessToken
+            // 其他请求已完成刷新：直接用新 access token 重试（此前错误地 return null）
+            if (!latestAccess.isNullOrBlank() && latestAccess != failedToken) {
+                return@synchronized retry(response.request, latestAccess)
             }
+
             val refreshToken = current.refreshToken ?: return@synchronized null
             runBlocking {
-                runCatching { refreshApi.refresh(RefreshRequest(refreshToken)) }
-                    .onSuccess { tokenStore.saveTokens(it.accessToken, it.refreshToken) }
-                    .onFailure { tokenStore.clearSession() }
-                    .getOrNull()
-                    ?.let { retry(response.request, it.accessToken) }
+                val refreshed = runCatching {
+                    refreshApi.refresh(RefreshRequest(refreshToken))
+                }.getOrNull()
+
+                if (refreshed != null) {
+                    tokenStore.saveTokens(refreshed.accessToken, refreshed.refreshToken)
+                    retry(response.request, refreshed.accessToken)
+                } else {
+                    // 仅当本刷新使用的 refresh 仍是当前会话时清空，避免误清新登录会话
+                    if (tokenStore.snapshot.refreshToken == refreshToken) {
+                        tokenStore.clearSession()
+                    }
+                    null
+                }
             }
         }
     }
