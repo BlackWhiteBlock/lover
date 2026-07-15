@@ -79,6 +79,13 @@ export function canAcceptInvite(input: {
   return { ok: true } as const;
 }
 
-export function isLetterUnlocked(type: 'instant' | 'capsule', unlockAt: Date | null, now = new Date()) {
-  return type === 'instant' || (unlockAt !== null && unlockAt <= now);
+export function isLetterUnlocked(
+  type: 'instant' | 'capsule',
+  unlockAt: Date | null,
+  now = new Date(),
+  unlockOnPartnerBind = false,
+) {
+  if (type === 'instant') return true;
+  if (unlockOnPartnerBind && (unlockAt === null || unlockAt > now)) return false;
+  return unlockAt !== null && unlockAt <= now;
 }

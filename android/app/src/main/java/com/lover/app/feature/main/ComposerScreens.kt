@@ -103,10 +103,11 @@ private const val ComposerMaxMediaPick = 9
 fun ComposerHost(
     editor: Editor,
     initialMediaUris: List<Uri>,
+    linked: Boolean,
     onDismiss: () -> Unit,
     onSaveMedia: (List<Uri>, String, String) -> Unit,
     onSaveAnniversary: (String, String, AnniversaryType) -> Unit,
-    onSaveLetter: (String, String, LetterType, String?) -> Unit,
+    onSaveLetter: (String, String, LetterType, String?, Boolean) -> Unit,
 ) {
     BackHandler(onBack = onDismiss)
     Box(
@@ -125,6 +126,7 @@ fun ComposerHost(
                 onSave = onSaveAnniversary,
             )
             Editor.LETTER -> LetterComposeScreen(
+                linked = linked,
                 onClose = onDismiss,
                 onSave = onSaveLetter,
             )
@@ -590,13 +592,17 @@ fun AnniversaryComposeScreen(
 
 @Composable
 fun LetterComposeScreen(
+    linked: Boolean,
     onClose: () -> Unit,
-    onSave: (String, String, LetterType, String?) -> Unit,
+    onSave: (String, String, LetterType, String?, Boolean) -> Unit,
 ) {
     var title by rememberSaveable { mutableStateOf("") }
     var content by rememberSaveable { mutableStateOf("") }
-    var type by rememberSaveable { mutableStateOf(LetterType.INSTANT) }
+    var type by rememberSaveable {
+        mutableStateOf(if (linked) LetterType.INSTANT else LetterType.CAPSULE)
+    }
     var unlockDate by rememberSaveable { mutableStateOf(LocalDate.now().plusMonths(1).toString()) }
+    var unlockOnPartnerBind by rememberSaveable { mutableStateOf(!linked) }
 
     ComposerScaffold(
         title = "写给 TA",
@@ -605,7 +611,13 @@ fun LetterComposeScreen(
         actionEnabled = title.isNotBlank() && content.isNotBlank(),
         actionLabel = if (type == LetterType.CAPSULE) "封存" else "寄出",
         onAction = {
-            onSave(title, content, type, unlockDate.takeIf { type == LetterType.CAPSULE })
+            onSave(
+                title,
+                content,
+                type,
+                unlockDate.takeIf { type == LetterType.CAPSULE && !unlockOnPartnerBind },
+                type == LetterType.CAPSULE && unlockOnPartnerBind,
+            )
         },
     ) { padding ->
         Column(
@@ -618,8 +630,15 @@ fun LetterComposeScreen(
             verticalArrangement = Arrangement.spacedBy(18.dp),
         ) {
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                SoftEditorChip(type == LetterType.INSTANT, { type = LetterType.INSTANT }, "即时信")
+                SoftEditorChip(
+                    selected = type == LetterType.INSTANT,
+                    onClick = { if (linked) type = LetterType.INSTANT },
+                    label = "即时信",
+                )
                 SoftEditorChip(type == LetterType.CAPSULE, { type = LetterType.CAPSULE }, "时间胶囊")
+            }
+            if (!linked) {
+                Text("未绑定另一半时，只能写时间胶囊", color = Stone, style = MaterialTheme.typography.bodySmall)
             }
             SoftTextField(
                 value = title,
@@ -638,14 +657,27 @@ fun LetterComposeScreen(
                 modifier = Modifier.fillMaxWidth(),
             )
             if (type == LetterType.CAPSULE) {
-                LoverDateField(
-                    value = unlockDate,
-                    onValueChange = { unlockDate = it },
-                    label = "解锁日期",
-                    minDate = LocalDate.now().plusDays(1),
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier.fillMaxWidth(),
-                    supportingText = "到期前双方都无法阅读正文",
-                )
+                ) {
+                    androidx.compose.material3.Checkbox(
+                        checked = unlockOnPartnerBind,
+                        onCheckedChange = { unlockOnPartnerBind = it },
+                        colors = androidx.compose.material3.CheckboxDefaults.colors(checkedColor = Rose),
+                    )
+                    Text("在绑定另一半以后，自动开启", color = Stone)
+                }
+                if (!unlockOnPartnerBind) {
+                    LoverDateField(
+                        value = unlockDate,
+                        onValueChange = { unlockDate = it },
+                        label = "解锁日期",
+                        minDate = LocalDate.now().plusDays(1),
+                        modifier = Modifier.fillMaxWidth(),
+                        supportingText = "到期前双方都无法阅读正文",
+                    )
+                }
             }
         }
     }

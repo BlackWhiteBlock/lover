@@ -6,34 +6,46 @@ import org.junit.Assert.assertThrows
 import org.junit.Test
 
 class MainViewModelTest {
-    private val today = LocalDate.of(2026, 7, 14)
+    private val today = LocalDate.parse("2026-07-14")
 
     @Test
-    fun `instant letter accepts content without unlock date`() {
-        MainViewModel.validateLetter("想你", "晚安", LetterType.INSTANT, null, today)
+    fun `instant letter allowed when linked`() {
+        MainViewModel.validateLetter("想你", "晚安", LetterType.INSTANT, null, linked = true, today = today)
     }
 
     @Test
-    fun `capsule requires future unlock date`() {
+    fun `instant letter blocked when unlinked`() {
         assertThrows(IllegalArgumentException::class.java) {
-            MainViewModel.validateLetter("未来", "给明年的你", LetterType.CAPSULE, null, today)
+            MainViewModel.validateLetter("想你", "晚安", LetterType.INSTANT, null, linked = false, today = today)
         }
+    }
+
+    @Test
+    fun `capsule requires date or bind unlock`() {
         assertThrows(IllegalArgumentException::class.java) {
-            MainViewModel.validateLetter("未来", "给明年的你", LetterType.CAPSULE, "2026-07-14", today)
+            MainViewModel.validateLetter("未来", "给明年的你", LetterType.CAPSULE, null, today = today)
         }
         MainViewModel.validateLetter(
             "未来",
             "给明年的你",
             LetterType.CAPSULE,
-            "2027-07-14",
-            today,
+            unlockDate = null,
+            unlockOnPartnerBind = true,
+            today = today,
+        )
+        MainViewModel.validateLetter(
+            title = "未来",
+            content = "给明年的你",
+            type = LetterType.CAPSULE,
+            unlockDate = "2026-08-14",
+            today = today,
         )
     }
 
     @Test
-    fun `letter rejects blank title`() {
+    fun `title required`() {
         assertThrows(IllegalArgumentException::class.java) {
-            MainViewModel.validateLetter("", "正文", LetterType.INSTANT, null, today)
+            MainViewModel.validateLetter("", "正文", LetterType.INSTANT, null, linked = true, today = today)
         }
     }
 }

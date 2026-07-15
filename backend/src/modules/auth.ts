@@ -96,7 +96,10 @@ export function registerAuth(app: FastifyInstance, context: AppContext) {
       );
       if (!consumed.rowCount) throw unauthorized('验证码已使用');
       let userResult = await client.query<AuthUser>(
-        `select id, phone, nickname, avatar_url as "avatarUrl"
+        `select id, phone, nickname, avatar_url as "avatarUrl",
+                gender, birthday::text as birthday,
+                profile_completed as "profileCompleted",
+                personal_space_id as "personalSpaceId"
          from users where phone = $1`,
         [input.phone],
       );
@@ -104,7 +107,10 @@ export function registerAuth(app: FastifyInstance, context: AppContext) {
       if (isNewUser) {
         userResult = await client.query<AuthUser>(
           `insert into users(phone, nickname) values ($1, $2)
-           returning id, phone, nickname, avatar_url as "avatarUrl"`,
+           returning id, phone, nickname, avatar_url as "avatarUrl",
+                     gender, birthday::text as birthday,
+                     profile_completed as "profileCompleted",
+                     personal_space_id as "personalSpaceId"`,
           [input.phone, input.nickname ?? `用户${input.phone.slice(-4)}`],
         );
       }
@@ -150,11 +156,28 @@ export function registerAuth(app: FastifyInstance, context: AppContext) {
   });
 
   app.get('/api/me', { preHandler: createAuthHandler(context) }, async (request) => {
-    const membership = await db.query<{ space_id: string }>(
-      `select space_id from couple_members where user_id = $1 and status = 'active'`,
+    const user = await db.query<AuthUser>(
+      `select id, phone, nickname, avatar_url as "avatarUrl",
+              gender, birthday::text as birthday,
+              profile_completed as "profileCompleted",
+              personal_space_id as "personalSpaceId"
+       from users where id = $1`,
       [request.user.id],
     );
-    return { user: request.user, activeSpaceId: membership.rows[0]?.space_id ?? null };
+    const link = await db.query<{ lover_space_id: string }>(
+      `select lover_space_id from couple_links
+       where status = 'active' and (user_a_id = $1 or user_b_id = $1)`,
+      [request.user.id],
+    );
+    const profile = user.rows[0]!;
+    return {
+      user: profile,
+      personalSpaceId: profile.personalSpaceId ?? null,
+      loverSpaceId: link.rows[0]?.lover_space_id ?? null,
+      activeSpaceId: link.rows[0]?.lover_space_id ?? profile.personalSpaceId ?? null,
+      profileCompleted: Boolean(profile.profileCompleted),
+      linked: Boolean(link.rowCount),
+    };
   });
 }
 
@@ -170,7 +193,10 @@ export function createAuthHandler(context: AppContext): AuthHandler {
     }
     if (claims.type !== 'access' || !claims.sub || !claims.sid) throw unauthorized();
     const result = await context.db.query<AuthUser>(
-      `select u.id, u.phone, u.nickname, u.avatar_url as "avatarUrl"
+      `select u.id, u.phone, u.nickname, u.avatar_url as "avatarUrl",
+              u.gender, u.birthday::text as birthday,
+              u.profile_completed as "profileCompleted",
+              u.personal_space_id as "personalSpaceId"
        from users u join auth_sessions s on s.user_id = u.id
        where u.id = $1 and s.id = $2 and s.revoked_at is null and s.expires_at > now()`,
       [claims.sub, claims.sid],

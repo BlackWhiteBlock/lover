@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import type { AppContext, AuthHandler } from '../types.js';
 import { badRequest, notFound } from '../errors.js';
-import { activeSpaceId } from './couples.js';
+import { readableSpaceIds, writeSpaceId } from './spaces.js';
 
 const dateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
 const mediaAssetPart = z.object({
@@ -50,13 +50,13 @@ export function registerMedia(app: FastifyInstance, context: AppContext, auth: A
   const { db } = context;
 
   app.get('/api/media', { preHandler: auth }, async (request) => {
-    const spaceId = await activeSpaceId(context, request.user.id);
+    const spaceIds = await readableSpaceIds(context, request.user.id);
     const query = pageQuery.parse(request.query);
     const result = await db.query<MediaRow>(
       `select id, caption, media_date as "mediaDate", uploader_id as "uploaderId", created_at as "createdAt"
-       from media_items where space_id = $1 and ($2::timestamptz is null or created_at < $2)
+       from media_items where space_id = any($1::uuid[]) and ($2::timestamptz is null or created_at < $2)
        order by created_at desc limit $3`,
-      [spaceId, query.cursor ?? null, query.limit + 1],
+      [spaceIds, query.cursor ?? null, query.limit + 1],
     );
     const hasMore = result.rows.length > query.limit;
     const rows = hasMore ? result.rows.slice(0, query.limit) : result.rows;
@@ -65,28 +65,35 @@ export function registerMedia(app: FastifyInstance, context: AppContext, auth: A
   });
 
   app.get('/api/media/:id', { preHandler: auth }, async (request) => {
-    const spaceId = await activeSpaceId(context, request.user.id);
+    const spaceIds = await readableSpaceIds(context, request.user.id);
     const { id } = idParams.parse(request.params);
-    const item = await findMedia(context, spaceId, id);
+    const item = await findMedia(context, spaceIds, id);
     if (!item) throw notFound('媒体记录不存在');
     return item;
   });
 
   app.post('/api/media', { preHandler: auth }, async (request, reply) => {
-    const spaceId = await activeSpaceId(context, request.user.id);
+    const target = await writeSpaceId(context, request.user.id);
     const input = mediaInput.parse(request.body);
     await assertReadyAssets(
       context,
-      spaceId,
+      target.spaceId,
       input.assets.flatMap((part) => [part.assetId, part.thumbnailAssetId]),
     );
 
     const mediaItem = await db.transaction(async (client) => {
       const inserted = await client.query<MediaRow>(
-        `insert into media_items(space_id, uploader_id, caption, media_date)
-         values ($1, $2, $3, $4)
+        `insert into media_items(space_id, uploader_id, caption, media_date, ownership, couple_link_id)
+         values ($1, $2, $3, $4, $5, $6)
          returning id, caption, media_date as "mediaDate", uploader_id as "uploaderId", created_at as "createdAt"`,
-        [spaceId, request.user.id, input.caption, input.mediaDate],
+        [
+          target.spaceId,
+          request.user.id,
+          input.caption,
+          input.mediaDate,
+          target.ownership,
+          target.coupleLinkId,
+        ],
       );
       const row = inserted.rows[0]!;
       for (const [index, part] of input.assets.entries()) {
@@ -103,54 +110,59 @@ export function registerMedia(app: FastifyInstance, context: AppContext, auth: A
   });
 
   app.patch('/api/media/:id', { preHandler: auth }, async (request) => {
-    const spaceId = await activeSpaceId(context, request.user.id);
+    const spaceIds = await readableSpaceIds(context, request.user.id);
     const { id } = idParams.parse(request.params);
     const input = mediaUpdate.parse(request.body);
-    const current = await findMediaRow(context, spaceId, id);
+    const current = await findMediaRow(context, spaceIds, id);
     if (!current) throw notFound('媒体记录不存在');
     const caption = input.caption ?? current.caption;
     const mediaDate = input.mediaDate ?? current.mediaDate;
     const result = await db.query<MediaRow>(
       `update media_items set caption = $3, media_date = $4, updated_at = now()
-       where id = $1 and space_id = $2
+       where id = $1 and space_id = any($2::uuid[]) and uploader_id = $5
        returning id, caption, media_date as "mediaDate", uploader_id as "uploaderId", created_at as "createdAt"`,
-      [id, spaceId, caption, mediaDate],
+      [id, spaceIds, caption, mediaDate, request.user.id],
     );
+    if (!result.rowCount) throw notFound('媒体记录不存在或无权编辑');
     const hydrated = await hydrateMediaItems(context, result.rows);
     return hydrated[0];
   });
 
   app.delete('/api/media/:id', { preHandler: auth }, async (request) => {
-    const spaceId = await activeSpaceId(context, request.user.id);
+    const spaceIds = await readableSpaceIds(context, request.user.id);
     const { id } = idParams.parse(request.params);
-    const result = await db.query(`delete from media_items where id = $1 and space_id = $2`, [id, spaceId]);
-    if (!result.rowCount) throw notFound('媒体记录不存在');
+    const result = await db.query(
+      `delete from media_items where id = $1 and space_id = any($2::uuid[]) and uploader_id = $3`,
+      [id, spaceIds, request.user.id],
+    );
+    if (!result.rowCount) throw notFound('媒体记录不存在或无权删除');
     return { ok: true };
   });
 }
 
-export async function listRecentMedia(context: AppContext, spaceId: string, limit = 6) {
+export async function listRecentMedia(context: AppContext, spaceIds: string | string[], limit = 6) {
+  const ids = Array.isArray(spaceIds) ? spaceIds : [spaceIds];
   const result = await context.db.query<MediaRow>(
     `select id, caption, media_date as "mediaDate", uploader_id as "uploaderId", created_at as "createdAt"
-     from media_items where space_id = $1
+     from media_items where space_id = any($1::uuid[])
      order by created_at desc limit $2`,
-    [spaceId, limit],
+    [ids, limit],
   );
   return hydrateMediaItems(context, result.rows);
 }
 
-async function findMedia(context: AppContext, spaceId: string, id: string) {
-  const row = await findMediaRow(context, spaceId, id);
+async function findMedia(context: AppContext, spaceIds: string[], id: string) {
+  const row = await findMediaRow(context, spaceIds, id);
   if (!row) return null;
   const [item] = await hydrateMediaItems(context, [row]);
   return item ?? null;
 }
 
-async function findMediaRow(context: AppContext, spaceId: string, id: string) {
+async function findMediaRow(context: AppContext, spaceIds: string[], id: string) {
   const result = await context.db.query<MediaRow>(
     `select id, caption, media_date as "mediaDate", uploader_id as "uploaderId", created_at as "createdAt"
-     from media_items where id = $1 and space_id = $2`,
-    [id, spaceId],
+     from media_items where id = $1 and space_id = any($2::uuid[])`,
+    [id, spaceIds],
   );
   return result.rows[0] ?? null;
 }

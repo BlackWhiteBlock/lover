@@ -10,6 +10,10 @@ data class User(
     val phone: String = "",
     val nickname: String = "我",
     val avatarUrl: String? = null,
+    val gender: String? = null,
+    val birthday: String? = null,
+    val profileCompleted: Boolean = false,
+    val personalSpaceId: String? = null,
 )
 
 @Serializable
@@ -19,9 +23,39 @@ data class CoupleSpace(
     val togetherDate: String? = null,
     val status: String = "active",
     val createdAt: String = "",
+    val kind: String? = null,
+    val linked: Boolean = false,
+    val coupleLinkId: String? = null,
+    val personalSpaceId: String? = null,
+    val loverSpaceId: String? = null,
     val members: List<CoupleMember> = emptyList(),
     val pendingUnbinding: UnbindingRequest? = null,
-    val inviteCode: String? = null,
+    val pendingIncomingBinds: List<IncomingBindRequest> = emptyList(),
+    val pendingOutgoingBind: OutgoingBindRequest? = null,
+)
+
+@Serializable
+data class IncomingBindRequest(
+    val id: String,
+    val requesterId: String,
+    val requesterNickname: String = "",
+    val requesterPhone: String = "",
+    val requesterAvatarUrl: String? = null,
+    val status: String = "pending",
+    val expiresAt: String? = null,
+    val createdAt: String? = null,
+)
+
+@Serializable
+data class OutgoingBindRequest(
+    val id: String,
+    val targetUserId: String,
+    val targetNickname: String = "",
+    val targetPhone: String = "",
+    val targetAvatarUrl: String? = null,
+    val status: String = "pending",
+    val expiresAt: String? = null,
+    val createdAt: String? = null,
 )
 
 @Serializable
@@ -104,6 +138,7 @@ data class Letter(
     val summary: String? = null,
     val type: LetterType,
     val unlockAt: String? = null,
+    val unlockOnPartnerBind: Boolean = false,
     val isUnlocked: Boolean,
     val createdAt: String,
 )
@@ -114,8 +149,13 @@ data class AppState(
     val refreshToken: String? = null,
     val user: User? = null,
     val activeSpaceId: String? = null,
+    val personalSpaceId: String? = null,
+    val loverSpaceId: String? = null,
+    val profileCompleted: Boolean = false,
+    val linked: Boolean = false,
     val couple: CoupleSpace? = null,
     val lovingDays: Int? = null,
+    val needsTogetherDate: Boolean = false,
     val media: List<MediaItem> = emptyList(),
     val anniversaries: List<Anniversary> = emptyList(),
     val letters: List<Letter> = emptyList(),
@@ -146,22 +186,57 @@ data class AppState(
     val expiresIn: String,
 )
 @Serializable data class OkResponse(val ok: Boolean)
-@Serializable data class MeResponse(val user: User, val activeSpaceId: String? = null)
-@Serializable data class CreateInviteRequest(val togetherDate: String? = null, val spaceName: String? = null)
-@Serializable data class UpdateCoupleSpaceRequest(val name: String? = null, val togetherDate: String? = null)
-@Serializable data class InviteResponse(
-    val id: String,
-    val spaceId: String,
-    val expiresAt: String,
-    val code: String,
-    val inviteUrl: String? = null,
+@Serializable data class MeResponse(
+    val user: User,
+    val personalSpaceId: String? = null,
+    val loverSpaceId: String? = null,
+    val activeSpaceId: String? = null,
+    val profileCompleted: Boolean = false,
+    val linked: Boolean = false,
 )
-@Serializable data class AcceptInviteRequest(val code: String)
-@Serializable data class AcceptInviteResponse(val spaceId: String)
+@Serializable data class OnboardingRequest(
+    val nickname: String,
+    val avatarUrl: String? = null,
+    val gender: String,
+    val birthday: String,
+    val spaceName: String,
+)
+@Serializable data class OnboardingResponse(
+    val user: User,
+    val personalSpaceId: String,
+    val spaceName: String,
+)
+@Serializable data class CreateBindRequest(val phone: String)
+@Serializable data class BindRequestDto(
+    val id: String,
+    val requesterId: String? = null,
+    val targetUserId: String? = null,
+    val status: String = "pending",
+    val expiresAt: String? = null,
+    val createdAt: String? = null,
+)
+@Serializable data class AcceptBindResponse(
+    val coupleLinkId: String,
+    val loverSpaceId: String,
+    val togetherDate: String? = null,
+    val needsTogetherDate: Boolean = true,
+)
+@Serializable data class UpdateCoupleLinkRequest(
+    val togetherDate: String? = null,
+    val name: String? = null,
+)
+@Serializable data class CoupleLinkResponse(
+    val id: String? = null,
+    val loverSpaceId: String? = null,
+    val togetherDate: String? = null,
+)
+@Serializable data class UpdateCoupleSpaceRequest(val name: String? = null, val togetherDate: String? = null)
 @Serializable data class BootstrapResponse(
     val space: CoupleSpace,
     val lovingJourney: LovingJourney,
     val recentMedia: List<MediaItem>,
+    val linked: Boolean = false,
+    val coupleLinkId: String? = null,
 )
 @Serializable data class LovingJourney(
     val togetherDate: String? = null,
@@ -214,6 +289,7 @@ data class AppState(
     val content: String,
     val type: LetterType,
     val unlockAt: String? = null,
+    val unlockOnPartnerBind: Boolean = false,
 )
 @Serializable data class UnbindingRequest(
     val id: String,

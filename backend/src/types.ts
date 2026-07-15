@@ -7,6 +7,10 @@ export interface AuthUser {
   phone: string;
   nickname: string;
   avatarUrl: string | null;
+  gender?: string | null;
+  birthday?: string | null;
+  profileCompleted?: boolean;
+  personalSpaceId?: string | null;
 }
 
 export interface AccessClaims {

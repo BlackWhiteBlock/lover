@@ -3,7 +3,7 @@ import { z } from 'zod';
 import type { AppContext, AuthHandler } from '../types.js';
 import { anniversaryCountdown, formatCalendarDate, parseCalendarDate } from '../domain.js';
 import { badRequest, notFound } from '../errors.js';
-import { activeSpaceId } from './couples.js';
+import { readableSpaceIds, writeSpaceId } from './spaces.js';
 
 const calendarDate = z.string().refine((value) => {
   try { parseCalendarDate(value); return true; } catch { return false; }
@@ -21,61 +21,74 @@ export function registerAnniversaries(app: FastifyInstance, context: AppContext,
   const { db } = context;
 
   app.get('/api/anniversaries', { preHandler: auth }, async (request) => {
-    const spaceId = await activeSpaceId(context, request.user.id);
+    const spaceIds = await readableSpaceIds(context, request.user.id);
     const result = await db.query(
       `select id, title, date, type, cover_asset_id as "coverAssetId",
               created_by as "createdBy", created_at as "createdAt"
-       from anniversaries where space_id = $1 order by date, created_at`,
-      [spaceId],
+       from anniversaries where space_id = any($1::uuid[]) order by date, created_at`,
+      [spaceIds],
     );
     return { items: result.rows.map(withCountdown) };
   });
 
   app.get('/api/anniversaries/:id', { preHandler: auth }, async (request) => {
-    const spaceId = await activeSpaceId(context, request.user.id);
+    const spaceIds = await readableSpaceIds(context, request.user.id);
     const { id } = idSchema.parse(request.params);
-    const item = await find(context, spaceId, id);
+    const item = await find(context, spaceIds, id);
     if (!item) throw notFound('纪念日不存在');
     return withCountdown(item);
   });
 
   app.post('/api/anniversaries', { preHandler: auth }, async (request, reply) => {
-    const spaceId = await activeSpaceId(context, request.user.id);
+    const target = await writeSpaceId(context, request.user.id);
     const input = inputSchema.parse(request.body);
-    await assertCover(context, spaceId, input.coverAssetId);
+    await assertCover(context, target.spaceId, input.coverAssetId);
     const result = await db.query(
-      `insert into anniversaries(space_id, created_by, title, date, type, cover_asset_id)
-       values ($1, $2, $3, $4, $5, $6)
+      `insert into anniversaries(space_id, created_by, title, date, type, cover_asset_id, ownership, couple_link_id)
+       values ($1, $2, $3, $4, $5, $6, $7, $8)
        returning id, title, date, type, cover_asset_id as "coverAssetId",
                  created_by as "createdBy", created_at as "createdAt"`,
-      [spaceId, request.user.id, input.title, input.date, input.type, input.coverAssetId ?? null],
+      [
+        target.spaceId,
+        request.user.id,
+        input.title,
+        input.date,
+        input.type,
+        input.coverAssetId ?? null,
+        target.ownership,
+        target.coupleLinkId,
+      ],
     );
     return reply.code(201).send(withCountdown(result.rows[0]!));
   });
 
   app.patch('/api/anniversaries/:id', { preHandler: auth }, async (request) => {
-    const spaceId = await activeSpaceId(context, request.user.id);
+    const spaceIds = await readableSpaceIds(context, request.user.id);
     const { id } = idSchema.parse(request.params);
     const input = updateSchema.parse(request.body);
-    const current = await find(context, spaceId, id);
+    const current = await find(context, spaceIds, id);
     if (!current) throw notFound('纪念日不存在');
     const merged = inputSchema.parse({ ...current, ...input });
-    await assertCover(context, spaceId, merged.coverAssetId);
+    await assertCover(context, String(current.space_id ?? spaceIds[0]), merged.coverAssetId);
     const result = await db.query(
       `update anniversaries set title = $3, date = $4, type = $5, cover_asset_id = $6, updated_at = now()
-       where id = $1 and space_id = $2
+       where id = $1 and space_id = any($2::uuid[]) and created_by = $7
        returning id, title, date, type, cover_asset_id as "coverAssetId",
                  created_by as "createdBy", created_at as "createdAt"`,
-      [id, spaceId, merged.title, merged.date, merged.type, merged.coverAssetId ?? null],
+      [id, spaceIds, merged.title, merged.date, merged.type, merged.coverAssetId ?? null, request.user.id],
     );
+    if (!result.rowCount) throw notFound('纪念日不存在或无权编辑');
     return withCountdown(result.rows[0]!);
   });
 
   app.delete('/api/anniversaries/:id', { preHandler: auth }, async (request) => {
-    const spaceId = await activeSpaceId(context, request.user.id);
+    const spaceIds = await readableSpaceIds(context, request.user.id);
     const { id } = idSchema.parse(request.params);
-    const result = await db.query(`delete from anniversaries where id = $1 and space_id = $2`, [id, spaceId]);
-    if (!result.rowCount) throw notFound('纪念日不存在');
+    const result = await db.query(
+      `delete from anniversaries where id = $1 and space_id = any($2::uuid[]) and created_by = $3`,
+      [id, spaceIds, request.user.id],
+    );
+    if (!result.rowCount) throw notFound('纪念日不存在或无权删除');
     return { ok: true };
   });
 }
@@ -88,12 +101,12 @@ function withCountdown(row: Record<string, unknown>) {
   };
 }
 
-async function find(context: AppContext, spaceId: string, id: string) {
+async function find(context: AppContext, spaceIds: string[], id: string) {
   const result = await context.db.query(
     `select id, title, date, type, cover_asset_id as "coverAssetId",
-            created_by as "createdBy", created_at as "createdAt"
-     from anniversaries where id = $1 and space_id = $2`,
-    [id, spaceId],
+            created_by as "createdBy", created_at as "createdAt", space_id
+     from anniversaries where id = $1 and space_id = any($2::uuid[])`,
+    [id, spaceIds],
   );
   return result.rows[0] as Record<string, unknown> | undefined;
 }

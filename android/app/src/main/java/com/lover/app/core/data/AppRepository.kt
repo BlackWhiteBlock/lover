@@ -41,19 +41,8 @@ class AppRepository @Inject constructor(
         val auth = call { api.login(LoginRequest(phone.trim(), code.trim())) }
         tokenStore.saveTokens(auth.accessToken, auth.refreshToken)
         try {
-            val me = call { api.me() }
-            tokenStore.update {
-                it.copy(
-                    user = me.user,
-                    activeSpaceId = me.activeSpaceId,
-                    couple = null,
-                    lovingDays = null,
-                    media = emptyList(),
-                    anniversaries = emptyList(),
-                    letters = emptyList(),
-                )
-            }
-            if (me.activeSpaceId != null) refreshAll()
+            applyMe(call { api.me() }, clearContent = true)
+            if (tokenStore.snapshot.profileCompleted) refreshAll()
         } catch (error: Throwable) {
             tokenStore.clearSession()
             throw error
@@ -62,52 +51,104 @@ class AppRepository @Inject constructor(
 
     suspend fun restoreSession() {
         if (tokenStore.snapshot.accessToken == null) return
-        val me = call { api.me() }
+        applyMe(call { api.me() }, clearContent = false)
+        if (tokenStore.snapshot.profileCompleted) refreshAll()
+    }
+
+    private suspend fun applyMe(me: MeResponse, clearContent: Boolean) {
         tokenStore.update {
             it.copy(
                 user = me.user,
                 activeSpaceId = me.activeSpaceId,
-                couple = if (me.activeSpaceId == null) null else it.couple,
-                lovingDays = if (me.activeSpaceId == null) null else it.lovingDays,
-                media = if (me.activeSpaceId == null) emptyList() else it.media,
-                anniversaries = if (me.activeSpaceId == null) emptyList() else it.anniversaries,
-                letters = if (me.activeSpaceId == null) emptyList() else it.letters,
+                personalSpaceId = me.personalSpaceId,
+                loverSpaceId = me.loverSpaceId,
+                profileCompleted = me.profileCompleted || me.user.profileCompleted,
+                linked = me.linked,
+                couple = if (clearContent || !me.profileCompleted) null else it.couple,
+                lovingDays = if (clearContent || !me.profileCompleted) null else it.lovingDays,
+                media = if (clearContent || !me.profileCompleted) emptyList() else it.media,
+                anniversaries = if (clearContent || !me.profileCompleted) emptyList() else it.anniversaries,
+                letters = if (clearContent || !me.profileCompleted) emptyList() else it.letters,
             )
         }
-        if (me.activeSpaceId != null) refreshAll()
     }
 
-    suspend fun createInvite(togetherDate: String? = null): InviteResponse {
-        val invite = call {
-            api.createInvite(CreateInviteRequest(togetherDate = togetherDate))
+    suspend fun completeOnboarding(
+        nickname: String,
+        gender: String,
+        birthday: String,
+        spaceName: String,
+        avatarUrl: String? = null,
+    ) {
+        val result = call {
+            api.onboarding(
+                OnboardingRequest(
+                    nickname = nickname.trim(),
+                    avatarUrl = avatarUrl,
+                    gender = gender,
+                    birthday = birthday,
+                    spaceName = spaceName.trim(),
+                ),
+            )
         }
-        tokenStore.update { it.copy(activeSpaceId = invite.spaceId) }
-        refreshAll(invite.code)
-        return invite
-    }
-
-    suspend fun acceptInvite(code: String) {
-        val accepted = call { api.acceptInvite(AcceptInviteRequest(code.trim().uppercase())) }
-        tokenStore.update { it.copy(activeSpaceId = accepted.spaceId) }
+        tokenStore.update {
+            it.copy(
+                user = result.user,
+                personalSpaceId = result.personalSpaceId,
+                activeSpaceId = result.personalSpaceId,
+                profileCompleted = true,
+                linked = false,
+            )
+        }
         refreshAll()
     }
 
-    suspend fun refreshAll(inviteCode: String? = tokenStore.snapshot.couple?.inviteCode) = coroutineScope {
+    suspend fun requestBind(phone: String) {
+        call { api.createBind(CreateBindRequest(phone.trim())) }
+        refreshAll()
+    }
+
+    suspend fun acceptBind(id: String): AcceptBindResponse {
+        val result = call { api.acceptBind(id) }
+        refreshAll()
+        return result
+    }
+
+    suspend fun rejectBind(id: String) {
+        call { api.rejectBind(id) }
+        refreshAll()
+    }
+
+    suspend fun cancelBind(id: String) {
+        call { api.cancelBind(id) }
+        refreshAll()
+    }
+
+    suspend fun updateTogetherDate(togetherDate: String?) {
+        call { api.updateCoupleLink(UpdateCoupleLinkRequest(togetherDate = togetherDate)) }
+        refreshAll()
+    }
+
+    suspend fun refreshAll() = coroutineScope {
         val bootstrapDeferred = async { call { api.bootstrap() } }
         val coupleDeferred = async { call { api.coupleSpace() } }
         val mediaDeferred = async { call { api.media().items } }
         val anniversariesDeferred = async { call { api.anniversaries().items } }
         val lettersDeferred = async { call { api.letters().items } }
         val bootstrap = bootstrapDeferred.await()
-        val couple = coupleDeferred.await().copy(inviteCode = inviteCode)
+        val couple = coupleDeferred.await()
         val media = signMedia(mediaDeferred.await())
         val anniversaries = anniversariesDeferred.await()
         val letters = lettersDeferred.await()
         tokenStore.update {
             it.copy(
                 activeSpaceId = bootstrap.space.id,
+                personalSpaceId = couple.personalSpaceId ?: it.personalSpaceId,
+                loverSpaceId = couple.loverSpaceId,
+                linked = bootstrap.linked || couple.linked,
                 couple = couple,
                 lovingDays = bootstrap.lovingJourney.days,
+                needsTogetherDate = bootstrap.lovingJourney.needsTogetherDate,
                 media = media,
                 anniversaries = anniversaries,
                 letters = letters,
@@ -220,11 +261,24 @@ class AppRepository @Inject constructor(
         content: String,
         type: LetterType,
         unlockDate: String?,
+        unlockOnPartnerBind: Boolean = false,
     ) {
-        val unlockAt = if (type == LetterType.CAPSULE) {
-            localMidnightWithOffset(requireNotNull(unlockDate))
-        } else null
-        call { api.createLetter(CreateLetterRequest(title.trim(), content.trim(), type, unlockAt)) }
+        val unlockAt = when {
+            type != LetterType.CAPSULE -> null
+            unlockOnPartnerBind -> null
+            else -> localMidnightWithOffset(requireNotNull(unlockDate))
+        }
+        call {
+            api.createLetter(
+                CreateLetterRequest(
+                    title = title.trim(),
+                    content = content.trim(),
+                    type = type,
+                    unlockAt = unlockAt,
+                    unlockOnPartnerBind = unlockOnPartnerBind,
+                ),
+            )
+        }
         refreshAll()
     }
 
@@ -235,17 +289,8 @@ class AppRepository @Inject constructor(
 
     suspend fun confirmUnbinding(id: String) {
         call { api.confirmUnbinding(id) }
-        val me = call { api.me() }
-        tokenStore.update {
-            it.copy(
-                activeSpaceId = me.activeSpaceId,
-                couple = null,
-                lovingDays = null,
-                media = emptyList(),
-                anniversaries = emptyList(),
-                letters = emptyList(),
-            )
-        }
+        applyMe(call { api.me() }, clearContent = true)
+        if (tokenStore.snapshot.profileCompleted) refreshAll()
     }
 
     suspend fun cancelUnbinding(id: String) {

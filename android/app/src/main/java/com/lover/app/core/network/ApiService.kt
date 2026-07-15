@@ -35,14 +35,23 @@ interface ApiService {
     @PATCH("api/couple-space")
     suspend fun updateCoupleSpace(@Body request: UpdateCoupleSpaceRequest): CoupleSpace
 
-    @POST("api/couple-invites")
-    suspend fun createInvite(@Body request: CreateInviteRequest): InviteResponse
+    @POST("api/onboarding")
+    suspend fun onboarding(@Body request: OnboardingRequest): OnboardingResponse
 
-    @POST("api/couple-invites/accept")
-    suspend fun acceptInvite(@Body request: AcceptInviteRequest): AcceptInviteResponse
+    @POST("api/couple-binds")
+    suspend fun createBind(@Body request: CreateBindRequest): BindRequestDto
 
-    @DELETE("api/couple-invites/{id}")
-    suspend fun cancelInvite(@Path("id") id: String): OkResponse
+    @POST("api/couple-binds/{id}/accept")
+    suspend fun acceptBind(@Path("id") id: String): AcceptBindResponse
+
+    @POST("api/couple-binds/{id}/reject")
+    suspend fun rejectBind(@Path("id") id: String): OkResponse
+
+    @POST("api/couple-binds/{id}/cancel")
+    suspend fun cancelBind(@Path("id") id: String): OkResponse
+
+    @PATCH("api/couple-link")
+    suspend fun updateCoupleLink(@Body request: UpdateCoupleLinkRequest): CoupleLinkResponse
 
     @GET("api/bootstrap")
     suspend fun bootstrap(): BootstrapResponse

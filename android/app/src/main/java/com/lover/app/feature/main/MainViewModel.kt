@@ -4,19 +4,15 @@ import android.net.Uri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.lover.app.core.data.AppRepository
-import com.lover.app.core.data.InviteSession
 import com.lover.app.core.model.*
 import com.lover.app.core.network.BackendException
 import com.lover.app.core.notice.NoticeStore
-import com.lover.app.core.util.InviteLinks
 import dagger.hilt.android.lifecycle.HiltViewModel
 import java.time.LocalDate
 import javax.inject.Inject
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 
 enum class MainTab { HOME, TIMELINE, ANNIVERSARY, LETTERS, PROFILE }
@@ -25,18 +21,14 @@ enum class MainTab { HOME, TIMELINE, ANNIVERSARY, LETTERS, PROFILE }
 class MainViewModel @Inject constructor(
     private val repository: AppRepository,
     private val noticeStore: NoticeStore,
-    private val inviteSession: InviteSession,
 ) : ViewModel() {
     val data = repository.state
-    val pendingInviteCode = inviteSession.pendingCode
     private val _selectedTab = MutableStateFlow(MainTab.HOME)
     val selectedTab = _selectedTab.asStateFlow()
     private val _restoreComplete = MutableStateFlow(false)
     val restoreComplete = _restoreComplete.asStateFlow()
-    private val _lastInvite = MutableStateFlow<InviteResponse?>(null)
-    val lastInvite = _lastInvite.asStateFlow()
-    private val _openBindSheet = MutableStateFlow(false)
-    val openBindSheet = _openBindSheet.asStateFlow()
+    private val _promptTogetherDate = MutableStateFlow(false)
+    val promptTogetherDate = _promptTogetherDate.asStateFlow()
 
     init {
         viewModelScope.launch {
@@ -44,7 +36,6 @@ class MainViewModel @Inject constructor(
             if (loaded.accessToken != null) {
                 runCatching { repository.restoreSession() }
                     .onFailure { error ->
-                        // 刷新失败并已清会话时，交给登录页，不再弹「token 已过期」
                         if (repository.state.value.accessToken != null) {
                             noticeStore.error(error.message ?: "刷新失败，已显示缓存")
                         }
@@ -52,74 +43,45 @@ class MainViewModel @Inject constructor(
             }
             _restoreComplete.value = true
         }
-        viewModelScope.launch {
-            inviteSession.pendingCode.collect { code ->
-                if (!code.isNullOrBlank() && data.value.accessToken != null) {
-                    openBindFromPendingInvite()
-                }
-            }
-        }
-        viewModelScope.launch {
-            data.map { it.accessToken }.distinctUntilChanged().collect { token ->
-                if (token != null && !inviteSession.pendingCode.value.isNullOrBlank()) {
-                    openBindFromPendingInvite()
-                }
-            }
-        }
-    }
-
-    private fun openBindFromPendingInvite() {
-        _selectedTab.value = MainTab.PROFILE
-        _openBindSheet.value = true
     }
 
     fun selectTab(tab: MainTab) {
         _selectedTab.value = tab
     }
 
-    fun dismissBindSheet() {
-        _openBindSheet.value = false
+    fun requestBind(phone: String) = launchAction("已发送绑定请求") {
+        require(phone.trim().length == 11) { "请输入对方手机号" }
+        repository.requestBind(phone)
     }
 
-    fun requestBindSheet() {
-        _openBindSheet.value = true
-    }
-
-    fun clearPendingInvite() {
-        inviteSession.clear()
-    }
-
-    fun createInvite(togetherDate: String? = null, onDone: (InviteResponse) -> Unit = {}) = launchAction(null) {
-        requireSpaceOrCreating(togetherDate)
-        val invite = repository.createInvite(togetherDate)
-        _lastInvite.value = invite
-        onDone(invite)
-        noticeStore.success("邀请已生成")
-    }
-
-    fun acceptInvite(code: String) = launchAction("绑定成功") {
-        require(code.trim().length >= 6) { "请输入有效邀请码" }
-        repository.acceptInvite(code)
-        inviteSession.clear()
-        _openBindSheet.value = false
-        _lastInvite.value = null
-    }
-
-    fun resolveInviteUrl(invite: InviteResponse?): String {
-        val value = invite ?: _lastInvite.value ?: return ""
-        return value.inviteUrl?.takeIf { it.isNotBlank() } ?: InviteLinks.buildUrl(value.code)
-    }
-
-    private fun requireSpaceOrCreating(togetherDate: String?) {
-        if (repository.state.value.activeSpaceId == null) {
-            require(!togetherDate.isNullOrBlank()) { "创建空间时需要设置在一起的日期" }
-            LocalDate.parse(togetherDate)
+    fun acceptBind(id: String) = launchAction("绑定成功") {
+        val result = repository.acceptBind(id)
+        if (result.needsTogetherDate) {
+            _promptTogetherDate.value = true
         }
     }
 
+    fun rejectBind(id: String) = launchAction("已拒绝") {
+        repository.rejectBind(id)
+    }
+
+    fun cancelBind(id: String) = launchAction("已取消") {
+        repository.cancelBind(id)
+    }
+
+    fun dismissTogetherDatePrompt() {
+        _promptTogetherDate.value = false
+    }
+
+    fun saveTogetherDate(date: String?) = launchAction(if (date == null) null else "已保存") {
+        if (date != null) LocalDate.parse(date)
+        repository.updateTogetherDate(date)
+        _promptTogetherDate.value = false
+    }
+
     private fun requireSpace() {
-        require(repository.state.value.activeSpaceId != null) {
-            "请先在「我们」邀请或绑定另一半，创建你们的空间"
+        require(repository.state.value.profileCompleted && repository.state.value.personalSpaceId != null) {
+            "请先完成空间创建"
         }
     }
 
@@ -148,10 +110,23 @@ class MainViewModel @Inject constructor(
         repository.addAnniversary(title, date, type)
     }
 
-    fun addLetter(title: String, content: String, type: LetterType, unlockDate: String?) = launchAction("已保存") {
+    fun addLetter(
+        title: String,
+        content: String,
+        type: LetterType,
+        unlockDate: String?,
+        unlockOnPartnerBind: Boolean = false,
+    ) = launchAction("已保存") {
         requireSpace()
-        validateLetter(title, content, type, unlockDate)
-        repository.addLetter(title, content, type, unlockDate)
+        validateLetter(
+            title,
+            content,
+            type,
+            unlockDate,
+            unlockOnPartnerBind,
+            linked = repository.state.value.linked,
+        )
+        repository.addLetter(title, content, type, unlockDate, unlockOnPartnerBind)
     }
 
     fun refresh() = viewModelScope.launch {
@@ -167,7 +142,6 @@ class MainViewModel @Inject constructor(
         noticeStore.clear()
         runCatching { repository.logout() }
             .onFailure { error ->
-                // 本地会话已清理；仅网络失败时提示，不把鉴权失败抛到登录页
                 if (!isAuthFailure(error) && repository.state.value.accessToken != null) {
                     noticeStore.error(error.message ?: "退出失败")
                 }
@@ -198,7 +172,6 @@ class MainViewModel @Inject constructor(
             }
             .onFailure { error ->
                 if (isAuthFailure(error) && repository.state.value.accessToken == null) {
-                    // 会话已被刷新链路清掉，避免登录页再弹 token 过期
                     noticeStore.clear()
                 } else {
                     noticeStore.error(error.message ?: "操作失败")
@@ -212,12 +185,17 @@ class MainViewModel @Inject constructor(
             content: String,
             type: LetterType,
             unlockDate: String?,
+            unlockOnPartnerBind: Boolean = false,
+            linked: Boolean = true,
             today: LocalDate = LocalDate.now(),
         ) {
             require(title.isNotBlank()) { "请填写标题" }
             require(content.isNotBlank()) { "请写下想说的话" }
-            if (type == LetterType.CAPSULE) {
-                require(!unlockDate.isNullOrBlank()) { "请选择解锁日期" }
+            if (type == LetterType.INSTANT) {
+                require(linked) { "绑定另一半后才能发送即时信" }
+            }
+            if (type == LetterType.CAPSULE && !unlockOnPartnerBind) {
+                require(!unlockDate.isNullOrBlank()) { "请选择解锁日期，或勾选绑定后开启" }
                 require(LocalDate.parse(unlockDate).isAfter(today)) { "解锁日期必须晚于今天" }
             }
         }

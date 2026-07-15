@@ -1,224 +1,393 @@
-import { createHash, randomBytes } from 'node:crypto';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import type { AppContext, AuthHandler } from '../types.js';
 import { badRequest, conflict, forbidden, notFound } from '../errors.js';
-import { canAcceptInvite } from '../domain.js';
+import { getActiveCoupleLink, personalSpaceId } from './spaces.js';
+
+export { activeSpaceId, writeSpaceId, personalSpaceId, readableSpaceIds } from './spaces.js';
 
 const dateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/).refine((value) => {
   const date = new Date(`${value}T00:00:00Z`);
   return !Number.isNaN(date.valueOf()) && date.toISOString().slice(0, 10) === value;
 }, '日期无效');
-const createInviteSchema = z.object({
-  togetherDate: dateSchema.optional(),
-  spaceName: z.string().trim().min(1).max(40).optional(),
+
+const onboardingSchema = z.object({
+  nickname: z.string().trim().min(1).max(30),
+  avatarUrl: z.string().url().max(500).nullable().optional(),
+  gender: z.enum(['male', 'female', 'unspecified']),
+  birthday: dateSchema,
+  spaceName: z.string().trim().min(1).max(40),
 }).strict();
-const acceptSchema = z.object({ code: z.string().trim().min(6).max(32) }).strict();
-const updateSchema = z.object({
-  name: z.string().trim().min(1).max(40).optional(),
+
+const bindPhoneSchema = z.object({
+  phone: z.string().trim().regex(/^1[3-9]\d{9}$/, '请输入有效手机号'),
+}).strict();
+
+const updateLinkSchema = z.object({
   togetherDate: dateSchema.nullable().optional(),
+  name: z.string().trim().min(1).max(40).optional(),
 }).strict().refine((value) => Object.keys(value).length > 0, '至少提供一个更新字段');
+
+const updateSpaceSchema = z.object({
+  name: z.string().trim().min(1).max(40),
+}).strict();
+
+const idSchema = z.object({ id: z.string().uuid() }).strict();
 const unbindSchema = z.object({ reason: z.string().trim().max(300).optional() }).strict();
 
-const hashCode = (code: string) => createHash('sha256').update(code.toUpperCase()).digest('hex');
-
-export async function activeSpaceId(context: AppContext, userId: string) {
-  const result = await context.db.query<{ space_id: string }>(
-    `select space_id from couple_members where user_id = $1 and status = 'active'`,
-    [userId],
-  );
-  if (!result.rows[0]) throw forbidden('请先绑定情侣空间');
-  return result.rows[0].space_id;
-}
+type UserCard = {
+  id: string;
+  phone: string;
+  nickname: string;
+  avatarUrl: string | null;
+  gender: string | null;
+  birthday: string | null;
+};
 
 export function registerCouples(app: FastifyInstance, context: AppContext, auth: AuthHandler) {
   const { db } = context;
 
+  app.post('/api/onboarding', { preHandler: auth }, async (request, reply) => {
+    const input = onboardingSchema.parse(request.body);
+    const result = await db.transaction(async (client) => {
+      await client.query(`select pg_advisory_xact_lock(hashtext($1))`, [request.user.id]);
+      const me = await client.query<{ profile_completed: boolean; personal_space_id: string | null }>(
+        `select profile_completed, personal_space_id from users where id = $1 for update`,
+        [request.user.id],
+      );
+      const row = me.rows[0];
+      if (!row) throw notFound('用户不存在');
+      if (row.profile_completed && row.personal_space_id) {
+        throw conflict('ALREADY_ONBOARDED', '已完成空间创建');
+      }
+
+      const space = await client.query<{ id: string; name: string }>(
+        `insert into couple_spaces(name, together_date, kind)
+         values ($1, null, 'personal')
+         returning id, name`,
+        [input.spaceName],
+      );
+      const spaceId = space.rows[0]!.id;
+      await client.query(
+        `insert into couple_members(space_id, user_id, status) values ($1, $2, 'active')`,
+        [spaceId, request.user.id],
+      );
+      const user = await client.query<UserCard>(
+        `update users set
+           nickname = $2,
+           avatar_url = coalesce($3, avatar_url),
+           gender = $4,
+           birthday = $5::date,
+           profile_completed = true,
+           personal_space_id = $6,
+           updated_at = now()
+         where id = $1
+         returning id, phone, nickname, avatar_url as "avatarUrl", gender, birthday::text as birthday`,
+        [
+          request.user.id,
+          input.nickname,
+          input.avatarUrl ?? null,
+          input.gender,
+          input.birthday,
+          spaceId,
+        ],
+      );
+      return { user: user.rows[0]!, personalSpaceId: spaceId, spaceName: space.rows[0]!.name };
+    });
+    return reply.code(201).send(result);
+  });
+
   app.get('/api/couple-space', { preHandler: auth }, async (request) => {
-    const spaceId = await activeSpaceId(context, request.user.id);
-    const [space, members, unbinding] = await Promise.all([
-      db.query(
-        `select id, name, together_date as "togetherDate", status, created_at as "createdAt"
-         from couple_spaces where id = $1`,
-        [spaceId],
-      ),
-      db.query(
-        `select u.id, u.nickname, u.avatar_url as "avatarUrl", m.joined_at as "joinedAt"
-         from couple_members m join users u on u.id = m.user_id
-         where m.space_id = $1 and m.status = 'active' order by m.joined_at`,
-        [spaceId],
-      ),
-      db.query(
+    const personalId = await personalSpaceId(context, request.user.id);
+    const link = await getActiveCoupleLink(context, request.user.id);
+    const space = await db.query(
+      `select id, name, kind, together_date as "togetherDate", status, created_at as "createdAt"
+       from couple_spaces where id = $1`,
+      [link?.loverSpaceId ?? personalId],
+    );
+    const members = link
+      ? await db.query(
+        `select u.id, u.nickname, u.avatar_url as "avatarUrl", u.gender, u.birthday::text as birthday
+         from users u where u.id = any($1::uuid[])`,
+        [[link.userAId, link.userBId]],
+      )
+      : await db.query(
+        `select u.id, u.nickname, u.avatar_url as "avatarUrl", u.gender, u.birthday::text as birthday
+         from users u where u.id = $1`,
+        [request.user.id],
+      );
+
+    const pendingIncoming = await db.query(
+      `select r.id, r.requester_id as "requesterId", r.status, r.expires_at as "expiresAt",
+              r.created_at as "createdAt",
+              u.nickname as "requesterNickname", u.phone as "requesterPhone",
+              u.avatar_url as "requesterAvatarUrl"
+       from couple_bind_requests r
+       join users u on u.id = r.requester_id
+       where r.target_user_id = $1 and r.status = 'pending' and r.expires_at > now()
+       order by r.created_at desc`,
+      [request.user.id],
+    );
+    const pendingOutgoing = await db.query(
+      `select r.id, r.target_user_id as "targetUserId", r.status, r.expires_at as "expiresAt",
+              r.created_at as "createdAt",
+              u.nickname as "targetNickname", u.phone as "targetPhone",
+              u.avatar_url as "targetAvatarUrl"
+       from couple_bind_requests r
+       join users u on u.id = r.target_user_id
+       where r.requester_id = $1 and r.status = 'pending' and r.expires_at > now()
+       order by r.created_at desc
+       limit 1`,
+      [request.user.id],
+    );
+
+    let pendingUnbinding = null;
+    if (link) {
+      const unbinding = await db.query(
         `select id, requested_by as "requestedBy", status, reason, created_at as "createdAt"
          from unbinding_requests where space_id = $1 and status = 'pending'`,
-        [spaceId],
-      ),
-    ]);
-    return { ...space.rows[0], members: members.rows, pendingUnbinding: unbinding.rows[0] ?? null };
+        [link.loverSpaceId],
+      );
+      pendingUnbinding = unbinding.rows[0] ?? null;
+    }
+
+    return {
+      ...space.rows[0],
+      togetherDate: link?.togetherDate ?? null,
+      linked: Boolean(link),
+      coupleLinkId: link?.id ?? null,
+      personalSpaceId: personalId,
+      loverSpaceId: link?.loverSpaceId ?? null,
+      members: members.rows,
+      pendingUnbinding,
+      pendingIncomingBinds: pendingIncoming.rows,
+      pendingOutgoingBind: pendingOutgoing.rows[0] ?? null,
+    };
   });
 
   app.patch('/api/couple-space', { preHandler: auth }, async (request) => {
-    const spaceId = await activeSpaceId(context, request.user.id);
-    const input = updateSchema.parse(request.body);
+    const personalId = await personalSpaceId(context, request.user.id);
+    const input = updateSpaceSchema.parse(request.body);
     const result = await db.query(
-      `update couple_spaces set
-         name = case when $2::boolean then $3 else name end,
-         together_date = case when $4::boolean then $5::date else together_date end,
-         updated_at = now()
-       where id = $1 and status = 'active'
-       returning id, name, together_date as "togetherDate", status`,
-      [spaceId, input.name !== undefined, input.name ?? null, input.togetherDate !== undefined, input.togetherDate ?? null],
+      `update couple_spaces set name = $2, updated_at = now()
+       where id = $1 and kind = 'personal' and status = 'active'
+       returning id, name, kind, status`,
+      [personalId, input.name],
     );
+    if (!result.rowCount) throw notFound('个人空间不存在');
     return result.rows[0];
   });
 
-  app.post('/api/couple-invites', {
-    preHandler: auth,
-    config: { rateLimit: { max: 10, timeWindow: '1 hour' } },
-  }, async (request, reply) => {
-    const input = createInviteSchema.parse(request.body);
-    const code = randomBytes(5).toString('hex').toUpperCase();
-    const invite = await db.transaction(async (client) => {
-      await client.query(`select pg_advisory_xact_lock(hashtext($1))`, [request.user.id]);
-      let membership = await client.query<{ space_id: string }>(
-        `select space_id from couple_members where user_id = $1 and status = 'active' for update`,
-        [request.user.id],
+  app.patch('/api/couple-link', { preHandler: auth }, async (request) => {
+    const link = await getActiveCoupleLink(context, request.user.id);
+    if (!link) throw forbidden('请先完成伴侣绑定');
+    const input = updateLinkSchema.parse(request.body);
+    if (input.name !== undefined) {
+      await db.query(
+        `update couple_spaces set name = $2, updated_at = now() where id = $1 and kind = 'lover'`,
+        [link.loverSpaceId, input.name],
       );
-      let spaceId = membership.rows[0]?.space_id;
-      if (!spaceId) {
-        if (!input.togetherDate) {
-          throw badRequest('TOGETHER_DATE_REQUIRED', '创建空间时需要设置在一起的日期');
-        }
-        const created = await client.query<{ id: string }>(
-          `insert into couple_spaces(name, together_date) values ($1, $2) returning id`,
-          [input.spaceName ?? '我们的小宇宙', input.togetherDate],
-        );
-        spaceId = created.rows[0]!.id;
-        await client.query(
-          `insert into couple_members(space_id, user_id, status) values ($1, $2, 'active')`,
-          [spaceId, request.user.id],
-        );
-      }
-      const count = await client.query<{ count: number }>(
-        `select count(*)::int as count from couple_members where space_id = $1 and status = 'active'`,
-        [spaceId],
+    }
+    if (input.togetherDate !== undefined) {
+      await db.query(
+        `update couple_links set together_date = $2 where id = $1 and status = 'active'`,
+        [link.id, input.togetherDate],
       );
-      if ((count.rows[0]?.count ?? 0) >= 2) throw conflict('SPACE_FULL', '情侣空间已有两名成员');
-      await client.query(
-        `update couple_invites set status = 'cancelled'
-         where space_id = $1 and inviter_id = $2 and status = 'pending'`,
-        [spaceId, request.user.id],
-      );
-      const result = await client.query(
-        `insert into couple_invites(space_id, inviter_id, code_hash, expires_at)
-         values ($1, $2, $3, now() + interval '7 days')
-         returning id, space_id as "spaceId", expires_at as "expiresAt"`,
-        [spaceId, request.user.id, hashCode(code)],
-      );
-      return result.rows[0];
-    });
-    return reply.code(201).send({
-      ...invite,
-      code,
-      inviteUrl: buildInviteUrl(context.config.publicBaseUrl, code),
-    });
+    }
+    const refreshed = await getActiveCoupleLink(context, request.user.id);
+    return {
+      id: refreshed!.id,
+      loverSpaceId: refreshed!.loverSpaceId,
+      togetherDate: refreshed!.togetherDate,
+    };
   });
 
-  /** H5 落地：微信等内打开 → 引导打开 App / 复制邀请码 */
-  app.get('/invite/:code', async (request, reply) => {
-    const { code } = z.object({
-      code: z.string().trim().min(6).max(32),
-    }).parse(request.params);
-    const normalized = code.toUpperCase();
-    const existing = await db.query(
-      `select 1 from couple_invites
-       where code_hash = $1 and status = 'pending' and expires_at > now()`,
-      [hashCode(normalized)],
-    );
-    const valid = Boolean(existing.rowCount);
-    return reply
-      .type('text/html; charset=utf-8')
-      .header('Cache-Control', 'no-store')
-      .send(inviteLandingHtml({
-        code: normalized,
-        valid,
-        appDeepLink: `lover://invite/${encodeURIComponent(normalized)}`,
-      }));
-  });
-
-  app.post('/api/couple-invites/accept', {
+  app.post('/api/couple-binds', {
     preHandler: auth,
     config: { rateLimit: { max: 20, timeWindow: '1 hour' } },
-  }, async (request) => {
-    const { code } = acceptSchema.parse(request.body);
+  }, async (request, reply) => {
+    const { phone } = bindPhoneSchema.parse(request.body);
+    if (phone === request.user.phone) throw badRequest('SELF_BIND', '不能绑定自己的手机号');
+    await personalSpaceId(context, request.user.id);
+    if (await getActiveCoupleLink(context, request.user.id)) {
+      throw conflict('ALREADY_LINKED', '你已绑定另一半');
+    }
+
+    const target = await db.query<{ id: string; profile_completed: boolean }>(
+      `select id, profile_completed from users where phone = $1`,
+      [phone],
+    );
+    if (!target.rowCount) throw notFound('该手机号尚未注册 Lover');
+    const targetUser = target.rows[0]!;
+    if (!targetUser.profile_completed) throw badRequest('TARGET_INCOMPLETE', '对方尚未完成空间创建');
+    if (await getActiveCoupleLink(context, targetUser.id)) {
+      throw conflict('TARGET_LINKED', '对方已绑定另一半');
+    }
+
+    const existingToMe = await db.query(
+      `select id from couple_bind_requests
+       where requester_id = $1 and target_user_id = $2 and status = 'pending' and expires_at > now()`,
+      [targetUser.id, request.user.id],
+    );
+    if (existingToMe.rowCount) {
+      throw conflict('REVERSE_PENDING', '对方已向你发起绑定，请先处理收到的请求');
+    }
+
+    try {
+      await db.query(
+        `update couple_bind_requests set status = 'cancelled', resolved_at = now()
+         where requester_id = $1 and status = 'pending'`,
+        [request.user.id],
+      );
+      const created = await db.query(
+        `insert into couple_bind_requests(requester_id, target_user_id)
+         values ($1, $2)
+         returning id, requester_id as "requesterId", target_user_id as "targetUserId",
+                   status, expires_at as "expiresAt", created_at as "createdAt"`,
+        [request.user.id, targetUser.id],
+      );
+      return reply.code(201).send(created.rows[0]);
+    } catch (error: unknown) {
+      if ((error as { code?: string }).code === '23505') {
+        throw conflict('BIND_PENDING', '已有待确认的绑定请求');
+      }
+      throw error;
+    }
+  });
+
+  app.get('/api/couple-binds/pending', { preHandler: auth }, async (request) => {
+    const [incoming, outgoing] = await Promise.all([
+      db.query(
+        `select r.id, r.requester_id as "requesterId", r.status, r.expires_at as "expiresAt",
+                r.created_at as "createdAt",
+                u.nickname as "requesterNickname", u.phone as "requesterPhone"
+         from couple_bind_requests r join users u on u.id = r.requester_id
+         where r.target_user_id = $1 and r.status = 'pending' and r.expires_at > now()`,
+        [request.user.id],
+      ),
+      db.query(
+        `select r.id, r.target_user_id as "targetUserId", r.status, r.expires_at as "expiresAt",
+                r.created_at as "createdAt",
+                u.nickname as "targetNickname", u.phone as "targetPhone"
+         from couple_bind_requests r join users u on u.id = r.target_user_id
+         where r.requester_id = $1 and r.status = 'pending' and r.expires_at > now()`,
+        [request.user.id],
+      ),
+    ]);
+    return { incoming: incoming.rows, outgoing: outgoing.rows };
+  });
+
+  app.post('/api/couple-binds/:id/accept', { preHandler: auth }, async (request) => {
+    const { id } = idSchema.parse(request.params);
     return db.transaction(async (client) => {
-      const inviteResult = await client.query<{
-        id: string; space_id: string; inviter_id: string; status: string; expires_at: Date;
+      const req = await client.query<{
+        id: string;
+        requester_id: string;
+        target_user_id: string;
+        status: string;
+        expires_at: Date;
       }>(
-        `select id, space_id, inviter_id, status, expires_at
-         from couple_invites where code_hash = $1 for update`,
-        [hashCode(code)],
+        `select id, requester_id, target_user_id, status, expires_at
+         from couple_bind_requests where id = $1 for update`,
+        [id],
       );
-      const invite = inviteResult.rows[0];
-      if (!invite) throw notFound('邀请码不存在');
-      if (invite.inviter_id === request.user.id) throw badRequest('SELF_INVITE', '不能接受自己的邀请');
-      await client.query(`select pg_advisory_xact_lock(hashtext($1))`, [request.user.id]);
-      const [count, current] = await Promise.all([
-        client.query<{ count: number }>(
-          `select count(*)::int as count from couple_members where space_id = $1 and status = 'active'`,
-          [invite.space_id],
-        ),
-        client.query<{ space_id: string }>(
-          `select space_id from couple_members where user_id = $1 and status = 'active'`,
-          [request.user.id],
-        ),
-      ]);
-      const decision = canAcceptInvite({
-        inviteStatus: invite.status,
-        expiresAt: invite.expires_at,
-        memberCount: count.rows[0]?.count ?? 0,
-        inviteeActiveSpaceId: current.rows[0]?.space_id ?? null,
-        inviteSpaceId: invite.space_id,
-      });
-      if (!decision.ok) throw conflict('INVITE_NOT_ACCEPTABLE', decision.reason);
+      const bind = req.rows[0];
+      if (!bind) throw notFound('绑定请求不存在');
+      if (bind.target_user_id !== request.user.id) throw forbidden('只能处理发给自己的绑定请求');
+      if (bind.status !== 'pending') throw conflict('BIND_NOT_PENDING', '请求已处理');
+      if (bind.expires_at <= new Date()) throw conflict('BIND_EXPIRED', '绑定请求已过期');
+
+      for (const uid of [bind.requester_id, bind.target_user_id]) {
+        const linked = await client.query(
+          `select id from couple_links where status = 'active' and (user_a_id = $1 or user_b_id = $1)`,
+          [uid],
+        );
+        if (linked.rowCount) throw conflict('ALREADY_LINKED', '一方已完成绑定');
+      }
+
+      const [a, b] = bind.requester_id < bind.target_user_id
+        ? [bind.requester_id, bind.target_user_id]
+        : [bind.target_user_id, bind.requester_id];
+
+      const lover = await client.query<{ id: string }>(
+        `insert into couple_spaces(name, together_date, kind)
+         values ('我们的小宇宙', null, 'lover') returning id`,
+      );
+      const loverSpaceId = lover.rows[0]!.id;
       await client.query(
-        `insert into couple_members(space_id, user_id, status)
-         values ($1, $2, 'active')`,
-        [invite.space_id, request.user.id],
+        `insert into couple_members(space_id, user_id, status) values ($1, $2, 'active'), ($1, $3, 'active')`,
+        [loverSpaceId, a, b],
       );
-      await client.query(`update couple_invites set status = 'accepted', accepted_by = $2 where id = $1`, [
-        invite.id,
-        request.user.id,
-      ]);
-      return { spaceId: invite.space_id };
+      const link = await client.query(
+        `insert into couple_links(user_a_id, user_b_id, lover_space_id, status)
+         values ($1, $2, $3, 'active')
+         returning id, lover_space_id as "loverSpaceId", together_date as "togetherDate"`,
+        [a, b, loverSpaceId],
+      );
+      await client.query(
+        `update couple_bind_requests set status = 'accepted', resolved_at = now() where id = $1`,
+        [bind.id],
+      );
+      await client.query(
+        `update couple_bind_requests set status = 'cancelled', resolved_at = now()
+         where status = 'pending' and id <> $1
+           and (requester_id = any($2::uuid[]) or target_user_id = any($2::uuid[]))`,
+        [bind.id, [a, b]],
+      );
+
+      // Auto-unlock capsules waiting for partner bind (both users' personal/couple letters).
+      await client.query(
+        `update letters
+         set unlock_at = now(), unlock_on_partner_bind = false, updated_at = now()
+         where unlock_on_partner_bind = true
+           and type = 'capsule'
+           and sender_id = any($1::uuid[])
+           and (unlock_at is null or unlock_at > now())`,
+        [[a, b]],
+      );
+
+      return {
+        coupleLinkId: link.rows[0]!.id,
+        loverSpaceId,
+        togetherDate: null,
+        needsTogetherDate: true,
+      };
     });
   });
 
-  app.delete('/api/couple-invites/:id', { preHandler: auth }, async (request) => {
-    const { id } = z.object({ id: z.string().uuid() }).strict().parse(request.params);
+  app.post('/api/couple-binds/:id/reject', { preHandler: auth }, async (request) => {
+    const { id } = idSchema.parse(request.params);
     const result = await db.query(
-      `update couple_invites set status = 'cancelled'
-       where id = $1 and inviter_id = $2 and status = 'pending' returning id`,
+      `update couple_bind_requests set status = 'rejected', resolved_at = now()
+       where id = $1 and target_user_id = $2 and status = 'pending' returning id`,
       [id, request.user.id],
     );
-    if (!result.rowCount) throw notFound('邀请不存在或不可取消');
+    if (!result.rowCount) throw notFound('绑定请求不存在');
     return { ok: true };
   });
 
-  app.post('/api/couple-space/unbinding', { preHandler: auth }, async (request, reply) => {
-    const spaceId = await activeSpaceId(context, request.user.id);
-    const { reason } = unbindSchema.parse(request.body);
-    const members = await db.query<{ count: number }>(
-      `select count(*)::int as count from couple_members where space_id = $1 and status = 'active'`,
-      [spaceId],
+  app.post('/api/couple-binds/:id/cancel', { preHandler: auth }, async (request) => {
+    const { id } = idSchema.parse(request.params);
+    const result = await db.query(
+      `update couple_bind_requests set status = 'cancelled', resolved_at = now()
+       where id = $1 and requester_id = $2 and status = 'pending' returning id`,
+      [id, request.user.id],
     );
-    if ((members.rows[0]?.count ?? 0) < 2) throw badRequest('NO_PARTNER', '当前空间没有可确认解绑的伴侣');
+    if (!result.rowCount) throw notFound('绑定请求不存在');
+    return { ok: true };
+  });
+
+  // Unbinding remains structured against lover space; content policy deferred.
+  app.post('/api/couple-space/unbinding', { preHandler: auth }, async (request, reply) => {
+    const link = await getActiveCoupleLink(context, request.user.id);
+    if (!link) throw badRequest('NO_PARTNER', '当前没有可解绑的伴侣关系');
+    const { reason } = unbindSchema.parse(request.body);
     try {
       const result = await db.query(
         `insert into unbinding_requests(space_id, requested_by, reason)
          values ($1, $2, $3)
          returning id, status, reason, created_at as "createdAt"`,
-        [spaceId, request.user.id, reason ?? null],
+        [link.loverSpaceId, request.user.id, reason ?? null],
       );
       return reply.code(201).send(result.rows[0]);
     } catch (error: unknown) {
@@ -228,17 +397,18 @@ export function registerCouples(app: FastifyInstance, context: AppContext, auth:
   });
 
   app.post('/api/couple-space/unbinding/:id/confirm', { preHandler: auth }, async (request) => {
-    const spaceId = await activeSpaceId(context, request.user.id);
-    const { id } = z.object({ id: z.string().uuid() }).strict().parse(request.params);
+    const link = await getActiveCoupleLink(context, request.user.id);
+    if (!link) throw forbidden('请先绑定情侣空间');
+    const { id } = idSchema.parse(request.params);
     return db.transaction(async (client) => {
-      const pending = await client.query<{ requested_by: string }>(
-        `select requested_by from unbinding_requests
+      const pending = await client.query<{ id: string; requested_by: string }>(
+        `select id, requested_by from unbinding_requests
          where id = $1 and space_id = $2 and status = 'pending' for update`,
-        [id, spaceId],
+        [id, link.loverSpaceId],
       );
       const row = pending.rows[0];
       if (!row) throw notFound('解绑申请不存在');
-      if (row.requested_by === request.user.id) throw forbidden('申请人不能自行确认解绑');
+      if (row.requested_by === request.user.id) throw badRequest('SELF_CONFIRM', '不能确认自己发起的解绑');
       await client.query(
         `update unbinding_requests set status = 'confirmed', confirmed_by = $2, resolved_at = now() where id = $1`,
         [id, request.user.id],
@@ -246,110 +416,31 @@ export function registerCouples(app: FastifyInstance, context: AppContext, auth:
       await client.query(
         `update couple_members set status = 'inactive', left_at = now()
          where space_id = $1 and status = 'active'`,
-        [spaceId],
+        [link.loverSpaceId],
       );
-      await client.query(`update couple_spaces set status = 'dissolved', dissolved_at = now() where id = $1`, [spaceId]);
-      await client.query(`update couple_invites set status = 'cancelled' where space_id = $1 and status = 'pending'`, [spaceId]);
+      await client.query(
+        `update couple_spaces set status = 'dissolved', dissolved_at = now() where id = $1`,
+        [link.loverSpaceId],
+      );
+      await client.query(
+        `update couple_links set status = 'ended', ended_at = now() where id = $1`,
+        [link.id],
+      );
+      // Lover-space content retained with ownership=couple for future policy.
       return { ok: true };
     });
   });
 
   app.post('/api/couple-space/unbinding/:id/cancel', { preHandler: auth }, async (request) => {
-    const spaceId = await activeSpaceId(context, request.user.id);
-    const { id } = z.object({ id: z.string().uuid() }).strict().parse(request.params);
+    const link = await getActiveCoupleLink(context, request.user.id);
+    if (!link) throw forbidden('请先绑定情侣空间');
+    const { id } = idSchema.parse(request.params);
     const result = await db.query(
       `update unbinding_requests set status = 'cancelled', resolved_at = now()
        where id = $1 and space_id = $2 and status = 'pending' returning id`,
-      [id, spaceId],
+      [id, link.loverSpaceId],
     );
     if (!result.rowCount) throw notFound('解绑申请不存在');
     return { ok: true };
   });
-}
-
-function buildInviteUrl(publicBaseUrl: string, code: string) {
-  return `${publicBaseUrl.replace(/\/+$/, '')}/invite/${encodeURIComponent(code)}`;
-}
-
-function inviteLandingHtml(input: { code: string; valid: boolean; appDeepLink: string }) {
-  const { code, valid, appDeepLink } = input;
-  const statusLine = valid
-    ? '对方在等你一起进入小宇宙'
-    : '这个邀请可能已使用或已过期，仍可尝试打开 App 绑定';
-  const safeCode = escapeHtml(code);
-  const safeLink = escapeHtml(appDeepLink);
-  return `<!doctype html>
-<html lang="zh-CN">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Lover 邀请</title>
-  <style>
-    :root { color-scheme: light; }
-    body {
-      margin: 0; min-height: 100vh; display: grid; place-items: center;
-      font-family: "PingFang SC", "Noto Sans SC", system-ui, sans-serif;
-      background: linear-gradient(180deg, #ffe9e6 0%, #fffcfb 55%, #fff 100%);
-      color: #332927;
-    }
-    .card {
-      width: min(92vw, 380px); background: rgba(255,255,255,.96);
-      border-radius: 28px; padding: 28px 24px 24px; box-shadow: 0 12px 40px rgba(184,79,102,.12);
-      text-align: center;
-    }
-    .brand { font-size: 34px; color: #9f1239; opacity: .55; margin: 0 0 8px; font-family: Georgia, "Pinyon Script", cursive; }
-    h1 { font-size: 20px; margin: 0 0 8px; }
-    p { margin: 0 0 18px; color: #857a78; font-size: 14px; line-height: 1.5; }
-    .code {
-      font-size: 28px; letter-spacing: .12em; font-weight: 700; color: #b84f66;
-      background: #ffe9e6; border-radius: 18px; padding: 16px; margin-bottom: 16px;
-    }
-    .btn {
-      display: block; width: 100%; border: 0; border-radius: 18px; padding: 14px 16px;
-      font-size: 16px; font-weight: 600; margin-bottom: 10px; cursor: pointer; text-decoration: none;
-      box-sizing: border-box;
-    }
-    .primary { background: #e88998; color: #fff; }
-    .secondary { background: #fff; color: #b84f66; border: 1px solid #e9dad6; }
-    .hint { font-size: 12px; color: #a8a29e; margin-top: 8px; }
-  </style>
-</head>
-<body>
-  <main class="card">
-    <div class="brand">lover.</div>
-    <h1>一起组成小宇宙</h1>
-    <p>${statusLine}</p>
-    <div class="code" id="code">${safeCode}</div>
-    <a class="btn primary" href="${safeLink}">打开 Lover</a>
-    <button class="btn secondary" type="button" id="copy">复制邀请码</button>
-    <p class="hint">若无法直接打开，请先安装 Lover，再粘贴邀请码完成绑定</p>
-  </main>
-  <script>
-    const code = ${JSON.stringify(code)};
-    document.getElementById('copy').addEventListener('click', async () => {
-      try {
-        await navigator.clipboard.writeText(code);
-        document.getElementById('copy').textContent = '已复制';
-      } catch (_) {
-        const range = document.createRange();
-        range.selectNodeContents(document.getElementById('code'));
-        const sel = window.getSelection();
-        sel.removeAllRanges();
-        sel.addRange(range);
-        document.execCommand('copy');
-        document.getElementById('copy').textContent = '已复制';
-      }
-    });
-  </script>
-</body>
-</html>`;
-}
-
-function escapeHtml(value: string) {
-  return value
-    .replaceAll('&', '&amp;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;')
-    .replaceAll('"', '&quot;')
-    .replaceAll("'", '&#39;');
 }

@@ -16,18 +16,19 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.Modifier.Modifier
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import com.lover.app.core.data.InviteSession
 import com.lover.app.core.design.LoverNoticeHost
 import com.lover.app.core.design.LoverTheme
 import com.lover.app.core.notice.NoticeStore
-import com.lover.app.core.util.InviteLinks
 import com.lover.app.feature.auth.AuthScreen
 import com.lover.app.feature.auth.AuthViewModel
 import com.lover.app.feature.main.MainScreen
 import com.lover.app.feature.main.MainViewModel
+import com.lover.app.feature.onboarding.OnboardingScreen
+import com.lover.app.feature.onboarding.OnboardingViewModel
 import com.lover.app.feature.splash.SplashScreen
 import dagger.hilt.android.AndroidEntryPoint
 import javax.inject.Inject
@@ -35,14 +36,11 @@ import javax.inject.Inject
 @AndroidEntryPoint
 class MainActivity : ComponentActivity() {
     @Inject lateinit var noticeStore: NoticeStore
-    @Inject lateinit var inviteSession: InviteSession
 
     override fun onCreate(savedInstanceState: Bundle?) {
-        // 立即移除系统启动窗（仅保留纯色底），避免先闪一下桌面图标
         val systemSplash = installSplashScreen()
         systemSplash.setKeepOnScreenCondition { false }
         super.onCreate(savedInstanceState)
-        captureInviteIntent(intent)
         enableEdgeToEdge()
         setContent {
             LoverTheme {
@@ -69,6 +67,10 @@ class MainActivity : ComponentActivity() {
                                 val authViewModel: AuthViewModel = hiltViewModel()
                                 AuthScreen(authViewModel)
                             }
+                            !state.profileCompleted -> {
+                                val onboardingViewModel: OnboardingViewModel = hiltViewModel()
+                                OnboardingScreen(onboardingViewModel)
+                            }
                             else -> MainScreen(mainViewModel)
                         }
 
@@ -91,10 +93,5 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
-        captureInviteIntent(intent)
-    }
-
-    private fun captureInviteIntent(intent: Intent?) {
-        InviteLinks.parseCode(intent?.data)?.let(inviteSession::offer)
     }
 }
