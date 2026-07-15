@@ -60,17 +60,26 @@ fun MainScreen(viewModel: MainViewModel) {
     var editor by remember { mutableStateOf<Editor?>(null) }
     var mediaDetail by remember { mutableStateOf<MediaItem?>(null) }
     var letterDetail by remember { mutableStateOf<Letter?>(null) }
-    // 「暂时不处理」后本次会话不再弹提示；「我们」页仍可处理
-    var postponedBindIds by rememberSaveable { mutableStateOf(listOf<String>()) }
+    // 按用户区分；不持久化，避免换号/重新登录后弹窗被永久抑制
+    var postponedBindIds by remember(state.user?.id) { mutableStateOf(listOf<String>()) }
     val composing = editor != null
     val mediaDetailOpen = mediaDetail != null
     val overlayOpen = composing || mediaDetailOpen
     val incomingBind = remember(state.couple?.pendingIncomingBinds, state.linked) {
-        if (state.linked) null else state.couple?.pendingIncomingBinds.orEmpty().firstOrNull()
+        if (state.linked) {
+            null
+        } else {
+            state.couple?.pendingIncomingBinds.orEmpty().firstOrNull { it.id.isNotBlank() }
+        }
     }
     val showBindPrompt = incomingBind != null &&
         tab != MainTab.PROFILE &&
         incomingBind.id !in postponedBindIds
+
+    // MainViewModel 在登出后仍存活；每次重新进入主界面固定落到「空间」
+    LaunchedEffect(Unit) {
+        viewModel.resetToHome()
+    }
 
     Box(Modifier.fillMaxSize()) {
         Scaffold(
@@ -675,9 +684,11 @@ private fun ProfilePage(
                 } else {
                     EmptyCoupleCard(
                         nickname = state.user?.nickname,
-                        outgoingPhone = outgoing?.targetPhone,
+                        outgoing = outgoing?.takeIf { it.id.isNotBlank() },
                         onBind = { showBindSheet = true },
-                        onCancelOutgoing = outgoing?.id?.let { id -> { viewModel.cancelBind(id) } },
+                        onCancelOutgoing = outgoing?.id?.takeIf { it.isNotBlank() }?.let { id ->
+                            { viewModel.cancelBind(id) }
+                        },
                     )
                 }
             } else {
@@ -847,10 +858,13 @@ private fun ProfilePage(
 @Composable
 private fun EmptyCoupleCard(
     nickname: String?,
-    outgoingPhone: String?,
+    outgoing: OutgoingBindRequest?,
     onBind: () -> Unit,
     onCancelOutgoing: (() -> Unit)?,
 ) {
+    val outgoingLabel = outgoing?.let {
+        bindInviterLabel(it.targetNickname, it.targetPhone)
+    }
     Card(
         colors = CardDefaults.cardColors(containerColor = Blush.copy(alpha = 0.85f)),
         modifier = Modifier.fillMaxWidth(),
@@ -864,20 +878,32 @@ private fun EmptyCoupleCard(
         ) {
             Row {
                 Avatar(nickname?.take(1) ?: "我")
-                Avatar("?", Modifier.offset(x = (-12).dp))
+                Avatar(
+                    outgoingLabel?.take(1) ?: "?",
+                    Modifier.offset(x = (-12).dp),
+                )
             }
             Text("我们的小宇宙", style = MaterialTheme.typography.headlineMedium)
-            Text(
-                "现在还没有我们喔，快去绑定另一半吧",
-                color = Stone,
-                style = MaterialTheme.typography.bodyLarge,
-            )
-            if (!outgoingPhone.isNullOrBlank()) {
-                Text("已向 $outgoingPhone 发送绑定请求，等待确认", color = Rose, style = MaterialTheme.typography.bodySmall)
+            if (outgoing != null && outgoingLabel != null) {
+                Text(
+                    "已向 $outgoingLabel 发送绑定邀请",
+                    color = Stone,
+                    style = MaterialTheme.typography.bodyLarge,
+                )
+                Text(
+                    "状态：等待对方确认",
+                    color = Rose,
+                    style = MaterialTheme.typography.bodySmall,
+                )
                 if (onCancelOutgoing != null) {
                     TextButton(onClick = onCancelOutgoing) { Text("取消请求") }
                 }
             } else {
+                Text(
+                    "现在还没有我们喔，快去绑定另一半吧",
+                    color = Stone,
+                    style = MaterialTheme.typography.bodyLarge,
+                )
                 Button(
                     onClick = onBind,
                     modifier = Modifier.fillMaxWidth().height(48.dp),

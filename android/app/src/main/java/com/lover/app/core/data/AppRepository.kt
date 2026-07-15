@@ -142,25 +142,54 @@ class AppRepository @Inject constructor(
     }
 
     suspend fun refreshAll() = coroutineScope {
-        val bootstrapDeferred = async { call { api.bootstrap() } }
-        val coupleDeferred = async { call { api.coupleSpace() } }
-        val mediaDeferred = async { call { api.media().items } }
-        val anniversariesDeferred = async { call { api.anniversaries().items } }
-        val lettersDeferred = async { call { api.letters().items } }
+        // 先拉空间与绑定状态并立刻落盘：后续媒体签名失败时也不能把邀请状态清空
+        val bootstrapDeferred = async { runCatching { call { api.bootstrap() } }.getOrNull() }
+        val coupleDeferred = async { runCatching { call { api.coupleSpace() } }.getOrNull() }
+        val pendingDeferred = async { runCatching { call { api.pendingBinds() } }.getOrNull() }
         val bootstrap = bootstrapDeferred.await()
-        val couple = coupleDeferred.await()
-        val media = signMedia(mediaDeferred.await())
+        val coupleBase = coupleDeferred.await()
+        val pending = pendingDeferred.await()
+        if (bootstrap == null && coupleBase == null && pending == null) {
+            error("刷新失败，请检查网络后重试")
+        }
+        val couple = when {
+            coupleBase != null && pending != null -> coupleBase.copy(
+                pendingIncomingBinds = pending.incoming,
+                pendingOutgoingBind = pending.outgoing.firstOrNull(),
+            )
+            coupleBase != null -> coupleBase
+            pending != null -> CoupleSpace(
+                pendingIncomingBinds = pending.incoming,
+                pendingOutgoingBind = pending.outgoing.firstOrNull(),
+            )
+            else -> tokenStore.snapshot.couple
+        }
+        tokenStore.update {
+            it.copy(
+                activeSpaceId = bootstrap?.space?.id ?: couple?.id ?: it.activeSpaceId,
+                personalSpaceId = couple?.personalSpaceId ?: it.personalSpaceId,
+                loverSpaceId = couple?.loverSpaceId ?: bootstrap?.coupleLinkId ?: it.loverSpaceId,
+                linked = bootstrap?.linked == true || couple?.linked == true,
+                couple = couple,
+                lovingDays = bootstrap?.lovingJourney?.days ?: it.lovingDays,
+                needsTogetherDate = bootstrap?.lovingJourney?.needsTogetherDate ?: it.needsTogetherDate,
+            )
+        }
+
+        val mediaDeferred = async {
+            runCatching { signMedia(call { api.media().items }) }.getOrDefault(emptyList())
+        }
+        val anniversariesDeferred = async {
+            runCatching { call { api.anniversaries().items } }.getOrDefault(emptyList())
+        }
+        val lettersDeferred = async {
+            runCatching { call { api.letters().items } }.getOrDefault(emptyList())
+        }
+        val media = mediaDeferred.await()
         val anniversaries = anniversariesDeferred.await()
         val letters = lettersDeferred.await()
         tokenStore.update {
             it.copy(
-                activeSpaceId = bootstrap.space.id,
-                personalSpaceId = couple.personalSpaceId ?: it.personalSpaceId,
-                loverSpaceId = couple.loverSpaceId,
-                linked = bootstrap.linked || couple.linked,
-                couple = couple,
-                lovingDays = bootstrap.lovingJourney.days,
-                needsTogetherDate = bootstrap.lovingJourney.needsTogetherDate,
                 media = media,
                 anniversaries = anniversaries,
                 letters = letters,

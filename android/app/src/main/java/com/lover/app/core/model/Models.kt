@@ -36,8 +36,8 @@ data class CoupleSpace(
 
 @Serializable
 data class IncomingBindRequest(
-    val id: String,
-    val requesterId: String,
+    val id: String = "",
+    val requesterId: String = "",
     val requesterNickname: String = "",
     val requesterPhone: String = "",
     val requesterAvatarUrl: String? = null,
@@ -48,14 +48,20 @@ data class IncomingBindRequest(
 
 @Serializable
 data class OutgoingBindRequest(
-    val id: String,
-    val targetUserId: String,
+    val id: String = "",
+    val targetUserId: String = "",
     val targetNickname: String = "",
     val targetPhone: String = "",
     val targetAvatarUrl: String? = null,
     val status: String = "pending",
     val expiresAt: String? = null,
     val createdAt: String? = null,
+)
+
+@Serializable
+data class PendingBindsResponse(
+    val incoming: List<IncomingBindRequest> = emptyList(),
+    val outgoing: List<OutgoingBindRequest> = emptyList(),
 )
 
 @Serializable

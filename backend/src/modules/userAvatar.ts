@@ -57,5 +57,10 @@ export async function presentUserAvatar(
   user: { avatarUrl?: string | null; avatarAssetId?: string | null },
   viewerUserId: string,
 ): Promise<string | null> {
-  return signAvatarUrl(context, user.avatarAssetId, viewerUserId, user.avatarUrl);
+  try {
+    return await signAvatarUrl(context, user.avatarAssetId, viewerUserId, user.avatarUrl);
+  } catch {
+    // 头像签名失败不应拖垮 couple-space / bootstrap
+    return user.avatarUrl ?? null;
+  }
 }

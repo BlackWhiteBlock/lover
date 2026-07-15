@@ -52,6 +52,11 @@ class MainViewModel @Inject constructor(
         _selectedTab.value = tab
     }
 
+    /** 重新进入主界面（登录 / 冷启动恢复）时固定落在「空间」 */
+    fun resetToHome() {
+        _selectedTab.value = MainTab.HOME
+    }
+
     fun requestBind(phone: String) = launchAction("已发送绑定请求") {
         require(phone.trim().length == 11) { "请输入对方手机号" }
         repository.requestBind(phone)

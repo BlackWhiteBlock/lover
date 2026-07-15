@@ -44,6 +44,9 @@ interface ApiService {
     @POST("api/couple-binds")
     suspend fun createBind(@Body request: CreateBindRequest): BindRequestDto
 
+    @GET("api/couple-binds/pending")
+    suspend fun pendingBinds(): PendingBindsResponse
+
     @POST("api/couple-binds/{id}/accept")
     suspend fun acceptBind(@Path("id") id: String): AcceptBindResponse
 

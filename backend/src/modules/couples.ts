@@ -111,7 +111,8 @@ export function registerCouples(app: FastifyInstance, context: AppContext, auth:
     const personalId = await personalSpaceId(context, request.user.id);
     const link = await getActiveCoupleLink(context, request.user.id);
     const space = await db.query(
-      `select id, name, kind, together_date as "togetherDate", status, created_at as "createdAt"
+      `select id, name, kind, together_date::text as "togetherDate", status,
+              created_at::text as "createdAt"
        from couple_spaces where id = $1`,
       [link?.loverSpaceId ?? personalId],
     );
@@ -149,8 +150,9 @@ export function registerCouples(app: FastifyInstance, context: AppContext, auth:
       requesterNickname: string; requesterPhone: string;
       requesterAvatarUrl: string | null; requesterAvatarAssetId: string | null;
     }>(
-      `select r.id, r.requester_id as "requesterId", r.status, r.expires_at as "expiresAt",
-              r.created_at as "createdAt",
+      `select r.id, r.requester_id as "requesterId", r.status,
+              r.expires_at::text as "expiresAt",
+              r.created_at::text as "createdAt",
               u.nickname as "requesterNickname", u.phone as "requesterPhone",
               u.avatar_url as "requesterAvatarUrl",
               u.avatar_asset_id as "requesterAvatarAssetId"
@@ -165,8 +167,9 @@ export function registerCouples(app: FastifyInstance, context: AppContext, auth:
       targetNickname: string; targetPhone: string;
       targetAvatarUrl: string | null; targetAvatarAssetId: string | null;
     }>(
-      `select r.id, r.target_user_id as "targetUserId", r.status, r.expires_at as "expiresAt",
-              r.created_at as "createdAt",
+      `select r.id, r.target_user_id as "targetUserId", r.status,
+              r.expires_at::text as "expiresAt",
+              r.created_at::text as "createdAt",
               u.nickname as "targetNickname", u.phone as "targetPhone",
               u.avatar_url as "targetAvatarUrl",
               u.avatar_asset_id as "targetAvatarAssetId"
@@ -334,21 +337,34 @@ export function registerCouples(app: FastifyInstance, context: AppContext, auth:
   });
 
   app.get('/api/couple-binds/pending', { preHandler: auth }, async (request) => {
+    await db.query(
+      `update couple_bind_requests
+       set status = 'expired', resolved_at = coalesce(resolved_at, now())
+       where status = 'pending' and expires_at <= now()
+         and (requester_id = $1 or target_user_id = $1)`,
+      [request.user.id],
+    );
     const [incoming, outgoing] = await Promise.all([
       db.query(
-        `select r.id, r.requester_id as "requesterId", r.status, r.expires_at as "expiresAt",
-                r.created_at as "createdAt",
-                u.nickname as "requesterNickname", u.phone as "requesterPhone"
+        `select r.id, r.requester_id as "requesterId", r.status,
+                r.expires_at::text as "expiresAt",
+                r.created_at::text as "createdAt",
+                u.nickname as "requesterNickname", u.phone as "requesterPhone",
+                u.avatar_url as "requesterAvatarUrl"
          from couple_bind_requests r join users u on u.id = r.requester_id
-         where r.target_user_id = $1 and r.status = 'pending' and r.expires_at > now()`,
+         where r.target_user_id = $1 and r.status = 'pending' and r.expires_at > now()
+         order by r.created_at desc`,
         [request.user.id],
       ),
       db.query(
-        `select r.id, r.target_user_id as "targetUserId", r.status, r.expires_at as "expiresAt",
-                r.created_at as "createdAt",
-                u.nickname as "targetNickname", u.phone as "targetPhone"
+        `select r.id, r.target_user_id as "targetUserId", r.status,
+                r.expires_at::text as "expiresAt",
+                r.created_at::text as "createdAt",
+                u.nickname as "targetNickname", u.phone as "targetPhone",
+                u.avatar_url as "targetAvatarUrl"
          from couple_bind_requests r join users u on u.id = r.target_user_id
-         where r.requester_id = $1 and r.status = 'pending' and r.expires_at > now()`,
+         where r.requester_id = $1 and r.status = 'pending' and r.expires_at > now()
+         order by r.created_at desc`,
         [request.user.id],
       ),
     ]);
