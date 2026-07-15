@@ -16,9 +16,16 @@ val loverInviteBaseUrl = providers.gradleProperty("LOVER_INVITE_BASE_URL")
     .orElse(loverApiBaseUrl)
 
 val inviteBase = loverInviteBaseUrl.get().trimEnd('/')
-val inviteUri = java.net.URI(inviteBase)
-val inviteHost = inviteUri.host ?: "localhost"
-val inviteHttpsScheme = inviteUri.scheme ?: "https"
+val inviteHttpsScheme = when {
+    inviteBase.startsWith("http://") -> "http"
+    else -> "https"
+}
+val inviteHost = inviteBase
+    .removePrefix("https://")
+    .removePrefix("http://")
+    .substringBefore('/')
+    .substringBefore(':')
+    .ifBlank { "localhost" }
 
 android {
     namespace = "com.lover.app"
