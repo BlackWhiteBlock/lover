@@ -29,6 +29,9 @@ interface ApiService {
     @GET("api/me")
     suspend fun me(): MeResponse
 
+    @PATCH("api/me")
+    suspend fun patchMe(@Body request: PatchMeRequest): PatchMeResponse
+
     @GET("api/couple-space")
     suspend fun coupleSpace(): CoupleSpace
 

@@ -1,5 +1,6 @@
 package com.lover.app.feature.onboarding
 
+import android.net.Uri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.lover.app.core.data.AppRepository
@@ -23,6 +24,7 @@ class OnboardingViewModel @Inject constructor(
         gender: String,
         birthday: String,
         spaceName: String,
+        avatarUri: Uri? = null,
     ) = viewModelScope.launch {
         _submitting.value = true
         runCatching {
@@ -31,6 +33,7 @@ class OnboardingViewModel @Inject constructor(
                 gender = gender,
                 birthday = birthday,
                 spaceName = spaceName,
+                avatarUri = avatarUri,
             )
         }.onFailure { noticeStore.error(it.message ?: "创建失败") }
         _submitting.value = false

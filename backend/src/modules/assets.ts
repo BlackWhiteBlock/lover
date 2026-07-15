@@ -9,6 +9,7 @@ import { z } from 'zod';
 import type { AppContext, AuthHandler } from '../types.js';
 import { AppError, badRequest, conflict, forbidden, notFound } from '../errors.js';
 import { activeSpaceId } from './couples.js';
+import { personalSpaceId } from './spaces.js';
 import { resolveLocalObjectPath } from '../storage/local.js';
 import { assertObjectKeyBelongsToSpace, buildObjectKey } from '../storage/object-key.js';
 import {
@@ -22,10 +23,15 @@ const allowedMime = new Set([
   'image/jpeg', 'image/png', 'image/webp', 'image/heic',
   'video/mp4', 'video/quicktime',
 ]);
+const avatarMime = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/heic']);
 const tokenSchema = z.object({
   fileName: z.string().trim().min(1).max(200),
   mimeType: z.string().refine((value) => allowedMime.has(value), '不支持的媒体类型'),
   sizeBytes: z.number().int().positive().max(300 * 1024 * 1024),
+  purpose: z.preprocess(
+    (value) => (value == null ? 'media' : value),
+    z.enum(['media', 'avatar']),
+  ),
 }).strict();
 const assetIdSchema = z.object({ assetId: z.string().uuid() }).strict();
 const signSchema = z.object({ variant: z.enum(['original', 'thumb']).default('original') }).strict();
@@ -36,6 +42,7 @@ interface StorageClaims extends jwt.JwtPayload {
   objectKey: string;
   spaceId: string;
   sub: string;
+  avatar?: boolean;
 }
 
 export interface AssetVerificationRecord {
@@ -64,8 +71,13 @@ export function registerAssets(app: FastifyInstance, context: AppContext, auth: 
     preHandler: auth,
     config: { rateLimit: { max: 30, timeWindow: '1 minute' } },
   }, async (request, reply) => {
-    const spaceId = await activeSpaceId(context, request.user.id);
     const input = tokenSchema.parse(request.body);
+    if (input.purpose === 'avatar' && !avatarMime.has(input.mimeType)) {
+      throw badRequest('INVALID_AVATAR_TYPE', '头像仅支持图片');
+    }
+    const spaceId = input.purpose === 'avatar'
+      ? await personalSpaceId(context, request.user.id)
+      : await activeSpaceId(context, request.user.id);
     const assetId = randomUUID();
     const objectKey = buildObjectKey(spaceId, input.fileName, input.mimeType);
     const localUploadToken = provider.name === 'local'
@@ -199,11 +211,31 @@ export function registerAssets(app: FastifyInstance, context: AppContext, auth: 
     if (claims.assetId !== assetId) throw forbidden();
     const asset = await db.query<{ object_key: string; mime_type: string }>(
       `select a.object_key, a.mime_type from media_assets a
-       join couple_members m on m.space_id = a.space_id
        where a.id = $1 and a.space_id = $2 and a.object_key = $3
          and a.provider = 'local' and a.status = 'ready'
-         and m.user_id = $4 and m.status = 'active'`,
-      [assetId, claims.spaceId, claims.objectKey, claims.sub],
+         and (
+           exists (
+             select 1 from couple_members m
+             where m.space_id = a.space_id and m.user_id = $4 and m.status = 'active'
+           )
+           or (
+             $5::boolean
+             and exists (
+               select 1 from users u
+               where u.avatar_asset_id = a.id
+                 and (
+                   u.id = $4
+                   or exists (
+                     select 1 from couple_links cl
+                     where cl.status = 'active'
+                       and ((cl.user_a_id = u.id and cl.user_b_id = $4)
+                         or (cl.user_b_id = u.id and cl.user_a_id = $4))
+                   )
+                 )
+             )
+           )
+         )`,
+      [assetId, claims.spaceId, claims.objectKey, claims.sub, Boolean(claims.avatar)],
     );
     const row = asset.rows[0];
     if (!row) throw forbidden();

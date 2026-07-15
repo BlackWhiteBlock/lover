@@ -12,6 +12,16 @@ class BackendException(
     cause: Throwable? = null,
 ) : Exception(message, cause)
 
+fun Throwable.isUnauthorized(): Boolean {
+    val code = (this as? BackendException)?.code
+    if (code == "UNAUTHORIZED" || code == "HTTP_401") return true
+    val message = this.message.orEmpty()
+    return message.contains("令牌") ||
+        message.contains("过期") ||
+        message.contains("请先登录") ||
+        message.contains("会话已失效")
+}
+
 fun Throwable.toUserFacing(json: Json): BackendException = when (this) {
     is BackendException -> this
     is HttpException -> {

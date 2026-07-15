@@ -5,7 +5,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.lover.app.core.data.AppRepository
 import com.lover.app.core.model.*
-import com.lover.app.core.network.BackendException
+import com.lover.app.core.network.isUnauthorized
 import com.lover.app.core.notice.NoticeStore
 import dagger.hilt.android.lifecycle.HiltViewModel
 import java.time.LocalDate
@@ -36,7 +36,10 @@ class MainViewModel @Inject constructor(
             if (loaded.accessToken != null) {
                 runCatching { repository.restoreSession() }
                     .onFailure { error ->
-                        if (repository.state.value.accessToken != null) {
+                        if (error.isUnauthorized() || repository.state.value.accessToken == null) {
+                            // token 失效：清会话后回到登录页，不再提示「已显示缓存」
+                            noticeStore.clear()
+                        } else {
                             noticeStore.error(error.message ?: "刷新失败，已显示缓存")
                         }
                     }
@@ -132,7 +135,9 @@ class MainViewModel @Inject constructor(
     fun refresh() = viewModelScope.launch {
         runCatching { repository.restoreSession() }
             .onFailure { error ->
-                if (repository.state.value.accessToken != null) {
+                if (error.isUnauthorized() || repository.state.value.accessToken == null) {
+                    noticeStore.clear()
+                } else {
                     noticeStore.error(error.message ?: "刷新失败")
                 }
             }
@@ -142,7 +147,7 @@ class MainViewModel @Inject constructor(
         noticeStore.clear()
         runCatching { repository.logout() }
             .onFailure { error ->
-                if (!isAuthFailure(error) && repository.state.value.accessToken != null) {
+                if (!error.isUnauthorized() && repository.state.value.accessToken != null) {
                     noticeStore.error(error.message ?: "退出失败")
                 }
             }
@@ -171,7 +176,7 @@ class MainViewModel @Inject constructor(
                 }
             }
             .onFailure { error ->
-                if (isAuthFailure(error) && repository.state.value.accessToken == null) {
+                if (error.isUnauthorized() || repository.state.value.accessToken == null) {
                     noticeStore.clear()
                 } else {
                     noticeStore.error(error.message ?: "操作失败")
@@ -198,14 +203,6 @@ class MainViewModel @Inject constructor(
                 require(!unlockDate.isNullOrBlank()) { "请选择解锁日期，或勾选绑定后开启" }
                 require(LocalDate.parse(unlockDate).isAfter(today)) { "解锁日期必须晚于今天" }
             }
-        }
-
-        private fun isAuthFailure(error: Throwable): Boolean {
-            val code = (error as? BackendException)?.code
-            if (code == "UNAUTHORIZED" || code == "HTTP_401") return true
-            val message = error.message.orEmpty()
-            return message.contains("令牌") || message.contains("过期") || message.contains("请先登录") ||
-                message.contains("会话已失效")
         }
     }
 }

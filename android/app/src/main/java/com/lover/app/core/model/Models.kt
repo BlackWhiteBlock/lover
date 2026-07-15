@@ -244,7 +244,14 @@ data class AppState(
     val needsTogetherDate: Boolean,
 )
 @Serializable data class ItemPage<T>(val items: List<T>, val nextCursor: String? = null)
-@Serializable data class TokenAssetRequest(val fileName: String, val mimeType: String, val sizeBytes: Long)
+@Serializable data class TokenAssetRequest(
+    val fileName: String,
+    val mimeType: String,
+    val sizeBytes: Long,
+    val purpose: String = "media",
+)
+@Serializable data class PatchMeRequest(val avatarAssetId: String)
+@Serializable data class PatchMeResponse(val user: User)
 @Serializable data class TokenAssetResponse(
     val assetId: String,
     val provider: String,

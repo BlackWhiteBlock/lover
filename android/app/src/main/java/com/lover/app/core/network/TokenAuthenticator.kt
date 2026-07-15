@@ -18,22 +18,33 @@ class TokenAuthenticator @Inject constructor(
     private val refreshLock = Any()
 
     override fun authenticate(route: Route?, response: Response): Request? {
-        if (responseCount(response) >= 2) return null
+        if (responseCount(response) >= 2) {
+            invalidateSession()
+            return null
+        }
         val failedToken = response.request.header("Authorization")
             ?.removePrefix("Bearer ")
             ?.trim()
             ?.takeIf { it.isNotEmpty() }
-            ?: return null
+        if (failedToken == null) {
+            invalidateSession()
+            return null
+        }
 
         return synchronized(refreshLock) {
             val current = tokenStore.snapshot
             val latestAccess = current.accessToken
-            // 其他请求已完成刷新：直接用新 access token 重试（此前错误地 return null）
+            // 其他请求已完成刷新：直接用新 access token 重试
             if (!latestAccess.isNullOrBlank() && latestAccess != failedToken) {
                 return@synchronized retry(response.request, latestAccess)
             }
 
-            val refreshToken = current.refreshToken ?: return@synchronized null
+            val refreshToken = current.refreshToken
+            if (refreshToken.isNullOrBlank()) {
+                invalidateSession()
+                return@synchronized null
+            }
+
             runBlocking {
                 val refreshed = runCatching {
                     refreshApi.refresh(RefreshRequest(refreshToken))
@@ -43,14 +54,20 @@ class TokenAuthenticator @Inject constructor(
                     tokenStore.saveTokens(refreshed.accessToken, refreshed.refreshToken)
                     retry(response.request, refreshed.accessToken)
                 } else {
-                    // 仅当本刷新使用的 refresh 仍是当前会话时清空，避免误清新登录会话
-                    if (tokenStore.snapshot.refreshToken == refreshToken) {
+                    // 刷新失败：清空会话，UI 统一回登录页
+                    if (tokenStore.snapshot.refreshToken == refreshToken ||
+                        tokenStore.snapshot.accessToken == failedToken
+                    ) {
                         tokenStore.clearSession()
                     }
                     null
                 }
             }
         }
+    }
+
+    private fun invalidateSession() {
+        runBlocking { tokenStore.clearSession() }
     }
 
     private fun retry(request: Request, token: String): Request =

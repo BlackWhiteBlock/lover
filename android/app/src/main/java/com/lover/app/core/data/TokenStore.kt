@@ -77,6 +77,9 @@ class TokenStore @Inject constructor(
         tokensWrittenInProcess = true
         currentAccessToken = null
         currentRefreshToken = null
-        context.sessionDataStore.edit { it.remove(stateKey) }
+        // 写成空状态（不只 remove），保证 StateFlow 立即发布 accessToken=null，UI 回登录页
+        context.sessionDataStore.edit { preferences ->
+            preferences[stateKey] = json.encodeToString(AppState())
+        }
     }
 }

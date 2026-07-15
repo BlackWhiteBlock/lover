@@ -3,6 +3,7 @@ import { z } from 'zod';
 import type { AppContext, AuthHandler } from '../types.js';
 import { badRequest, conflict, forbidden, notFound } from '../errors.js';
 import { getActiveCoupleLink, personalSpaceId } from './spaces.js';
+import { presentUserAvatar } from './userAvatar.js';
 
 export { activeSpaceId, writeSpaceId, personalSpaceId, readableSpaceIds } from './spaces.js';
 
@@ -106,39 +107,88 @@ export function registerCouples(app: FastifyInstance, context: AppContext, auth:
       [link?.loverSpaceId ?? personalId],
     );
     const members = link
-      ? await db.query(
-        `select u.id, u.nickname, u.avatar_url as "avatarUrl", u.gender, u.birthday::text as birthday
+      ? await db.query<{
+        id: string; nickname: string; avatarUrl: string | null; avatarAssetId: string | null;
+        gender: string | null; birthday: string | null;
+      }>(
+        `select u.id, u.nickname, u.avatar_url as "avatarUrl",
+                u.avatar_asset_id as "avatarAssetId",
+                u.gender, u.birthday::text as birthday
          from users u where u.id = any($1::uuid[])`,
         [[link.userAId, link.userBId]],
       )
-      : await db.query(
-        `select u.id, u.nickname, u.avatar_url as "avatarUrl", u.gender, u.birthday::text as birthday
+      : await db.query<{
+        id: string; nickname: string; avatarUrl: string | null; avatarAssetId: string | null;
+        gender: string | null; birthday: string | null;
+      }>(
+        `select u.id, u.nickname, u.avatar_url as "avatarUrl",
+                u.avatar_asset_id as "avatarAssetId",
+                u.gender, u.birthday::text as birthday
          from users u where u.id = $1`,
         [request.user.id],
       );
+    const memberCards = await Promise.all(
+      members.rows.map(async (member) => {
+        const avatarUrl = await presentUserAvatar(context, member, request.user.id);
+        const { avatarAssetId: _assetId, ...rest } = member;
+        return { ...rest, avatarUrl };
+      }),
+    );
 
-    const pendingIncoming = await db.query(
+    const pendingIncoming = await db.query<{
+      id: string; requesterId: string; status: string; expiresAt: string; createdAt: string;
+      requesterNickname: string; requesterPhone: string;
+      requesterAvatarUrl: string | null; requesterAvatarAssetId: string | null;
+    }>(
       `select r.id, r.requester_id as "requesterId", r.status, r.expires_at as "expiresAt",
               r.created_at as "createdAt",
               u.nickname as "requesterNickname", u.phone as "requesterPhone",
-              u.avatar_url as "requesterAvatarUrl"
+              u.avatar_url as "requesterAvatarUrl",
+              u.avatar_asset_id as "requesterAvatarAssetId"
        from couple_bind_requests r
        join users u on u.id = r.requester_id
        where r.target_user_id = $1 and r.status = 'pending' and r.expires_at > now()
        order by r.created_at desc`,
       [request.user.id],
     );
-    const pendingOutgoing = await db.query(
+    const pendingOutgoing = await db.query<{
+      id: string; targetUserId: string; status: string; expiresAt: string; createdAt: string;
+      targetNickname: string; targetPhone: string;
+      targetAvatarUrl: string | null; targetAvatarAssetId: string | null;
+    }>(
       `select r.id, r.target_user_id as "targetUserId", r.status, r.expires_at as "expiresAt",
               r.created_at as "createdAt",
               u.nickname as "targetNickname", u.phone as "targetPhone",
-              u.avatar_url as "targetAvatarUrl"
+              u.avatar_url as "targetAvatarUrl",
+              u.avatar_asset_id as "targetAvatarAssetId"
        from couple_bind_requests r
        join users u on u.id = r.target_user_id
        where r.requester_id = $1 and r.status = 'pending' and r.expires_at > now()
        order by r.created_at desc
        limit 1`,
       [request.user.id],
+    );
+    const incomingCards = await Promise.all(
+      pendingIncoming.rows.map(async (row) => {
+        const requesterAvatarUrl = await presentUserAvatar(
+          context,
+          { avatarUrl: row.requesterAvatarUrl, avatarAssetId: row.requesterAvatarAssetId },
+          request.user.id,
+        );
+        const { requesterAvatarAssetId: _a, ...rest } = row;
+        return { ...rest, requesterAvatarUrl };
+      }),
+    );
+    const outgoingCards = await Promise.all(
+      pendingOutgoing.rows.map(async (row) => {
+        const targetAvatarUrl = await presentUserAvatar(
+          context,
+          { avatarUrl: row.targetAvatarUrl, avatarAssetId: row.targetAvatarAssetId },
+          request.user.id,
+        );
+        const { targetAvatarAssetId: _a, ...rest } = row;
+        return { ...rest, targetAvatarUrl };
+      }),
     );
 
     let pendingUnbinding = null;
@@ -158,10 +208,10 @@ export function registerCouples(app: FastifyInstance, context: AppContext, auth:
       coupleLinkId: link?.id ?? null,
       personalSpaceId: personalId,
       loverSpaceId: link?.loverSpaceId ?? null,
-      members: members.rows,
+      members: memberCards,
       pendingUnbinding,
-      pendingIncomingBinds: pendingIncoming.rows,
-      pendingOutgoingBind: pendingOutgoing.rows[0] ?? null,
+      pendingIncomingBinds: incomingCards,
+      pendingOutgoingBind: outgoingCards[0] ?? null,
     };
   });
 

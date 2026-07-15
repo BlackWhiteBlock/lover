@@ -7,7 +7,9 @@ import type { FastifyInstance, FastifyRequest } from 'fastify';
 import jwt, { type SignOptions } from 'jsonwebtoken';
 import { z } from 'zod';
 import type { AppContext, AuthHandler, AuthUser, AccessClaims } from '../types.js';
-import { AppError, unauthorized } from '../errors.js';
+import { AppError, badRequest, forbidden, unauthorized } from '../errors.js';
+import { personalSpaceId } from './spaces.js';
+import { presentUserAvatar } from './userAvatar.js';
 
 const require = createRequire(import.meta.url);
 type SmsClient = {
@@ -25,6 +27,10 @@ const loginSchema = z.object({
   nickname: z.string().trim().min(1).max(30).optional(),
 }).strict();
 const refreshSchema = z.object({ refreshToken: z.string().min(1) }).strict();
+const patchMeSchema = z.object({
+  avatarAssetId: z.string().uuid(),
+}).strict();
+const avatarMime = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/heic']);
 
 function normalizePhone(value: string) {
   return value.replace(/[\s-]/g, '').replace(/^\+?86/, '');
@@ -156,8 +162,9 @@ export function registerAuth(app: FastifyInstance, context: AppContext) {
   });
 
   app.get('/api/me', { preHandler: createAuthHandler(context) }, async (request) => {
-    const user = await db.query<AuthUser>(
+    const user = await db.query<AuthUser & { avatarAssetId: string | null }>(
       `select id, phone, nickname, avatar_url as "avatarUrl",
+              avatar_asset_id as "avatarAssetId",
               gender, birthday::text as birthday,
               profile_completed as "profileCompleted",
               personal_space_id as "personalSpaceId"
@@ -170,14 +177,45 @@ export function registerAuth(app: FastifyInstance, context: AppContext) {
       [request.user.id],
     );
     const profile = user.rows[0]!;
+    const { avatarAssetId: _assetId, ...rest } = profile;
+    const avatarUrl = await presentUserAvatar(context, profile, request.user.id);
     return {
-      user: profile,
+      user: { ...rest, avatarUrl },
       personalSpaceId: profile.personalSpaceId ?? null,
       loverSpaceId: link.rows[0]?.lover_space_id ?? null,
       activeSpaceId: link.rows[0]?.lover_space_id ?? profile.personalSpaceId ?? null,
       profileCompleted: Boolean(profile.profileCompleted),
       linked: Boolean(link.rowCount),
     };
+  });
+
+  app.patch('/api/me', { preHandler: createAuthHandler(context) }, async (request) => {
+    const { avatarAssetId } = patchMeSchema.parse(request.body);
+    const spaceId = await personalSpaceId(context, request.user.id);
+    const asset = await db.query<{ id: string; mime_type: string }>(
+      `select id, mime_type from media_assets
+       where id = $1 and space_id = $2 and status = 'ready'`,
+      [avatarAssetId, spaceId],
+    );
+    const row = asset.rows[0];
+    if (!row) throw forbidden('头像资产不存在或无权使用');
+    if (!avatarMime.has(row.mime_type)) {
+      throw badRequest('INVALID_AVATAR_TYPE', '头像仅支持图片');
+    }
+    const updated = await db.query<AuthUser & { avatarAssetId: string | null }>(
+      `update users set avatar_asset_id = $2, updated_at = now()
+       where id = $1
+       returning id, phone, nickname, avatar_url as "avatarUrl",
+                 avatar_asset_id as "avatarAssetId",
+                 gender, birthday::text as birthday,
+                 profile_completed as "profileCompleted",
+                 personal_space_id as "personalSpaceId"`,
+      [request.user.id, avatarAssetId],
+    );
+    const profile = updated.rows[0]!;
+    const { avatarAssetId: _assetId, ...rest } = profile;
+    const avatarUrl = await presentUserAvatar(context, profile, request.user.id);
+    return { user: { ...rest, avatarUrl } };
   });
 }
 

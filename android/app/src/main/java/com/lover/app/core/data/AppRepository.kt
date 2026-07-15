@@ -7,6 +7,7 @@ import com.lover.app.core.media.VideoThumbnailExtractor
 import com.lover.app.core.model.*
 import com.lover.app.core.network.ApiService
 import com.lover.app.core.network.AssetUploader
+import com.lover.app.core.network.isUnauthorized
 import com.lover.app.core.network.toUserFacing
 import java.time.LocalDate
 import java.time.ZoneId
@@ -78,29 +79,40 @@ class AppRepository @Inject constructor(
         gender: String,
         birthday: String,
         spaceName: String,
-        avatarUrl: String? = null,
+        avatarUri: Uri? = null,
     ) {
         val result = call {
             api.onboarding(
                 OnboardingRequest(
                     nickname = nickname.trim(),
-                    avatarUrl = avatarUrl,
+                    avatarUrl = null,
                     gender = gender,
                     birthday = birthday,
                     spaceName = spaceName.trim(),
                 ),
             )
         }
+        var user = result.user
         tokenStore.update {
             it.copy(
-                user = result.user,
+                user = user,
                 personalSpaceId = result.personalSpaceId,
                 activeSpaceId = result.personalSpaceId,
                 profileCompleted = true,
                 linked = false,
             )
         }
+        // 空间创建后才能上传私有媒体；有选择头像时再写入 avatar_asset_id
+        var avatarError: Throwable? = null
+        if (avatarUri != null) {
+            runCatching {
+                val assetId = uploadAvatar(avatarUri)
+                user = call { api.patchMe(PatchMeRequest(assetId)) }.user
+                tokenStore.update { it.copy(user = user) }
+            }.onFailure { avatarError = it }
+        }
         refreshAll()
+        avatarError?.let { throw IllegalStateException(it.message ?: "头像上传失败，可稍后在资料里重试") }
     }
 
     suspend fun requestBind(phone: String) {
@@ -304,16 +316,25 @@ class AppRepository @Inject constructor(
         tokenStore.clearSession()
     }
 
-    private suspend fun uploadAsset(source: ResolvedMedia): String =
-        uploadAsset(source.fileName, source.mimeType, source.sizeBytes, source.body)
+    private suspend fun uploadAvatar(uri: Uri): String {
+        val source = withContext(Dispatchers.IO) { mediaResolver.resolve(uri) }
+        require(!source.isVideo) { "头像仅支持图片" }
+        return uploadAsset(source, purpose = "avatar")
+    }
+
+    private suspend fun uploadAsset(source: ResolvedMedia, purpose: String = "media"): String =
+        uploadAsset(source.fileName, source.mimeType, source.sizeBytes, source.body, purpose)
 
     private suspend fun uploadAsset(
         fileName: String,
         mimeType: String,
         sizeBytes: Long,
         body: RequestBody,
+        purpose: String = "media",
     ): String {
-        val token = call { api.assetToken(TokenAssetRequest(fileName, mimeType, sizeBytes)) }
+        val token = call {
+            api.assetToken(TokenAssetRequest(fileName, mimeType, sizeBytes, purpose))
+        }
         call { assetUploader.upload(token, fileName, body) }
         call { api.completeAsset(AssetRequest(token.assetId)) }
         return token.assetId
@@ -323,7 +344,12 @@ class AppRepository @Inject constructor(
         try {
             block()
         } catch (error: Throwable) {
-            throw error.toUserFacing(json)
+            val facing = error.toUserFacing(json)
+            // 鉴权失败：清掉本地会话，MainActivity 会切回登录页
+            if (facing.isUnauthorized()) {
+                runCatching { tokenStore.clearSession() }
+            }
+            throw facing
         }
 
     companion object {
