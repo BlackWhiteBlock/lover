@@ -89,4 +89,4 @@ npm test
 npm run build
 ```
 
-迁移命令只接受三位数字前缀的 SQL，并按文件名顺序执行；当前依次为 `001_initial.sql`、`002_qiniu_storage.sql`，结果记录于 `schema_migrations`。`db/schema.sql` 也按相同顺序引用两者。
+迁移命令只接受三位数字前缀的 SQL，并按文件名顺序执行；当前依次为 `001_initial.sql`、`002_qiniu_storage.sql`、`003_media_item_assets.sql`，结果记录于 `schema_migrations`。`db/schema.sql` 也按相同顺序引用它们。

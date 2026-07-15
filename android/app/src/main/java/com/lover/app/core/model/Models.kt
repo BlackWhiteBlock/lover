@@ -39,18 +39,33 @@ enum class MediaType {
 }
 
 @Serializable
-data class MediaItem(
-    val id: String,
+data class MediaAssetPart(
+    val id: String = "",
     val type: MediaType = MediaType.IMAGE,
     val assetId: String,
     val thumbnailAssetId: String? = null,
+    val sortOrder: Int = 0,
+    val url: String = "",
+    val thumbnailUrl: String? = null,
+) {
+    val previewUrl: String get() = thumbnailUrl?.takeIf { it.isNotBlank() } ?: url
+}
+
+@Serializable
+data class MediaItem(
+    val id: String,
     val caption: String = "",
     val mediaDate: String,
     val uploaderId: String? = null,
     val createdAt: String = "",
-    val url: String = "",
-    val thumbnailUrl: String? = null,
-)
+    val assets: List<MediaAssetPart> = emptyList(),
+) {
+    val cover: MediaAssetPart? get() = assets.minByOrNull { it.sortOrder } ?: assets.firstOrNull()
+    val type: MediaType get() = cover?.type ?: MediaType.IMAGE
+    val url: String get() = cover?.url.orEmpty()
+    val thumbnailUrl: String? get() = cover?.thumbnailUrl ?: cover?.url
+    val assetCount: Int get() = assets.size
+}
 
 @Serializable
 enum class AnniversaryType {
@@ -167,17 +182,17 @@ data class AppState(
 @Serializable data class AssetRequest(val assetId: String)
 @Serializable data class CompleteAssetResponse(val assetId: String, val status: String, val sizeBytes: Long)
 @Serializable data class SignAssetResponse(val url: String, val expiresIn: Int)
-@Serializable data class CreateMediaRequest(
+@Serializable data class CreateMediaAssetRequest(
     val type: MediaType,
     val assetId: String,
     val thumbnailAssetId: String? = null,
+)
+@Serializable data class CreateMediaRequest(
     val caption: String,
     val mediaDate: String,
+    val assets: List<CreateMediaAssetRequest>,
 )
 @Serializable data class UpdateMediaRequest(
-    val type: MediaType? = null,
-    val assetId: String? = null,
-    val thumbnailAssetId: String? = null,
     val caption: String? = null,
     val mediaDate: String? = null,
 )

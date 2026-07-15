@@ -18,14 +18,23 @@ class ContractSerializationTest {
     fun `media request uses backend enum and field names`() {
         val encoded = json.encodeToString(
             CreateMediaRequest(
-                type = MediaType.IMAGE,
-                assetId = "72f44cc4-ae70-43a0-bcf8-b18e3d11a882",
                 caption = "今天",
                 mediaDate = "2026-07-14",
+                assets = listOf(
+                    CreateMediaAssetRequest(
+                        type = MediaType.IMAGE,
+                        assetId = "72f44cc4-ae70-43a0-bcf8-b18e3d11a882",
+                    ),
+                    CreateMediaAssetRequest(
+                        type = MediaType.VIDEO,
+                        assetId = "82f44cc4-ae70-43a0-bcf8-b18e3d11a883",
+                        thumbnailAssetId = "92f44cc4-ae70-43a0-bcf8-b18e3d11a884",
+                    ),
+                ),
             ),
         )
         assertEquals(
-            """{"type":"image","assetId":"72f44cc4-ae70-43a0-bcf8-b18e3d11a882","caption":"今天","mediaDate":"2026-07-14"}""",
+            """{"caption":"今天","mediaDate":"2026-07-14","assets":[{"type":"image","assetId":"72f44cc4-ae70-43a0-bcf8-b18e3d11a882"},{"type":"video","assetId":"82f44cc4-ae70-43a0-bcf8-b18e3d11a883","thumbnailAssetId":"92f44cc4-ae70-43a0-bcf8-b18e3d11a884"}]}""",
             encoded,
         )
     }

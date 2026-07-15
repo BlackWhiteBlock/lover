@@ -8,9 +8,14 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts.PickMultipleVisualMedia
 import androidx.activity.result.contract.ActivityResultContracts.PickVisualMedia
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -51,6 +56,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -63,8 +69,11 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
@@ -320,25 +329,109 @@ fun MediaComposeScreen(
                     }
                 }
             } else {
+                var draggingKey by remember { mutableStateOf<String?>(null) }
+                val haptics = LocalHapticFeedback.current
                 LazyRow(
                     state = listState,
                     horizontalArrangement = Arrangement.spacedBy(12.dp),
-                    contentPadding = PaddingValues(vertical = 4.dp),
-                    modifier = Modifier.fillMaxWidth().height(168.dp),
+                    contentPadding = PaddingValues(horizontal = 4.dp, vertical = 12.dp),
+                    modifier = Modifier.fillMaxWidth().height(196.dp),
                 ) {
                     items(uris.size, key = { uris[it].toString() }) { index ->
                         val uri = uris[index]
-                        ReorderableItem(reorderState, key = uri.toString()) { isDragging ->
-                            val elevation by animateDpAsState(if (isDragging) 10.dp else 0.dp, label = "drag")
+                        val key = uri.toString()
+                        ReorderableItem(reorderState, key = key) { isDragging ->
+                            LaunchedEffect(isDragging, key) {
+                                if (isDragging) {
+                                    draggingKey = key
+                                    haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                                } else if (draggingKey == key) {
+                                    draggingKey = null
+                                }
+                            }
+                            val peerShrunk = draggingKey != null && !isDragging
+                            val scale by animateFloatAsState(
+                                targetValue = when {
+                                    isDragging -> 1.14f
+                                    peerShrunk -> 0.9f
+                                    else -> 1f
+                                },
+                                animationSpec = spring(
+                                    dampingRatio = Spring.DampingRatioMediumBouncy,
+                                    stiffness = Spring.StiffnessMediumLow,
+                                ),
+                                label = "dragScale",
+                            )
+                            val elevation by animateDpAsState(
+                                targetValue = if (isDragging) 24.dp else if (peerShrunk) 0.dp else 2.dp,
+                                animationSpec = spring(
+                                    dampingRatio = Spring.DampingRatioNoBouncy,
+                                    stiffness = Spring.StiffnessMedium,
+                                ),
+                                label = "dragElevation",
+                            )
+                            val rotation by animateFloatAsState(
+                                targetValue = if (isDragging) -3.5f else 0f,
+                                animationSpec = spring(
+                                    dampingRatio = Spring.DampingRatioMediumBouncy,
+                                    stiffness = Spring.StiffnessMediumLow,
+                                ),
+                                label = "dragRotation",
+                            )
+                            val borderAlpha by animateFloatAsState(
+                                targetValue = if (isDragging) 1f else 0f,
+                                animationSpec = spring(stiffness = Spring.StiffnessMedium),
+                                label = "dragBorder",
+                            )
+                            val dimAlpha by animateFloatAsState(
+                                targetValue = if (peerShrunk) 0.55f else 1f,
+                                animationSpec = spring(stiffness = Spring.StiffnessMedium),
+                                label = "dragDim",
+                            )
+                            // 拿起时额外弹一下，让进入拖动更明显
+                            val pop = remember { Animatable(1f) }
+                            LaunchedEffect(isDragging) {
+                                if (isDragging) {
+                                    pop.snapTo(1f)
+                                    pop.animateTo(
+                                        1.08f,
+                                        spring(
+                                            dampingRatio = Spring.DampingRatioMediumBouncy,
+                                            stiffness = Spring.StiffnessHigh,
+                                        ),
+                                    )
+                                    pop.animateTo(
+                                        1f,
+                                        spring(
+                                            dampingRatio = Spring.DampingRatioMediumBouncy,
+                                            stiffness = Spring.StiffnessMedium,
+                                        ),
+                                    )
+                                } else {
+                                    pop.snapTo(1f)
+                                }
+                            }
                             val isVideo = remember(uri) {
                                 context.contentResolver.getType(uri)?.startsWith("video/") == true
                             }
                             Box(
                                 Modifier
+                                    .graphicsLayer {
+                                        val s = scale * pop.value
+                                        scaleX = s
+                                        scaleY = s
+                                        rotationZ = rotation
+                                        alpha = dimAlpha
+                                    }
                                     .size(136.dp, 156.dp)
-                                    .shadow(elevation, RoundedCornerShape(24.dp))
+                                    .shadow(elevation, RoundedCornerShape(24.dp), clip = false)
                                     .clip(RoundedCornerShape(24.dp))
                                     .background(Blush)
+                                    .border(
+                                        width = 2.5.dp,
+                                        color = Rose.copy(alpha = borderAlpha),
+                                        shape = RoundedCornerShape(24.dp),
+                                    )
                                     .longPressDraggableHandle(),
                             ) {
                                 if (isVideo) {
@@ -354,6 +447,13 @@ fun MediaComposeScreen(
                                         null,
                                         tint = Color.White,
                                         modifier = Modifier.align(Alignment.Center).size(34.dp),
+                                    )
+                                }
+                                if (isDragging) {
+                                    Box(
+                                        Modifier
+                                            .fillMaxSize()
+                                            .background(Rose.copy(alpha = 0.12f)),
                                     )
                                 }
                                 IconButton(
@@ -376,7 +476,10 @@ fun MediaComposeScreen(
                                     modifier = Modifier
                                         .align(Alignment.BottomStart)
                                         .padding(8.dp)
-                                        .background(Rose.copy(alpha = 0.9f), RoundedCornerShape(8.dp))
+                                        .background(
+                                            if (isDragging) DeepRose else Rose.copy(alpha = 0.9f),
+                                            RoundedCornerShape(8.dp),
+                                        )
                                         .padding(horizontal = 7.dp, vertical = 2.dp),
                                 )
                             }

@@ -39,20 +39,12 @@ import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
-import androidx.media3.common.MediaItem as PlayerMediaItem
-import androidx.media3.exoplayer.ExoPlayer
-import androidx.media3.ui.PlayerView
 import coil.compose.AsyncImage
 import com.lover.app.core.design.*
 import com.lover.app.core.model.*
-import java.time.LocalDate
 
 internal const val MaxMediaPick = 9
 
@@ -68,6 +60,8 @@ fun MainScreen(viewModel: MainViewModel) {
     var letterDetail by remember { mutableStateOf<Letter?>(null) }
     val snackbar = remember { SnackbarHostState() }
     val composing = editor != null
+    val mediaDetailOpen = mediaDetail != null
+    val overlayOpen = composing || mediaDetailOpen
 
     LaunchedEffect(message) {
         message?.let {
@@ -81,12 +75,12 @@ fun MainScreen(viewModel: MainViewModel) {
             containerColor = WarmBackground,
             snackbarHost = { SnackbarHost(snackbar) },
             bottomBar = {
-                if (!composing) {
+                if (!overlayOpen) {
                     LoverNavigation(tab, viewModel::selectTab)
                 }
             },
             floatingActionButton = {
-                if (!composing) {
+                if (!overlayOpen) {
                     val target = when (tab) {
                         MainTab.TIMELINE -> Editor.MEDIA
                         MainTab.ANNIVERSARY -> Editor.ANNIVERSARY
@@ -185,7 +179,31 @@ fun MainScreen(viewModel: MainViewModel) {
             }
         }
 
-        mediaDetail?.let { MediaDetail(it) { mediaDetail = null } }
+        AnimatedVisibility(
+            visible = mediaDetailOpen,
+            enter = fadeIn(tween(280)) + slideInVertically(tween(320)) { it / 10 },
+            exit = fadeOut(tween(180)) + slideOutVertically(tween(220)) { it / 12 },
+        ) {
+            val current = mediaDetail
+            if (current != null) {
+                // 列表刷新后尽量跟新一项（签名 URL 可能更新）
+                val live = state.media.firstOrNull { it.id == current.id } ?: current
+                MediaDetailScreen(
+                    item = live,
+                    members = state.couple?.members.orEmpty(),
+                    onClose = { mediaDetail = null },
+                    onSave = { caption, date ->
+                        viewModel.updateMedia(live.id, caption, date)
+                        mediaDetail = null
+                    },
+                    onDelete = {
+                        viewModel.deleteMedia(live.id)
+                        mediaDetail = null
+                    },
+                )
+            }
+        }
+
         letterDetail?.let { LetterDetail(it) { letterDetail = null } }
     }
 }
@@ -409,12 +427,24 @@ private fun MediaImage(item: MediaItem, modifier: Modifier = Modifier) {
                 overflow = TextOverflow.Ellipsis,
             )
         }
-        if (item.type == MediaType.VIDEO) {
+        if (item.type == MediaType.VIDEO && item.assetCount <= 1) {
             Icon(
                 Icons.Rounded.PlayCircle,
                 "视频",
                 tint = Color.White,
                 modifier = Modifier.align(Alignment.Center).size(44.dp),
+            )
+        }
+        if (item.assetCount > 1) {
+            Text(
+                "${item.assetCount}",
+                color = Color.White,
+                style = MaterialTheme.typography.labelMedium,
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(10.dp)
+                    .background(Color.Black.copy(alpha = 0.45f), RoundedCornerShape(10.dp))
+                    .padding(horizontal = 8.dp, vertical = 3.dp),
             )
         }
     }
@@ -730,59 +760,6 @@ private fun EmptyHint(text: String, icon: androidx.compose.ui.graphics.vector.Im
         Icon(icon, null, tint = Rose.copy(alpha = .55f), modifier = Modifier.size(58.dp))
         Spacer(Modifier.height(12.dp))
         Text(text, color = Stone)
-    }
-}
-
-@Composable
-private fun MediaDetail(item: MediaItem, onDismiss: () -> Unit) {
-    val context = LocalContext.current
-    val player = if (item.type == MediaType.VIDEO) {
-        remember(item.url) {
-            ExoPlayer.Builder(context).build().apply {
-                setMediaItem(PlayerMediaItem.fromUri(item.url))
-                prepare()
-                playWhenReady = true
-            }
-        }
-    } else {
-        null
-    }
-    DisposableEffect(player) {
-        onDispose { player?.release() }
-    }
-    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-        Box(Modifier.fillMaxSize().background(Color.Black)) {
-            if (player != null) {
-                AndroidView(
-                    factory = { viewContext ->
-                        PlayerView(viewContext).apply {
-                            useController = true
-                            this.player = player
-                        }
-                    },
-                    update = { it.player = player },
-                    modifier = Modifier.fillMaxSize(),
-                )
-            } else {
-                AsyncImage(
-                    item.url,
-                    item.caption,
-                    Modifier.fillMaxSize(),
-                    contentScale = ContentScale.Fit,
-                )
-            }
-            IconButton(onClick = onDismiss, modifier = Modifier.align(Alignment.TopEnd).statusBarsPadding().padding(12.dp)) {
-                Icon(Icons.Rounded.Close, "关闭", tint = Color.White)
-            }
-            Column(
-                Modifier.align(Alignment.BottomStart).fillMaxWidth()
-                    .background(Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(alpha = .9f))))
-                    .padding(24.dp).navigationBarsPadding(),
-            ) {
-                Text(item.caption, color = Color.White, style = MaterialTheme.typography.titleLarge)
-                Text(item.mediaDate, color = Color.White.copy(alpha = .7f))
-            }
-        }
     }
 }
 

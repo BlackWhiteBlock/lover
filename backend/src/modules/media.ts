@@ -5,24 +5,46 @@ import { badRequest, notFound } from '../errors.js';
 import { activeSpaceId } from './couples.js';
 
 const dateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
-const mediaBase = z.object({
+const mediaAssetPart = z.object({
   type: z.enum(['image', 'video']),
   assetId: z.string().uuid(),
   thumbnailAssetId: z.string().uuid().nullable().optional(),
-  caption: z.string().trim().max(200).default(''),
-  mediaDate: dateSchema,
-}).strict();
-const mediaInput = mediaBase.superRefine((value, ctx) => {
+}).strict().superRefine((value, ctx) => {
   if (value.type === 'video' && !value.thumbnailAssetId) {
     ctx.addIssue({ code: 'custom', path: ['thumbnailAssetId'], message: '视频必须提供封面资产' });
   }
 });
-const mediaUpdate = mediaBase.partial().strict().refine((value) => Object.keys(value).length > 0);
+const mediaInput = z.object({
+  caption: z.string().trim().max(200).default(''),
+  mediaDate: dateSchema,
+  assets: z.array(mediaAssetPart).min(1).max(9),
+}).strict();
+const mediaUpdate = z.object({
+  caption: z.string().trim().max(200).optional(),
+  mediaDate: dateSchema.optional(),
+}).strict().refine((value) => Object.keys(value).length > 0);
 const idParams = z.object({ id: z.string().uuid() }).strict();
 const pageQuery = z.object({
   cursor: z.string().datetime({ offset: true }).optional(),
   limit: z.coerce.number().int().min(1).max(100).default(30),
 }).strict();
+
+type MediaRow = {
+  id: string;
+  caption: string;
+  mediaDate: string;
+  uploaderId: string;
+  createdAt: Date | string;
+};
+
+type MediaAssetRow = {
+  id: string;
+  mediaItemId: string;
+  sortOrder: number;
+  type: 'image' | 'video';
+  assetId: string;
+  thumbnailAssetId: string | null;
+};
 
 export function registerMedia(app: FastifyInstance, context: AppContext, auth: AuthHandler) {
   const { db } = context;
@@ -30,16 +52,16 @@ export function registerMedia(app: FastifyInstance, context: AppContext, auth: A
   app.get('/api/media', { preHandler: auth }, async (request) => {
     const spaceId = await activeSpaceId(context, request.user.id);
     const query = pageQuery.parse(request.query);
-    const result = await db.query(
-      `select id, type, asset_id as "assetId", thumbnail_asset_id as "thumbnailAssetId",
-              caption, media_date as "mediaDate", uploader_id as "uploaderId", created_at as "createdAt"
+    const result = await db.query<MediaRow>(
+      `select id, caption, media_date as "mediaDate", uploader_id as "uploaderId", created_at as "createdAt"
        from media_items where space_id = $1 and ($2::timestamptz is null or created_at < $2)
        order by created_at desc limit $3`,
       [spaceId, query.cursor ?? null, query.limit + 1],
     );
     const hasMore = result.rows.length > query.limit;
-    const items = hasMore ? result.rows.slice(0, query.limit) : result.rows;
-    return { items, nextCursor: hasMore ? (items.at(-1) as { createdAt: Date }).createdAt : null };
+    const rows = hasMore ? result.rows.slice(0, query.limit) : result.rows;
+    const items = await hydrateMediaItems(context, rows);
+    return { items, nextCursor: hasMore ? (rows.at(-1) as MediaRow).createdAt : null };
   });
 
   app.get('/api/media/:id', { preHandler: auth }, async (request) => {
@@ -53,34 +75,49 @@ export function registerMedia(app: FastifyInstance, context: AppContext, auth: A
   app.post('/api/media', { preHandler: auth }, async (request, reply) => {
     const spaceId = await activeSpaceId(context, request.user.id);
     const input = mediaInput.parse(request.body);
-    await assertReadyAssets(context, spaceId, [input.assetId, input.thumbnailAssetId]);
-    const result = await db.query(
-      `insert into media_items(space_id, uploader_id, type, asset_id, thumbnail_asset_id, caption, media_date)
-       values ($1, $2, $3, $4, $5, $6, $7)
-       returning id, type, asset_id as "assetId", thumbnail_asset_id as "thumbnailAssetId",
-                 caption, media_date as "mediaDate", uploader_id as "uploaderId", created_at as "createdAt"`,
-      [spaceId, request.user.id, input.type, input.assetId, input.thumbnailAssetId ?? null, input.caption, input.mediaDate],
+    await assertReadyAssets(
+      context,
+      spaceId,
+      input.assets.flatMap((part) => [part.assetId, part.thumbnailAssetId]),
     );
-    return reply.code(201).send(result.rows[0]);
+
+    const mediaItem = await db.transaction(async (client) => {
+      const inserted = await client.query<MediaRow>(
+        `insert into media_items(space_id, uploader_id, caption, media_date)
+         values ($1, $2, $3, $4)
+         returning id, caption, media_date as "mediaDate", uploader_id as "uploaderId", created_at as "createdAt"`,
+        [spaceId, request.user.id, input.caption, input.mediaDate],
+      );
+      const row = inserted.rows[0]!;
+      for (const [index, part] of input.assets.entries()) {
+        await client.query(
+          `insert into media_item_assets(media_item_id, sort_order, type, asset_id, thumbnail_asset_id)
+           values ($1, $2, $3, $4, $5)`,
+          [row.id, index, part.type, part.assetId, part.thumbnailAssetId ?? null],
+        );
+      }
+      return row;
+    });
+    const hydrated = await hydrateMediaItems(context, [mediaItem]);
+    return reply.code(201).send(hydrated[0]);
   });
 
   app.patch('/api/media/:id', { preHandler: auth }, async (request) => {
     const spaceId = await activeSpaceId(context, request.user.id);
     const { id } = idParams.parse(request.params);
     const input = mediaUpdate.parse(request.body);
-    const current = await findMedia(context, spaceId, id) as Record<string, unknown> | null;
+    const current = await findMediaRow(context, spaceId, id);
     if (!current) throw notFound('媒体记录不存在');
-    const merged = mediaInput.parse({ ...current, ...input });
-    await assertReadyAssets(context, spaceId, [merged.assetId, merged.thumbnailAssetId]);
-    const result = await db.query(
-      `update media_items set type = $3, asset_id = $4, thumbnail_asset_id = $5,
-          caption = $6, media_date = $7, updated_at = now()
+    const caption = input.caption ?? current.caption;
+    const mediaDate = input.mediaDate ?? current.mediaDate;
+    const result = await db.query<MediaRow>(
+      `update media_items set caption = $3, media_date = $4, updated_at = now()
        where id = $1 and space_id = $2
-       returning id, type, asset_id as "assetId", thumbnail_asset_id as "thumbnailAssetId",
-                 caption, media_date as "mediaDate", uploader_id as "uploaderId", created_at as "createdAt"`,
-      [id, spaceId, merged.type, merged.assetId, merged.thumbnailAssetId ?? null, merged.caption, merged.mediaDate],
+       returning id, caption, media_date as "mediaDate", uploader_id as "uploaderId", created_at as "createdAt"`,
+      [id, spaceId, caption, mediaDate],
     );
-    return result.rows[0];
+    const hydrated = await hydrateMediaItems(context, result.rows);
+    return hydrated[0];
   });
 
   app.delete('/api/media/:id', { preHandler: auth }, async (request) => {
@@ -92,14 +129,66 @@ export function registerMedia(app: FastifyInstance, context: AppContext, auth: A
   });
 }
 
+export async function listRecentMedia(context: AppContext, spaceId: string, limit = 6) {
+  const result = await context.db.query<MediaRow>(
+    `select id, caption, media_date as "mediaDate", uploader_id as "uploaderId", created_at as "createdAt"
+     from media_items where space_id = $1
+     order by created_at desc limit $2`,
+    [spaceId, limit],
+  );
+  return hydrateMediaItems(context, result.rows);
+}
+
 async function findMedia(context: AppContext, spaceId: string, id: string) {
-  const result = await context.db.query(
-    `select id, type, asset_id as "assetId", thumbnail_asset_id as "thumbnailAssetId",
-            caption, media_date as "mediaDate", uploader_id as "uploaderId", created_at as "createdAt"
+  const row = await findMediaRow(context, spaceId, id);
+  if (!row) return null;
+  const [item] = await hydrateMediaItems(context, [row]);
+  return item ?? null;
+}
+
+async function findMediaRow(context: AppContext, spaceId: string, id: string) {
+  const result = await context.db.query<MediaRow>(
+    `select id, caption, media_date as "mediaDate", uploader_id as "uploaderId", created_at as "createdAt"
      from media_items where id = $1 and space_id = $2`,
     [id, spaceId],
   );
   return result.rows[0] ?? null;
+}
+
+async function hydrateMediaItems(context: AppContext, rows: MediaRow[]) {
+  if (!rows.length) return [];
+  const ids = rows.map((row) => row.id);
+  const assets = await context.db.query<MediaAssetRow>(
+    `select id, media_item_id as "mediaItemId", sort_order as "sortOrder", type,
+            asset_id as "assetId", thumbnail_asset_id as "thumbnailAssetId"
+     from media_item_assets
+     where media_item_id = any($1::uuid[])
+     order by media_item_id, sort_order`,
+    [ids],
+  );
+  const byItem = new Map<string, MediaAssetRow[]>();
+  for (const asset of assets.rows) {
+    const list = byItem.get(asset.mediaItemId) ?? [];
+    list.push(asset);
+    byItem.set(asset.mediaItemId, list);
+  }
+  return rows.map((row) => {
+    const itemAssets = (byItem.get(row.id) ?? []).map((asset) => ({
+      id: asset.id,
+      type: asset.type,
+      assetId: asset.assetId,
+      thumbnailAssetId: asset.thumbnailAssetId,
+      sortOrder: asset.sortOrder,
+    }));
+    return {
+      id: row.id,
+      caption: row.caption,
+      mediaDate: row.mediaDate,
+      uploaderId: row.uploaderId,
+      createdAt: row.createdAt,
+      assets: itemAssets,
+    };
+  });
 }
 
 async function assertReadyAssets(context: AppContext, spaceId: string, values: Array<string | null | undefined>) {

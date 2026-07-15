@@ -48,6 +48,15 @@ class MainViewModel @Inject constructor(
         repository.addMediaBatch(uris, caption, date)
     }
 
+    fun updateMedia(id: String, caption: String, date: String) = launchAction("已更新") {
+        LocalDate.parse(date)
+        repository.updateMedia(id, caption, date)
+    }
+
+    fun deleteMedia(id: String) = launchAction("已删除") {
+        repository.deleteMedia(id)
+    }
+
     fun addAnniversary(title: String, date: String, type: AnniversaryType) = launchAction {
         require(title.isNotBlank()) { "请填写纪念日名称" }
         LocalDate.parse(date)
@@ -69,9 +78,12 @@ class MainViewModel @Inject constructor(
     fun cancelUnbinding(id: String) = launchAction { repository.cancelUnbinding(id) }
     fun clearMessage() { _message.value = null }
 
-    private fun launchAction(block: suspend () -> Unit) = viewModelScope.launch {
+    private fun launchAction(
+        successMessage: String = "已保存",
+        block: suspend () -> Unit,
+    ) = viewModelScope.launch {
         runCatching { block() }
-            .onSuccess { _message.value = "已保存" }
+            .onSuccess { _message.value = successMessage }
             .onFailure { _message.value = it.message ?: "操作失败" }
     }
 

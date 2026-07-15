@@ -116,11 +116,16 @@ class AppRepository @Inject constructor(
     private suspend fun signMedia(items: List<MediaItem>): List<MediaItem> = coroutineScope {
         items.map { item ->
             async {
-                val assetUrl = runCatching { call { api.signAsset(item.assetId).url } }.getOrDefault("")
-                val thumbUrl = item.thumbnailAssetId?.let { assetId ->
-                    runCatching { call { api.signAsset(assetId).url } }.getOrNull()
-                }
-                item.copy(url = assetUrl, thumbnailUrl = thumbUrl)
+                val signedAssets = item.assets.map { part ->
+                    async {
+                        val assetUrl = runCatching { call { api.signAsset(part.assetId).url } }.getOrDefault("")
+                        val thumbUrl = part.thumbnailAssetId?.let { assetId ->
+                            runCatching { call { api.signAsset(assetId).url } }.getOrNull()
+                        }
+                        part.copy(url = assetUrl, thumbnailUrl = thumbUrl)
+                    }
+                }.awaitAll()
+                item.copy(assets = signedAssets)
             }
         }.awaitAll()
     }
@@ -130,8 +135,7 @@ class AppRepository @Inject constructor(
     }
 
     /**
-     * Uploads items in reverse of [uris] so that a feed sorted by `created_at desc`
-     * matches the left-to-right order the user arranged.
+     * Uploads all selected media, then creates **one** timeline record with ordered assets.
      */
     suspend fun addMediaBatch(
         uris: List<Uri>,
@@ -142,15 +146,23 @@ class AppRepository @Inject constructor(
         require(uris.isNotEmpty()) { "请选择至少一张照片或视频" }
         LocalDate.parse(date)
         val trimmed = caption.trim()
-        val uploadOrder = uris.asReversed()
-        uploadOrder.forEachIndexed { index, uri ->
+        val assets = uris.mapIndexed { index, uri ->
             onProgress(index + 1, uris.size)
-            createMediaItem(uri, trimmed, date)
+            uploadMediaPart(uri)
+        }
+        call {
+            api.createMedia(
+                CreateMediaRequest(
+                    caption = trimmed,
+                    mediaDate = date,
+                    assets = assets,
+                ),
+            )
         }
         refreshAll()
     }
 
-    private suspend fun createMediaItem(uri: Uri, caption: String, date: String) {
+    private suspend fun uploadMediaPart(uri: Uri): CreateMediaAssetRequest {
         val source = withContext(Dispatchers.IO) { mediaResolver.resolve(uri) }
         val thumbnailAssetId = if (source.isVideo) {
             val thumbnail = withContext(Dispatchers.IO) {
@@ -166,17 +178,11 @@ class AppRepository @Inject constructor(
             null
         }
         val assetId = uploadAsset(source)
-        call {
-            api.createMedia(
-                CreateMediaRequest(
-                    type = if (source.isVideo) MediaType.VIDEO else MediaType.IMAGE,
-                    assetId = assetId,
-                    thumbnailAssetId = thumbnailAssetId,
-                    caption = caption,
-                    mediaDate = date,
-                ),
-            )
-        }
+        return CreateMediaAssetRequest(
+            type = if (source.isVideo) MediaType.VIDEO else MediaType.IMAGE,
+            assetId = assetId,
+            thumbnailAssetId = thumbnailAssetId,
+        )
     }
 
     suspend fun addAnniversary(title: String, date: String, type: AnniversaryType) {
@@ -185,6 +191,25 @@ class AppRepository @Inject constructor(
                 CreateAnniversaryRequest(title.trim(), date, type),
             )
         }
+        refreshAll()
+    }
+
+    suspend fun updateMedia(id: String, caption: String, date: String) {
+        LocalDate.parse(date)
+        call {
+            api.updateMedia(
+                id,
+                UpdateMediaRequest(
+                    caption = caption.trim(),
+                    mediaDate = date,
+                ),
+            )
+        }
+        refreshAll()
+    }
+
+    suspend fun deleteMedia(id: String) {
+        call { api.deleteMedia(id) }
         refreshAll()
     }
 
