@@ -103,7 +103,9 @@ data class MediaItem(
     val cover: MediaAssetPart? get() = assets.minByOrNull { it.sortOrder } ?: assets.firstOrNull()
     val type: MediaType get() = cover?.type ?: MediaType.IMAGE
     val url: String get() = cover?.url.orEmpty()
-    val thumbnailUrl: String? get() = cover?.thumbnailUrl ?: cover?.url
+    /** 列表/掠影优先缩略图；无缩略图时才退回原图 */
+    val thumbnailUrl: String? get() = cover?.thumbnailUrl?.takeIf { it.isNotBlank() }
+        ?: cover?.url?.takeIf { it.isNotBlank() }
     val assetCount: Int get() = assets.size
 }
 
@@ -281,6 +283,7 @@ data class AppState(
 @Serializable data class UploadResponse(val ok: Boolean, val assetId: String, val sizeBytes: Long)
 @Serializable data class AssetRequest(val assetId: String)
 @Serializable data class CompleteAssetResponse(val assetId: String, val status: String, val sizeBytes: Long)
+@Serializable data class SignAssetRequest(val variant: String = "original")
 @Serializable data class SignAssetResponse(val url: String, val expiresIn: Int)
 @Serializable data class CreateMediaAssetRequest(
     val type: MediaType,

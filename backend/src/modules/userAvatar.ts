@@ -33,8 +33,8 @@ export async function signAvatarUrl(
   if (row.provider !== provider.name || row.bucket !== provider.bucket) {
     return fallbackUrl ?? null;
   }
-  if (provider.name === 'qiniu') {
-    const signed = await provider.signDownload(row.object_key, row.mime_type, 'original' as DownloadVariant);
+    if (provider.name === 'qiniu') {
+    const signed = await provider.signDownload(row.object_key, row.mime_type, 'thumb' as DownloadVariant);
     return signed.url;
   }
   const token = jwt.sign(

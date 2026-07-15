@@ -59,6 +59,20 @@ class MainViewModel @Inject constructor(
         _selectedTab.value = tab
     }
 
+    fun openMediaDetail(item: MediaItem, onReady: (MediaItem) -> Unit) = viewModelScope.launch {
+        runCatching { repository.ensureMediaOriginals(item) }
+            .onSuccess(onReady)
+            .onFailure { error ->
+                if (error.isUnauthorized() || repository.state.value.accessToken == null) {
+                    noticeStore.clear()
+                } else {
+                    // 原图签发失败时仍打开详情（可用缩略图预览）
+                    noticeStore.error(error.message ?: "原图加载失败")
+                    onReady(item)
+                }
+            }
+    }
+
     fun requestBind(phone: String) = launchAction("已发送绑定请求") {
         require(phone.trim().length == 11) { "请输入对方手机号" }
         repository.requestBind(phone)

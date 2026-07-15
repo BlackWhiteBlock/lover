@@ -69,7 +69,10 @@ interface ApiService {
     suspend fun completeAsset(@Body request: AssetRequest): CompleteAssetResponse
 
     @POST("api/media-assets/{assetId}/sign")
-    suspend fun signAsset(@Path("assetId") assetId: String): SignAssetResponse
+    suspend fun signAsset(
+        @Path("assetId") assetId: String,
+        @Body request: SignAssetRequest = SignAssetRequest(),
+    ): SignAssetResponse
 
     @GET("api/media")
     suspend fun media(

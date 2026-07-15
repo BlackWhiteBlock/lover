@@ -258,17 +258,38 @@ class AppRepository @Inject constructor(
         items.map { item ->
             async {
                 val signedAssets = item.assets.map { part ->
-                    async {
-                        val assetUrl = runCatching { call { api.signAsset(part.assetId).url } }.getOrDefault("")
-                        val thumbUrl = part.thumbnailAssetId?.let { assetId ->
-                            runCatching { call { api.signAsset(assetId).url } }.getOrNull()
-                        }
-                        part.copy(url = assetUrl, thumbnailUrl = thumbUrl)
-                    }
+                    async { signAssetForList(part) }
                 }.awaitAll()
                 item.copy(assets = signedAssets)
             }
         }.awaitAll()
+    }
+
+    /** 列表/掠影：只签缩略图，避免刷屏拉原图 */
+    private suspend fun signAssetForList(part: MediaAssetPart): MediaAssetPart {
+        val thumbUrl = runCatching {
+            when {
+                part.type == MediaType.VIDEO && !part.thumbnailAssetId.isNullOrBlank() ->
+                    call { api.signAsset(part.thumbnailAssetId!!, SignAssetRequest("original")) }.url
+                else ->
+                    call { api.signAsset(part.assetId, SignAssetRequest("thumb")) }.url
+            }
+        }.getOrNull()
+        return part.copy(url = "", thumbnailUrl = thumbUrl)
+    }
+
+    /** 详情/播放：按需签发原图（或视频原文件） */
+    suspend fun ensureMediaOriginals(item: MediaItem): MediaItem = coroutineScope {
+        val signed = item.assets.map { part ->
+            async {
+                if (part.url.isNotBlank()) return@async part
+                val url = runCatching {
+                    call { api.signAsset(part.assetId, SignAssetRequest("original")) }.url
+                }.getOrDefault("")
+                part.copy(url = url)
+            }
+        }.awaitAll()
+        item.copy(assets = signed)
     }
 
     suspend fun addMedia(uri: Uri, caption: String, date: String) {

@@ -137,14 +137,19 @@ fun MainScreen(viewModel: MainViewModel) {
                     when (current) {
                         MainTab.HOME -> HomePage(
                             state,
-                            onMedia = { mediaDetail = it },
+                            onMedia = { item ->
+                                viewModel.openMediaDetail(item) { mediaDetail = it }
+                            },
                             onCapture = { editor = Editor.MEDIA },
                             onWrite = {
                                 viewModel.selectTab(MainTab.LETTERS)
                                 editor = Editor.LETTER
                             },
                         )
-                        MainTab.TIMELINE -> TimelinePage(state.media, { mediaDetail = it }) {
+                        MainTab.TIMELINE -> TimelinePage(
+                            state.media,
+                            { item -> viewModel.openMediaDetail(item) { mediaDetail = it } },
+                        ) {
                             editor = Editor.MEDIA
                         }
                         MainTab.ANNIVERSARY -> AnniversaryPage(state.anniversaries) {
@@ -201,8 +206,13 @@ fun MainScreen(viewModel: MainViewModel) {
         ) {
             val current = mediaDetail
             if (current != null) {
-                // 列表刷新后尽量跟新一项（签名 URL 可能更新）
-                val live = state.media.firstOrNull { it.id == current.id } ?: current
+                // 列表刷新可能只带缩略图；保留当前详情里已签发的原图 URL
+                val cached = state.media.firstOrNull { it.id == current.id }
+                val live = if (cached != null) {
+                    current.copy(caption = cached.caption, mediaDate = cached.mediaDate)
+                } else {
+                    current
+                }
                 MediaDetailScreen(
                     item = live,
                     members = state.couple?.members.orEmpty(),
