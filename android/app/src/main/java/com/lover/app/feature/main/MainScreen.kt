@@ -50,7 +50,6 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.DialogProperties
 import coil.compose.AsyncImage
@@ -1013,12 +1012,17 @@ private fun CoupleBondVisual(
         CoupleBondMode.Bound -> {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    PersonAvatar(nickname = leftNickname, avatarUrl = leftAvatarUrl, size = 72.dp)
+                    PersonAvatar(
+                        nickname = leftNickname,
+                        avatarUrl = leftAvatarUrl,
+                        modifier = Modifier.size(72.dp),
+                    )
                     PersonAvatar(
                         nickname = rightNickname,
                         avatarUrl = rightAvatarUrl,
-                        size = 72.dp,
-                        modifier = Modifier.offset(x = (-14).dp),
+                        modifier = Modifier
+                            .offset(x = (-14).dp)
+                            .size(72.dp),
                     )
                 }
                 Spacer(Modifier.height(10.dp))
@@ -1038,7 +1042,9 @@ private fun CoupleBondVisual(
                 modifier = Modifier.fillMaxWidth(),
             ) {
                 PersonAvatarWithName(nickname = leftNickname, avatarUrl = leftAvatarUrl)
-                LinkingPulse(Modifier = Modifier.padding(top = 28.dp, start = 6.dp, end = 6.dp))
+                Box(modifier = Modifier.padding(top = 28.dp, start = 6.dp, end = 6.dp)) {
+                    LinkingPulse()
+                }
                 PersonAvatarWithName(nickname = rightNickname, avatarUrl = rightAvatarUrl)
             }
         }
@@ -1073,8 +1079,8 @@ private fun PersonAvatarWithName(
         PersonAvatar(
             nickname = nickname,
             avatarUrl = avatarUrl,
-            size = 72.dp,
             placeholderMark = placeholderMark,
+            modifier = Modifier.size(72.dp),
         )
         Spacer(Modifier.height(8.dp))
         Text(
@@ -1089,7 +1095,7 @@ private fun PersonAvatarWithName(
 }
 
 @Composable
-private fun LinkingPulse(modifier: Modifier = Modifier) {
+private fun LinkingPulse() {
     val transition = rememberInfiniteTransition(label = "link")
     val travel by transition.animateFloat(
         initialValue = 0f,
@@ -1110,7 +1116,7 @@ private fun LinkingPulse(modifier: Modifier = Modifier) {
         label = "glow",
     )
     Box(
-        modifier = modifier.width(56.dp).height(20.dp),
+        modifier = Modifier.width(56.dp).height(20.dp),
         contentAlignment = Alignment.Center,
     ) {
         Box(
@@ -1154,14 +1160,12 @@ private fun LinkingPulse(modifier: Modifier = Modifier) {
 private fun PersonAvatar(
     nickname: String,
     avatarUrl: String?,
-    size: Dp = 72.dp,
-    placeholderMark: Boolean = false,
     modifier: Modifier = Modifier,
+    placeholderMark: Boolean = false,
 ) {
     val initial = displayName(nickname).take(1).ifBlank { "我" }
     Box(
         modifier
-            .size(size)
             .background(Color.White, CircleShape)
             .border(2.dp, Color.White, CircleShape)
             .padding(3.dp),

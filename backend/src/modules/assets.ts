@@ -231,6 +231,15 @@ export function registerAssets(app: FastifyInstance, context: AppContext, auth: 
                        and ((cl.user_a_id = u.id and cl.user_b_id = $4)
                          or (cl.user_b_id = u.id and cl.user_a_id = $4))
                    )
+                   -- 绑定邀请待确认期间，双方可查看对方头像
+                   or exists (
+                     select 1 from couple_bind_requests br
+                     where br.status = 'pending' and br.expires_at > now()
+                       and (
+                         (br.requester_id = u.id and br.target_user_id = $4)
+                         or (br.target_user_id = u.id and br.requester_id = $4)
+                       )
+                   )
                  )
              )
            )
