@@ -21,7 +21,9 @@ const onboardingSchema = z.object({
 }).strict();
 
 const bindPhoneSchema = z.object({
-  phone: z.string().trim().regex(/^1[3-9]\d{9}$/, '请输入有效手机号'),
+  phone: z.string().trim()
+    .transform((value) => value.replace(/[\s-]/g, '').replace(/^\+?86/, ''))
+    .refine((phone) => /^1[3-9]\d{9}$/.test(phone), '请输入有效手机号'),
 }).strict();
 
 const updateLinkSchema = z.object({
@@ -99,6 +101,13 @@ export function registerCouples(app: FastifyInstance, context: AppContext, auth:
   });
 
   app.get('/api/couple-space', { preHandler: auth }, async (request) => {
+    await db.query(
+      `update couple_bind_requests
+       set status = 'expired', resolved_at = coalesce(resolved_at, now())
+       where status = 'pending' and expires_at <= now()
+         and (requester_id = $1 or target_user_id = $1)`,
+      [request.user.id],
+    );
     const personalId = await personalSpaceId(context, request.user.id);
     const link = await getActiveCoupleLink(context, request.user.id);
     const space = await db.query(
@@ -274,6 +283,15 @@ export function registerCouples(app: FastifyInstance, context: AppContext, auth:
       throw conflict('TARGET_LINKED', '对方已绑定另一半');
     }
 
+    // 过期待处理邀请落库标记，避免占用「仅一条待处理」唯一约束
+    await db.query(
+      `update couple_bind_requests
+       set status = 'expired', resolved_at = coalesce(resolved_at, now())
+       where status = 'pending' and expires_at <= now()
+         and (requester_id = $1 or target_user_id = $1 or requester_id = $2 or target_user_id = $2)`,
+      [request.user.id, targetUser.id],
+    );
+
     const existingToMe = await db.query(
       `select id from couple_bind_requests
        where requester_id = $1 and target_user_id = $2 and status = 'pending' and expires_at > now()`,
@@ -283,6 +301,16 @@ export function registerCouples(app: FastifyInstance, context: AppContext, auth:
       throw conflict('REVERSE_PENDING', '对方已向你发起绑定，请先处理收到的请求');
     }
 
+    const targetBusy = await db.query(
+      `select id from couple_bind_requests
+       where target_user_id = $1 and status = 'pending' and expires_at > now()
+       limit 1`,
+      [targetUser.id],
+    );
+    if (targetBusy.rowCount) {
+      throw conflict('TARGET_BIND_PENDING', '对方已有待处理的绑定邀请，请稍后再试');
+    }
+
     try {
       await db.query(
         `update couple_bind_requests set status = 'cancelled', resolved_at = now()
@@ -290,8 +318,8 @@ export function registerCouples(app: FastifyInstance, context: AppContext, auth:
         [request.user.id],
       );
       const created = await db.query(
-        `insert into couple_bind_requests(requester_id, target_user_id)
-         values ($1, $2)
+        `insert into couple_bind_requests(requester_id, target_user_id, expires_at)
+         values ($1, $2, now() + interval '24 hours')
          returning id, requester_id as "requesterId", target_user_id as "targetUserId",
                    status, expires_at as "expiresAt", created_at as "createdAt"`,
         [request.user.id, targetUser.id],
@@ -299,7 +327,7 @@ export function registerCouples(app: FastifyInstance, context: AppContext, auth:
       return reply.code(201).send(created.rows[0]);
     } catch (error: unknown) {
       if ((error as { code?: string }).code === '23505') {
-        throw conflict('BIND_PENDING', '已有待确认的绑定请求');
+        throw conflict('BIND_PENDING', '对方已有待处理的绑定邀请，或你已有待确认请求');
       }
       throw error;
     }
@@ -345,7 +373,13 @@ export function registerCouples(app: FastifyInstance, context: AppContext, auth:
       if (!bind) throw notFound('绑定请求不存在');
       if (bind.target_user_id !== request.user.id) throw forbidden('只能处理发给自己的绑定请求');
       if (bind.status !== 'pending') throw conflict('BIND_NOT_PENDING', '请求已处理');
-      if (bind.expires_at <= new Date()) throw conflict('BIND_EXPIRED', '绑定请求已过期');
+      if (bind.expires_at <= new Date()) {
+        await client.query(
+          `update couple_bind_requests set status = 'expired', resolved_at = now() where id = $1`,
+          [bind.id],
+        );
+        throw conflict('BIND_EXPIRED', '绑定请求已过期');
+      }
 
       for (const uid of [bind.requester_id, bind.target_user_id]) {
         const linked = await client.query(

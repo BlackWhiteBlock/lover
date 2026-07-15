@@ -44,6 +44,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.DialogProperties
 import coil.compose.AsyncImage
 import com.lover.app.core.design.*
 import com.lover.app.core.model.*
@@ -59,16 +60,24 @@ fun MainScreen(viewModel: MainViewModel) {
     var editor by remember { mutableStateOf<Editor?>(null) }
     var mediaDetail by remember { mutableStateOf<MediaItem?>(null) }
     var letterDetail by remember { mutableStateOf<Letter?>(null) }
+    // 「暂时不处理」后本次会话不再弹提示；「我们」页仍可处理
+    var postponedBindIds by rememberSaveable { mutableStateOf(listOf<String>()) }
     val composing = editor != null
     val mediaDetailOpen = mediaDetail != null
     val overlayOpen = composing || mediaDetailOpen
+    val incomingBind = remember(state.couple?.pendingIncomingBinds, state.linked) {
+        if (state.linked) null else state.couple?.pendingIncomingBinds.orEmpty().firstOrNull()
+    }
+    val showBindPrompt = incomingBind != null &&
+        tab != MainTab.PROFILE &&
+        incomingBind.id !in postponedBindIds
 
     Box(Modifier.fillMaxSize()) {
         Scaffold(
             containerColor = WarmBackground,
             bottomBar = {
                 if (!overlayOpen) {
-                    LoverNavigation(tab, viewModel::selectTab)
+                    LoverNavigation(selected = tab, onSelect = viewModel::selectTab)
                 }
             },
             floatingActionButton = {
@@ -199,11 +208,73 @@ fun MainScreen(viewModel: MainViewModel) {
         }
 
         letterDetail?.let { LetterDetail(it) { letterDetail = null } }
+
+        if (showBindPrompt && incomingBind != null) {
+            IncomingBindDialog(
+                inviterLabel = bindInviterLabel(incomingBind.requesterNickname, incomingBind.requesterPhone),
+                onGoNow = {
+                    if (incomingBind.id !in postponedBindIds) {
+                        postponedBindIds = postponedBindIds + incomingBind.id
+                    }
+                    viewModel.selectTab(MainTab.PROFILE)
+                },
+                onLater = {
+                    if (incomingBind.id !in postponedBindIds) {
+                        postponedBindIds = postponedBindIds + incomingBind.id
+                    }
+                },
+            )
+        }
     }
 }
 
+private fun bindInviterLabel(nickname: String, phone: String): String {
+    val name = nickname.ifBlank { "对方" }
+    val tail = phone.filter(Char::isDigit).takeLast(4).ifBlank { "????" }
+    return "$name($tail)"
+}
+
 @Composable
-private fun LoverNavigation(selected: MainTab, onSelect: (MainTab) -> Unit) {
+private fun IncomingBindDialog(
+    inviterLabel: String,
+    onGoNow: () -> Unit,
+    onLater: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onLater,
+        properties = DialogProperties(
+            dismissOnBackPress = true,
+            dismissOnClickOutside = false,
+        ),
+        shape = RoundedCornerShape(28.dp),
+        containerColor = WarmBackground,
+        title = { Text("收到绑定邀请") },
+        text = {
+            Text(
+                "有一个来自「$inviterLabel」的绑定邀请，请及时到「我们」里去处理",
+                color = Stone,
+            )
+        },
+        confirmButton = {
+            TextButton(
+                onClick = onGoNow,
+                colors = ButtonDefaults.textButtonColors(contentColor = Rose),
+            ) { Text("马上去") }
+        },
+        dismissButton = {
+            TextButton(
+                onClick = onLater,
+                colors = ButtonDefaults.textButtonColors(contentColor = Stone),
+            ) { Text("暂时不处理") }
+        },
+    )
+}
+
+@Composable
+private fun LoverNavigation(
+    selected: MainTab,
+    onSelect: (MainTab) -> Unit,
+) {
     val tabs = listOf(
         Triple(MainTab.HOME, "空间", Icons.Rounded.Favorite),
         Triple(MainTab.TIMELINE, "时光", Icons.Rounded.PhotoLibrary),
@@ -594,19 +665,19 @@ private fun ProfilePage(
         item {
             PageHeader("我们的小宇宙", "Our Private World")
             if (!hasPartner) {
-                EmptyCoupleCard(
-                    nickname = state.user?.nickname,
-                    outgoingPhone = outgoing?.targetPhone,
-                    onBind = { showBindSheet = true },
-                    onCancelOutgoing = outgoing?.id?.let { id -> { viewModel.cancelBind(id) } },
-                )
-                incoming.forEach { req ->
-                    Spacer(Modifier.height(12.dp))
+                val invite = incoming.firstOrNull()
+                if (invite != null) {
                     IncomingBindCard(
-                        nickname = req.requesterNickname,
-                        phone = req.requesterPhone,
-                        onAccept = { viewModel.acceptBind(req.id) },
-                        onReject = { viewModel.rejectBind(req.id) },
+                        inviterLabel = bindInviterLabel(invite.requesterNickname, invite.requesterPhone),
+                        onAccept = { viewModel.acceptBind(invite.id) },
+                        onReject = { viewModel.rejectBind(invite.id) },
+                    )
+                } else {
+                    EmptyCoupleCard(
+                        nickname = state.user?.nickname,
+                        outgoingPhone = outgoing?.targetPhone,
+                        onBind = { showBindSheet = true },
+                        onCancelOutgoing = outgoing?.id?.let { id -> { viewModel.cancelBind(id) } },
                     )
                 }
             } else {
@@ -820,30 +891,44 @@ private fun EmptyCoupleCard(
 
 @Composable
 private fun IncomingBindCard(
-    nickname: String,
-    phone: String,
+    inviterLabel: String,
     onAccept: () -> Unit,
     onReject: () -> Unit,
 ) {
     Card(
-        colors = CardDefaults.cardColors(containerColor = Color.White),
+        colors = CardDefaults.cardColors(containerColor = Blush.copy(alpha = 0.85f)),
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(24.dp),
-        border = BorderStroke(1.dp, SoftOutline),
+        shape = RoundedCornerShape(32.dp),
+        elevation = CardDefaults.cardElevation(0.dp),
     ) {
-        Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Text("收到绑定请求", style = MaterialTheme.typography.titleLarge)
-            Text("$nickname（$phone）想和你组成小宇宙", color = Stone)
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                OutlinedButton(onClick = onReject, modifier = Modifier.weight(1f), shape = RoundedCornerShape(18.dp)) {
-                    Text("拒绝")
-                }
+        Column(
+            Modifier.padding(28.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(14.dp),
+        ) {
+            Row {
+                Avatar(inviterLabel.take(1))
+                Avatar("我", Modifier.offset(x = (-12).dp))
+            }
+            Text("我们的小宇宙", style = MaterialTheme.typography.headlineMedium)
+            Text(
+                "${inviterLabel}邀请您绑定",
+                color = Stone,
+                style = MaterialTheme.typography.bodyLarge,
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
+                OutlinedButton(
+                    onClick = onReject,
+                    modifier = Modifier.weight(1f).height(48.dp),
+                    shape = RoundedCornerShape(20.dp),
+                    border = BorderStroke(1.dp, SoftOutline),
+                ) { Text("拒绝") }
                 Button(
                     onClick = onAccept,
-                    modifier = Modifier.weight(1f),
-                    shape = RoundedCornerShape(18.dp),
+                    modifier = Modifier.weight(1f).height(48.dp),
+                    shape = RoundedCornerShape(20.dp),
                     colors = ButtonDefaults.buttonColors(containerColor = Rose),
-                ) { Text("同意绑定") }
+                ) { Text("同意") }
             }
         }
     }
