@@ -71,7 +71,7 @@ Authorization: Bearer <accessToken>
 
 ## 限流
 
-API 基于来源 IP 限流，并返回统一 `RATE_LIMITED` 错误：短信发送 5 次/10 分钟、登录 10 次/10 分钟、邀请创建 10 次/小时、接受邀请 20 次/小时、上传 token 30 次/分钟。生产部署在可信反向代理后时设置 `TRUST_PROXY=true`。默认计数器在单进程内存中；多副本部署应按 `@fastify/rate-limit` 文档接入共享 Redis store。
+API 基于来源 IP 限流，并返回统一 `RATE_LIMITED` 错误：短信发送 5 次/10 分钟、登录 10 次/10 分钟、邀请创建 10 次/小时、接受邀请 20 次/小时、上传 token 30 次/分钟。当 `SMS_PROVIDER=dev` 时，短信发送接口跳过 IP 限流与同号冷却，便于联调。生产部署在可信反向代理后时设置 `TRUST_PROXY=true`。默认计数器在单进程内存中；多副本部署应按 `@fastify/rate-limit` 文档接入共享 Redis store。
 
 ## 数据一致性与隐私
 

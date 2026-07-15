@@ -1,16 +1,21 @@
-@file:OptIn(ExperimentalMaterial3Api::class)
+﻿@file:OptIn(ExperimentalMaterial3Api::class)
 
 package com.lover.app.feature.main
 
-import android.net.Uri
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.PickVisualMediaRequest
-import androidx.activity.result.contract.ActivityResultContracts.PickVisualMedia
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.SizeTransform
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.scaleIn
-import androidx.compose.animation.scaleOut
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -21,6 +26,7 @@ import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.*
 import androidx.compose.material3.*
@@ -48,7 +54,9 @@ import com.lover.app.core.design.*
 import com.lover.app.core.model.*
 import java.time.LocalDate
 
-private enum class Editor { MEDIA, ANNIVERSARY, LETTER }
+internal const val MaxMediaPick = 9
+
+enum class Editor { MEDIA, ANNIVERSARY, LETTER }
 
 @Composable
 fun MainScreen(viewModel: MainViewModel) {
@@ -56,16 +64,10 @@ fun MainScreen(viewModel: MainViewModel) {
     val tab by viewModel.selectedTab.collectAsState()
     val message by viewModel.message.collectAsState()
     var editor by remember { mutableStateOf<Editor?>(null) }
-    var pickedUri by remember { mutableStateOf<Uri?>(null) }
     var mediaDetail by remember { mutableStateOf<MediaItem?>(null) }
     var letterDetail by remember { mutableStateOf<Letter?>(null) }
-    val picker = rememberLauncherForActivityResult(PickVisualMedia()) { uri ->
-        if (uri != null) {
-            pickedUri = uri
-            editor = Editor.MEDIA
-        }
-    }
     val snackbar = remember { SnackbarHostState() }
+    val composing = editor != null
 
     LaunchedEffect(message) {
         message?.let {
@@ -74,105 +76,124 @@ fun MainScreen(viewModel: MainViewModel) {
         }
     }
 
-    Scaffold(
-        containerColor = WarmBackground,
-        snackbarHost = { SnackbarHost(snackbar) },
-        bottomBar = { LoverNavigation(tab, viewModel::selectTab) },
-        floatingActionButton = {
-            val target = when (tab) {
-                MainTab.TIMELINE -> Editor.MEDIA
-                MainTab.ANNIVERSARY -> Editor.ANNIVERSARY
-                MainTab.LETTERS -> Editor.LETTER
-                else -> null
-            }
-            if (target != null) {
-                FloatingActionButton(
-                    onClick = {
-                        if (target == Editor.MEDIA) {
-                            picker.launch(PickVisualMediaRequest(PickVisualMedia.ImageAndVideo))
-                        } else editor = target
-                    },
-                    containerColor = Rose,
-                ) { Icon(Icons.Rounded.Add, "新增", tint = Color.White) }
-            }
-        },
-    ) { padding ->
-        AnimatedContent(
-            targetState = tab,
-            transitionSpec = { scaleIn(initialScale = .98f) togetherWith scaleOut(targetScale = 1.02f) },
-            label = "tab",
-            modifier = Modifier.padding(padding),
-        ) { current ->
-            Box(Modifier.fillMaxSize().widthIn(max = 600.dp)) {
-                when (current) {
-                    MainTab.HOME -> HomePage(
-                        state,
-                        onMedia = { mediaDetail = it },
-                        onCapture = { picker.launch(PickVisualMediaRequest(PickVisualMedia.ImageAndVideo)) },
-                        onWrite = { viewModel.selectTab(MainTab.LETTERS); editor = Editor.LETTER },
+    Box(Modifier.fillMaxSize()) {
+        Scaffold(
+            containerColor = WarmBackground,
+            snackbarHost = { SnackbarHost(snackbar) },
+            bottomBar = {
+                if (!composing) {
+                    LoverNavigation(tab, viewModel::selectTab)
+                }
+            },
+            floatingActionButton = {
+                if (!composing) {
+                    val target = when (tab) {
+                        MainTab.TIMELINE -> Editor.MEDIA
+                        MainTab.ANNIVERSARY -> Editor.ANNIVERSARY
+                        MainTab.LETTERS -> Editor.LETTER
+                        else -> null
+                    }
+                    if (target != null) {
+                        FloatingActionButton(
+                            onClick = { editor = target },
+                            containerColor = Rose,
+                            shape = RoundedCornerShape(22.dp),
+                            elevation = FloatingActionButtonDefaults.elevation(4.dp, 6.dp),
+                        ) { Icon(Icons.Rounded.Add, "新增", tint = Color.White) }
+                    }
+                }
+            },
+        ) { padding ->
+            AnimatedContent(
+                targetState = tab,
+                transitionSpec = {
+                    val forward = targetState.ordinal >= initialState.ordinal
+                    val distance = 48
+                    val enter = fadeIn(
+                        animationSpec = tween(280, easing = FastOutSlowInEasing),
+                    ) + slideInHorizontally(
+                        animationSpec = tween(320, easing = FastOutSlowInEasing),
+                        initialOffsetX = { if (forward) distance else -distance },
                     )
-                    MainTab.TIMELINE -> TimelinePage(state.media, { mediaDetail = it }) {
-                        picker.launch(PickVisualMediaRequest(PickVisualMedia.ImageAndVideo))
-                    }
-                    MainTab.ANNIVERSARY -> AnniversaryPage(state.anniversaries) {
-                        editor = Editor.ANNIVERSARY
-                    }
-                    MainTab.LETTERS -> LettersPage(state.letters, { letterDetail = it }) {
-                        editor = Editor.LETTER
-                    }
-                    MainTab.PROFILE -> ProfilePage(
-                        state = state,
-                        onLogout = viewModel::logout,
-                        onRequestUnbinding = viewModel::requestUnbinding,
-                        onConfirmUnbinding = viewModel::confirmUnbinding,
-                        onCancelUnbinding = viewModel::cancelUnbinding,
+                    val exit = fadeOut(
+                        animationSpec = tween(200, easing = FastOutSlowInEasing),
+                    ) + slideOutHorizontally(
+                        animationSpec = tween(240, easing = FastOutSlowInEasing),
+                        targetOffsetX = { if (forward) -distance else distance },
                     )
+                    enter togetherWith exit using SizeTransform(clip = false)
+                },
+                label = "tab",
+                modifier = Modifier.padding(padding),
+            ) { current ->
+                Box(Modifier.fillMaxSize().widthIn(max = 600.dp)) {
+                    when (current) {
+                        MainTab.HOME -> HomePage(
+                            state,
+                            onMedia = { mediaDetail = it },
+                            onCapture = { editor = Editor.MEDIA },
+                            onWrite = {
+                                viewModel.selectTab(MainTab.LETTERS)
+                                editor = Editor.LETTER
+                            },
+                        )
+                        MainTab.TIMELINE -> TimelinePage(state.media, { mediaDetail = it }) {
+                            editor = Editor.MEDIA
+                        }
+                        MainTab.ANNIVERSARY -> AnniversaryPage(state.anniversaries) {
+                            editor = Editor.ANNIVERSARY
+                        }
+                        MainTab.LETTERS -> LettersPage(state.letters, { letterDetail = it }) {
+                            editor = Editor.LETTER
+                        }
+                        MainTab.PROFILE -> ProfilePage(
+                            state = state,
+                            onLogout = viewModel::logout,
+                            onRequestUnbinding = viewModel::requestUnbinding,
+                            onConfirmUnbinding = viewModel::confirmUnbinding,
+                            onCancelUnbinding = viewModel::cancelUnbinding,
+                        )
+                    }
                 }
             }
         }
-    }
 
-    if (editor == Editor.MEDIA && pickedUri != null) {
-        MediaEditor(
-            uri = pickedUri!!,
-            onDismiss = { editor = null; pickedUri = null },
-            onSave = { caption, date ->
-                viewModel.addMedia(
-                    pickedUri!!,
-                    caption,
-                    date,
+        AnimatedVisibility(
+            visible = composing,
+            enter = fadeIn(tween(280)) + slideInVertically(tween(320)) { it / 10 },
+            exit = fadeOut(tween(180)) + slideOutVertically(tween(220)) { it / 12 },
+        ) {
+            val current = editor
+            if (current != null) {
+                ComposerHost(
+                    editor = current,
+                    initialMediaUris = emptyList(),
+                    onDismiss = { editor = null },
+                    onSaveMedia = { uris, caption, date ->
+                        viewModel.addMedia(uris, caption, date)
+                        editor = null
+                    },
+                    onSaveAnniversary = { title, date, type ->
+                        viewModel.addAnniversary(title, date, type)
+                        editor = null
+                    },
+                    onSaveLetter = { title, content, type, date ->
+                        viewModel.addLetter(title, content, type, date)
+                        editor = null
+                    },
                 )
-                editor = null
-                pickedUri = null
-            },
-        )
+            }
+        }
+
+        mediaDetail?.let { MediaDetail(it) { mediaDetail = null } }
+        letterDetail?.let { LetterDetail(it) { letterDetail = null } }
     }
-    if (editor == Editor.ANNIVERSARY) {
-        AnniversaryEditor(
-            onDismiss = { editor = null },
-            onSave = { title, date, type ->
-                viewModel.addAnniversary(title, date, type)
-                editor = null
-            },
-        )
-    }
-    if (editor == Editor.LETTER) {
-        LetterEditor(
-            onDismiss = { editor = null },
-            onSave = { title, content, type, date ->
-                viewModel.addLetter(title, content, type, date)
-                editor = null
-            },
-        )
-    }
-    mediaDetail?.let { MediaDetail(it) { mediaDetail = null } }
-    letterDetail?.let { LetterDetail(it) { letterDetail = null } }
 }
 
 @Composable
 private fun LoverNavigation(selected: MainTab, onSelect: (MainTab) -> Unit) {
     val tabs = listOf(
-        Triple(MainTab.HOME, "首页", Icons.Rounded.Favorite),
+        Triple(MainTab.HOME, "空间", Icons.Rounded.Favorite),
         Triple(MainTab.TIMELINE, "时光", Icons.Rounded.PhotoLibrary),
         Triple(MainTab.ANNIVERSARY, "纪念", Icons.Rounded.Event),
         Triple(MainTab.LETTERS, "信封", Icons.Rounded.Mail),
@@ -180,13 +201,19 @@ private fun LoverNavigation(selected: MainTab, onSelect: (MainTab) -> Unit) {
     )
     Surface(
         modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
-        shape = CircleShape,
-        shadowElevation = 12.dp,
-        color = Color.White.copy(alpha = .97f),
+        shape = RoundedCornerShape(36.dp),
+        shadowElevation = 8.dp,
+        tonalElevation = 0.dp,
+        color = Color.White.copy(alpha = .96f),
+        border = BorderStroke(1.dp, SoftOutline.copy(alpha = 0.55f)),
     ) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 5.dp, vertical = 4.dp)) {
             tabs.forEach { (tab, label, icon) ->
-                val scale by animateFloatAsState(if (selected == tab) 1.12f else 1f, label = "icon")
+                val scale by animateFloatAsState(
+                    targetValue = if (selected == tab) 1.06f else 1f,
+                    animationSpec = tween(280, easing = FastOutSlowInEasing),
+                    label = "icon",
+                )
                 NavigationBarItem(
                     selected = selected == tab,
                     onClick = { onSelect(tab) },
@@ -194,7 +221,12 @@ private fun LoverNavigation(selected: MainTab, onSelect: (MainTab) -> Unit) {
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
                             Icon(icon, label, Modifier.scale(scale))
                             if (selected == tab) {
-                                Box(Modifier.padding(top = 2.dp).size(4.dp).background(Rose, CircleShape))
+                                Box(
+                                    Modifier
+                                        .padding(top = 3.dp)
+                                        .size(width = 12.dp, height = 3.dp)
+                                        .background(Rose, RoundedCornerShape(2.dp)),
+                                )
                             }
                         }
                     },
@@ -202,8 +234,9 @@ private fun LoverNavigation(selected: MainTab, onSelect: (MainTab) -> Unit) {
                     colors = NavigationBarItemDefaults.colors(
                         selectedIconColor = Rose,
                         selectedTextColor = Rose,
-                        indicatorColor = Blush,
+                        indicatorColor = Color.Transparent,
                         unselectedIconColor = Stone,
+                        unselectedTextColor = Stone,
                     ),
                 )
             }
@@ -243,27 +276,33 @@ private fun HomePage(
         item {
             Card(
                 modifier = Modifier.padding(horizontal = 20.dp).fillMaxWidth(),
-                colors = CardDefaults.cardColors(containerColor = Blush),
+                colors = CardDefaults.cardColors(containerColor = Color.Transparent),
+                shape = RoundedCornerShape(34.dp),
+                elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
             ) {
                 Box(
                     Modifier
                         .fillMaxWidth()
-                        .background(Brush.linearGradient(listOf(Blush, Peach.copy(alpha = .75f))))
+                        .background(
+                            Brush.linearGradient(listOf(Blush, Peach.copy(alpha = .7f))),
+                            RoundedCornerShape(34.dp),
+                        )
                         .padding(30.dp),
                 ) {
-                    Column {
-                        Text("Loving Journey", color = DeepRose)
+                    Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {
+                        Text("Loving Journey", style = MaterialTheme.typography.labelMedium, color = DeepRose)
+                        Spacer(Modifier.height(8.dp))
                         Row(verticalAlignment = Alignment.Bottom) {
                             Text("$days", style = MaterialTheme.typography.displayLarge)
-                            Text(" 天", style = MaterialTheme.typography.titleLarge, modifier = Modifier.padding(bottom = 8.dp))
+                            Text(" 天", style = MaterialTheme.typography.titleLarge, modifier = Modifier.padding(bottom = 8.dp), color = Stone)
                         }
                         Text("每一天，都算数", color = Stone)
                     }
                     Icon(
                         Icons.Rounded.Favorite,
                         null,
-                        tint = Rose.copy(alpha = .32f),
-                        modifier = Modifier.align(Alignment.CenterEnd).size(100.dp),
+                        tint = Rose.copy(alpha = .22f),
+                        modifier = Modifier.align(Alignment.CenterEnd).size(96.dp),
                     )
                 }
             }
@@ -305,10 +344,21 @@ private fun QuickAction(
     modifier: Modifier,
     onClick: () -> Unit,
 ) {
-    Card(modifier.clickable(onClick = onClick), colors = CardDefaults.cardColors(containerColor = Color.White)) {
-        Column(Modifier.padding(18.dp)) {
-            Icon(icon, null, tint = Rose)
-            Spacer(Modifier.height(16.dp))
+    Card(
+        modifier.clickable(onClick = onClick),
+        colors = CardDefaults.cardColors(containerColor = Color.White.copy(alpha = 0.92f)),
+        shape = RoundedCornerShape(28.dp),
+        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
+        border = BorderStroke(1.dp, SoftOutline.copy(alpha = 0.65f)),
+    ) {
+        Column(Modifier.padding(20.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+            Box(
+                Modifier.size(48.dp).background(Blush, CircleShape),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(icon, null, tint = Rose)
+            }
+            Spacer(Modifier.height(14.dp))
             Text(title, fontWeight = FontWeight.SemiBold)
             Text(subtitle, style = MaterialTheme.typography.labelSmall, color = Stone)
         }
@@ -340,7 +390,7 @@ private fun TimelinePage(media: List<MediaItem>, onMedia: (MediaItem) -> Unit, o
 
 @Composable
 private fun MediaImage(item: MediaItem, modifier: Modifier = Modifier) {
-    Box(modifier.clip(MaterialTheme.shapes.medium).background(Blush)) {
+    Box(modifier.clip(RoundedCornerShape(26.dp)).background(Blush)) {
         AsyncImage(
             model = item.thumbnailUrl ?: item.url,
             contentDescription = item.caption,
@@ -383,7 +433,12 @@ private fun AnniversaryPage(anniversaries: List<Anniversary>, onAdd: () -> Unit)
             if (anniversaries.isEmpty()) item { EmptyHint("把重要的日子珍藏在这里", Icons.Rounded.Event) }
             items(anniversaries, key = { it.id }) { anniversary ->
                 val countdown = anniversary.countdown
-                Card(colors = CardDefaults.cardColors(containerColor = Color.White)) {
+                Card(
+                    colors = CardDefaults.cardColors(containerColor = SoftSurface),
+                    shape = RoundedCornerShape(28.dp),
+                    elevation = CardDefaults.cardElevation(0.dp),
+                    border = BorderStroke(1.dp, SoftOutline.copy(alpha = 0.7f)),
+                ) {
                     Row(Modifier.fillMaxWidth().padding(20.dp), verticalAlignment = Alignment.CenterVertically) {
                         Box(Modifier.size(64.dp).background(Blush, CircleShape), contentAlignment = Alignment.Center) {
                             Icon(Icons.Rounded.Favorite, null, tint = Rose)
@@ -394,6 +449,11 @@ private fun AnniversaryPage(anniversaries: List<Anniversary>, onAdd: () -> Unit)
                             SuggestionChip(
                                 onClick = {},
                                 label = { Text(if (anniversary.type == AnniversaryType.YEARLY) "年度纪念" else "里程碑") },
+                                colors = SuggestionChipDefaults.suggestionChipColors(
+                                    containerColor = Blush,
+                                    labelColor = DeepRose,
+                                ),
+                                border = null,
                             )
                         }
                         Column(horizontalAlignment = Alignment.End) {
@@ -408,8 +468,15 @@ private fun AnniversaryPage(anniversaries: List<Anniversary>, onAdd: () -> Unit)
                 }
             }
             item {
-                OutlinedButton(onClick = onAdd, modifier = Modifier.fillMaxWidth()) {
+                OutlinedButton(
+                    onClick = onAdd,
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(22.dp),
+                    border = BorderStroke(1.dp, Rose.copy(alpha = 0.35f)),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = Rose),
+                ) {
                     Icon(Icons.Rounded.Add, null)
+                    Spacer(Modifier.width(6.dp))
                     Text("添加新的纪念日")
                 }
             }
@@ -432,16 +499,26 @@ private fun LettersPage(letters: List<Letter>, onLetter: (Letter) -> Unit, onAdd
                 val unlocked = letter.isUnlocked
                 Card(
                     modifier = Modifier.fillMaxWidth().clickable { onLetter(letter) },
-                    colors = CardDefaults.cardColors(containerColor = if (unlocked) Color.White else Blush),
+                    colors = CardDefaults.cardColors(
+                        containerColor = if (unlocked) Color.White.copy(alpha = 0.96f) else Blush.copy(alpha = 0.75f),
+                    ),
+                    shape = RoundedCornerShape(28.dp),
+                    elevation = CardDefaults.cardElevation(0.dp),
+                    border = BorderStroke(1.dp, SoftOutline.copy(alpha = 0.7f)),
                 ) {
-                    Row(Modifier.padding(20.dp), verticalAlignment = Alignment.Top) {
-                        Icon(
-                            if (unlocked) Icons.Rounded.Drafts else Icons.Rounded.Lock,
-                            null,
-                            tint = Rose,
-                            modifier = Modifier.size(32.dp),
-                        )
-                        Column(Modifier.weight(1f).padding(start = 16.dp)) {
+                    Row(Modifier.padding(22.dp), verticalAlignment = Alignment.Top) {
+                        Box(
+                            Modifier.size(44.dp).background(if (unlocked) SoftSurface else Color.White.copy(alpha = 0.5f), CircleShape),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Icon(
+                                if (unlocked) Icons.Rounded.Drafts else Icons.Rounded.Lock,
+                                null,
+                                tint = Rose,
+                                modifier = Modifier.size(22.dp),
+                            )
+                        }
+                        Column(Modifier.weight(1f).padding(start = 14.dp)) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Text(letter.title, style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
                                 Text(letter.createdAt.take(10), style = MaterialTheme.typography.labelSmall, color = Stone)
@@ -478,12 +555,18 @@ private fun ProfilePage(
     LazyColumn(contentPadding = PaddingValues(horizontal = 20.dp, vertical = 12.dp)) {
         item {
             PageHeader("我们的小宇宙", "Our Private World")
-            Card(colors = CardDefaults.cardColors(containerColor = Blush), modifier = Modifier.fillMaxWidth()) {
+            Card(
+                colors = CardDefaults.cardColors(containerColor = Blush.copy(alpha = 0.85f)),
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(32.dp),
+                elevation = CardDefaults.cardElevation(0.dp),
+            ) {
                 Column(Modifier.padding(28.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                     Row {
                         Avatar(state.user?.nickname?.take(1) ?: "我")
                         Avatar(partner?.nickname?.take(1) ?: "TA", Modifier.offset(x = (-12).dp))
                     }
+                    Spacer(Modifier.height(8.dp))
                     Text(state.couple?.name ?: "我们", style = MaterialTheme.typography.headlineMedium)
                     Text(
                         "Established ${state.couple?.togetherDate?.replace('-', '.') ?: "—"}",
@@ -502,17 +585,31 @@ private fun ProfilePage(
         item {
             Spacer(Modifier.height(20.dp))
             if (pending == null) {
-                OutlinedButton(onClick = { confirm = "request" }, modifier = Modifier.fillMaxWidth()) {
+                OutlinedButton(
+                    onClick = { confirm = "request" },
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(22.dp),
+                    border = BorderStroke(1.dp, SoftOutline),
+                ) {
                     Text("申请解除情侣绑定")
                 }
             } else if (pending.requestedBy == state.user?.id) {
                 Text("解绑申请等待伴侣确认", color = Stone)
-                OutlinedButton(onClick = { confirm = "cancel" }, modifier = Modifier.fillMaxWidth()) {
+                OutlinedButton(
+                    onClick = { confirm = "cancel" },
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(22.dp),
+                ) {
                     Text("取消解绑申请")
                 }
             } else {
                 Text("伴侣发起了解绑申请", color = MaterialTheme.colorScheme.error)
-                Button(onClick = { confirm = "confirm" }, modifier = Modifier.fillMaxWidth()) {
+                Button(
+                    onClick = { confirm = "confirm" },
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(22.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = Rose),
+                ) {
                     Text("确认解除绑定")
                 }
                 TextButton(onClick = { confirm = "cancel" }, modifier = Modifier.fillMaxWidth()) {
@@ -525,6 +622,8 @@ private fun ProfilePage(
     confirm?.let { action ->
         AlertDialog(
             onDismissRequest = { confirm = null },
+            shape = RoundedCornerShape(28.dp),
+            containerColor = WarmBackground,
             title = {
                 Text(
                     when (action) {
@@ -537,12 +636,15 @@ private fun ProfilePage(
             },
             text = {
                 if (action == "request") {
-                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text("申请提交后，需要伴侣确认才会正式解绑。")
-                        OutlinedTextField(
-                            reason,
-                            { reason = it.take(300) },
-                            label = { Text("原因（可选）") },
+                    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Text("申请提交后，需要伴侣确认才会正式解绑。", color = Stone)
+                        SoftTextField(
+                            value = reason,
+                            onValueChange = { reason = it.take(300) },
+                            label = "原因（可选）",
+                            minLines = 2,
+                            singleLine = false,
+                            modifier = Modifier.fillMaxWidth(),
                         )
                     }
                 } else {
@@ -550,21 +652,30 @@ private fun ProfilePage(
                         if (action == "confirm") "确认后情侣空间将解散，请谨慎操作。"
                         else if (action == "logout") "退出后可再次使用手机号登录。"
                         else "该待处理申请将被取消。",
+                        color = Stone,
                     )
                 }
             },
             confirmButton = {
-                TextButton(onClick = {
-                    when (action) {
-                        "request" -> onRequestUnbinding(reason)
-                        "confirm" -> pending?.id?.let(onConfirmUnbinding)
-                        "cancel" -> pending?.id?.let(onCancelUnbinding)
-                        else -> onLogout()
-                    }
-                    confirm = null
-                }) { Text("确认") }
+                TextButton(
+                    onClick = {
+                        when (action) {
+                            "request" -> onRequestUnbinding(reason)
+                            "confirm" -> pending?.id?.let(onConfirmUnbinding)
+                            "cancel" -> pending?.id?.let(onCancelUnbinding)
+                            else -> onLogout()
+                        }
+                        confirm = null
+                    },
+                    colors = ButtonDefaults.textButtonColors(contentColor = Rose),
+                ) { Text("确认") }
             },
-            dismissButton = { TextButton(onClick = { confirm = null }) { Text("取消") } },
+            dismissButton = {
+                TextButton(
+                    onClick = { confirm = null },
+                    colors = ButtonDefaults.textButtonColors(contentColor = Stone),
+                ) { Text("取消") }
+            },
         )
     }
 }
@@ -572,20 +683,41 @@ private fun ProfilePage(
 @Composable
 private fun Avatar(label: String, modifier: Modifier = Modifier) {
     Box(
-        modifier.size(72.dp).background(Rose, CircleShape),
+        modifier
+            .size(72.dp)
+            .background(Color.White, CircleShape)
+            .padding(3.dp),
         contentAlignment = Alignment.Center,
-    ) { Text(label, color = Color.White, style = MaterialTheme.typography.headlineMedium) }
+    ) {
+        Box(
+            Modifier
+                .fillMaxSize()
+                .background(Rose.copy(alpha = 0.9f), CircleShape),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(label, color = Color.White, style = MaterialTheme.typography.headlineMedium)
+        }
+    }
 }
 
 @Composable
 private fun SettingRow(icon: androidx.compose.ui.graphics.vector.ImageVector, title: String, detail: String) {
-    Row(Modifier.fillMaxWidth().padding(vertical = 16.dp), verticalAlignment = Alignment.CenterVertically) {
-        Icon(icon, null, tint = Rose)
-        Column(Modifier.weight(1f).padding(horizontal = 16.dp)) {
-            Text(title, fontWeight = FontWeight.SemiBold)
-            Text(detail, style = MaterialTheme.typography.bodySmall, color = Stone)
+    Surface(
+        modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp),
+        shape = RoundedCornerShape(22.dp),
+        color = SoftSurface,
+        border = BorderStroke(1.dp, SoftOutline.copy(alpha = 0.65f)),
+    ) {
+        Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.size(40.dp).background(Blush, CircleShape), contentAlignment = Alignment.Center) {
+                Icon(icon, null, tint = Rose, modifier = Modifier.size(20.dp))
+            }
+            Column(Modifier.weight(1f).padding(horizontal = 14.dp)) {
+                Text(title, fontWeight = FontWeight.SemiBold)
+                Text(detail, style = MaterialTheme.typography.bodySmall, color = Stone)
+            }
+            Icon(Icons.Rounded.ChevronRight, null, tint = Stone.copy(alpha = 0.7f))
         }
-        Icon(Icons.Rounded.ChevronRight, null, tint = Stone)
     }
 }
 
@@ -599,106 +731,6 @@ private fun EmptyHint(text: String, icon: androidx.compose.ui.graphics.vector.Im
         Spacer(Modifier.height(12.dp))
         Text(text, color = Stone)
     }
-}
-
-@Composable
-private fun MediaEditor(uri: Uri, onDismiss: () -> Unit, onSave: (String, String) -> Unit) {
-    var caption by rememberSaveable { mutableStateOf("") }
-    var date by rememberSaveable { mutableStateOf(LocalDate.now().toString()) }
-    val context = LocalContext.current
-    val isVideo = remember(uri) { context.contentResolver.getType(uri)?.startsWith("video/") == true }
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("存下这个瞬间") },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                if (isVideo) {
-                    Box(
-                        Modifier.fillMaxWidth().height(180.dp)
-                            .clip(MaterialTheme.shapes.medium).background(Blush),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            Icon(Icons.Rounded.VideoFile, null, tint = Rose, modifier = Modifier.size(54.dp))
-                            Text("已选择视频", color = Stone)
-                        }
-                    }
-                } else {
-                    AsyncImage(
-                        uri,
-                        null,
-                        Modifier.fillMaxWidth().height(220.dp).clip(MaterialTheme.shapes.medium),
-                        contentScale = ContentScale.Crop,
-                    )
-                }
-                OutlinedTextField(caption, { caption = it.take(200) }, label = { Text("这一刻想说…") }, modifier = Modifier.fillMaxWidth())
-                OutlinedTextField(date, { date = it.take(10) }, label = { Text("日期 YYYY-MM-DD") }, modifier = Modifier.fillMaxWidth())
-            }
-        },
-        confirmButton = { TextButton(onClick = { onSave(caption, date) }) { Text("保存") } },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
-    )
-}
-
-@Composable
-private fun AnniversaryEditor(onDismiss: () -> Unit, onSave: (String, String, AnniversaryType) -> Unit) {
-    var title by rememberSaveable { mutableStateOf("") }
-    var date by rememberSaveable { mutableStateOf(LocalDate.now().plusMonths(1).toString()) }
-    var type by rememberSaveable { mutableStateOf(AnniversaryType.YEARLY) }
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("新建纪念日") },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                OutlinedTextField(title, { title = it.take(30) }, label = { Text("纪念日名称") }, modifier = Modifier.fillMaxWidth())
-                OutlinedTextField(date, { date = it.take(10) }, label = { Text("日期 YYYY-MM-DD") }, modifier = Modifier.fillMaxWidth())
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    FilterChip(type == AnniversaryType.YEARLY, { type = AnniversaryType.YEARLY }, { Text("年度纪念") })
-                    FilterChip(type == AnniversaryType.MILESTONE, { type = AnniversaryType.MILESTONE }, { Text("里程碑") })
-                }
-            }
-        },
-        confirmButton = { TextButton(onClick = { onSave(title, date, type) }, enabled = title.isNotBlank()) { Text("保存") } },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
-    )
-}
-
-@Composable
-private fun LetterEditor(onDismiss: () -> Unit, onSave: (String, String, LetterType, String?) -> Unit) {
-    var title by rememberSaveable { mutableStateOf("") }
-    var content by rememberSaveable { mutableStateOf("") }
-    var type by rememberSaveable { mutableStateOf(LetterType.INSTANT) }
-    var unlockDate by rememberSaveable { mutableStateOf(LocalDate.now().plusMonths(1).toString()) }
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("写给 TA") },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    FilterChip(type == LetterType.INSTANT, { type = LetterType.INSTANT }, { Text("即时信") })
-                    FilterChip(type == LetterType.CAPSULE, { type = LetterType.CAPSULE }, { Text("时间胶囊") })
-                }
-                OutlinedTextField(title, { title = it }, label = { Text("标题") }, modifier = Modifier.fillMaxWidth())
-                OutlinedTextField(
-                    content,
-                    { content = it },
-                    label = { Text("想对 TA 说的话") },
-                    minLines = 5,
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                if (type == LetterType.CAPSULE) {
-                    OutlinedTextField(unlockDate, { unlockDate = it.take(10) }, label = { Text("解锁日期 YYYY-MM-DD") }, modifier = Modifier.fillMaxWidth())
-                }
-            }
-        },
-        confirmButton = {
-            TextButton(
-                onClick = { onSave(title, content, type, unlockDate.takeIf { type == LetterType.CAPSULE }) },
-                enabled = title.isNotBlank() && content.isNotBlank(),
-            ) { Text("封存") }
-        },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
-    )
 }
 
 @Composable

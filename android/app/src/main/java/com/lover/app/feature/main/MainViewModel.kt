@@ -42,9 +42,10 @@ class MainViewModel @Inject constructor(
         _selectedTab.value = tab
     }
 
-    fun addMedia(uri: Uri, caption: String, date: String) = launchAction {
+    fun addMedia(uris: List<Uri>, caption: String, date: String) = launchAction {
+        require(uris.isNotEmpty()) { "请选择至少一张照片或视频" }
         LocalDate.parse(date)
-        repository.addMedia(uri, caption, date)
+        repository.addMediaBatch(uris, caption, date)
     }
 
     fun addAnniversary(title: String, date: String, type: AnniversaryType) = launchAction {

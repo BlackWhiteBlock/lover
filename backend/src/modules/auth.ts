@@ -38,14 +38,21 @@ export function registerAuth(app: FastifyInstance, context: AppContext) {
   const { db, config } = context;
 
   app.post('/api/auth/sms/send', {
-    config: { rateLimit: { max: 5, timeWindow: '10 minutes' } },
+    config: {
+      rateLimit: config.sms.provider === 'dev'
+        ? false
+        : { max: 5, timeWindow: '10 minutes' },
+    },
   }, async (request) => {
     const { phone } = sendSchema.parse(request.body);
-    const recent = await db.query(
-      `select 1 from sms_codes where phone = $1 and created_at > now() - make_interval(secs => $2) limit 1`,
-      [phone, config.sms.cooldownSeconds],
-    );
-    if (recent.rowCount) throw new AppError(429, 'SMS_RATE_LIMITED', '验证码发送过于频繁');
+    // 开发/测试短信模式不限流、不冷却，避免联调反复取码被拦住
+    if (config.sms.provider !== 'dev') {
+      const recent = await db.query(
+        `select 1 from sms_codes where phone = $1 and created_at > now() - make_interval(secs => $2) limit 1`,
+        [phone, config.sms.cooldownSeconds],
+      );
+      if (recent.rowCount) throw new AppError(429, 'SMS_RATE_LIMITED', '验证码发送过于频繁');
+    }
     const code = config.sms.provider === 'dev'
       ? config.sms.devCode
       : String(randomInt(100000, 1_000_000));
@@ -57,7 +64,7 @@ export function registerAuth(app: FastifyInstance, context: AppContext) {
     await sendSms(context, phone, code);
     return {
       ok: true,
-      cooldownSeconds: config.sms.cooldownSeconds,
+      cooldownSeconds: config.sms.provider === 'dev' ? 0 : config.sms.cooldownSeconds,
       ...(config.sms.provider === 'dev' ? { devCode: code } : {}),
     };
   });

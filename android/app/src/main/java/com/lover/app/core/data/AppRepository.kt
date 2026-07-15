@@ -126,7 +126,31 @@ class AppRepository @Inject constructor(
     }
 
     suspend fun addMedia(uri: Uri, caption: String, date: String) {
+        addMediaBatch(listOf(uri), caption, date)
+    }
+
+    /**
+     * Uploads items in reverse of [uris] so that a feed sorted by `created_at desc`
+     * matches the left-to-right order the user arranged.
+     */
+    suspend fun addMediaBatch(
+        uris: List<Uri>,
+        caption: String,
+        date: String,
+        onProgress: (current: Int, total: Int) -> Unit = { _, _ -> },
+    ) {
+        require(uris.isNotEmpty()) { "请选择至少一张照片或视频" }
         LocalDate.parse(date)
+        val trimmed = caption.trim()
+        val uploadOrder = uris.asReversed()
+        uploadOrder.forEachIndexed { index, uri ->
+            onProgress(index + 1, uris.size)
+            createMediaItem(uri, trimmed, date)
+        }
+        refreshAll()
+    }
+
+    private suspend fun createMediaItem(uri: Uri, caption: String, date: String) {
         val source = withContext(Dispatchers.IO) { mediaResolver.resolve(uri) }
         val thumbnailAssetId = if (source.isVideo) {
             val thumbnail = withContext(Dispatchers.IO) {
@@ -148,12 +172,11 @@ class AppRepository @Inject constructor(
                     type = if (source.isVideo) MediaType.VIDEO else MediaType.IMAGE,
                     assetId = assetId,
                     thumbnailAssetId = thumbnailAssetId,
-                    caption = caption.trim(),
+                    caption = caption,
                     mediaDate = date,
                 ),
             )
         }
-        refreshAll()
     }
 
     suspend fun addAnniversary(title: String, date: String, type: AnniversaryType) {

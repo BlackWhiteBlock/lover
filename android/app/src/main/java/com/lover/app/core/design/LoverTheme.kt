@@ -19,6 +19,8 @@ val WarmBackground = Color(0xFFFFFCFB)
 val Blush = Color(0xFFFFE9E6)
 val Peach = Color(0xFFFFDCC8)
 val Stone = Color(0xFF857A78)
+val SoftOutline = Color(0xFFE9DAD6)
+val SoftSurface = Color(0xFFFFF7F5)
 
 private val LoverColors = lightColorScheme(
     primary = Rose,
@@ -26,12 +28,17 @@ private val LoverColors = lightColorScheme(
     primaryContainer = Blush,
     onPrimaryContainer = DeepRose,
     secondary = Color(0xFFEFA77E),
+    onSecondary = Color.White,
+    secondaryContainer = Peach.copy(alpha = 0.55f),
+    onSecondaryContainer = DeepRose,
     background = WarmBackground,
     surface = Color.White,
-    surfaceVariant = Color(0xFFFFF4F1),
+    surfaceVariant = SoftSurface,
     onSurface = Color(0xFF332927),
     onSurfaceVariant = Stone,
-    error = Color(0xFFB3261E),
+    outline = SoftOutline,
+    outlineVariant = SoftOutline.copy(alpha = 0.7f),
+    error = Color(0xFFC45C5C),
 )
 
 private val LoverTypography = Typography(
@@ -40,14 +47,44 @@ private val LoverTypography = Typography(
         fontWeight = FontWeight.Normal,
         fontSize = 46.sp,
         color = DeepRose,
+        letterSpacing = (-0.5).sp,
     ),
     headlineMedium = TextStyle(
         fontFamily = FontFamily.Serif,
         fontWeight = FontWeight.SemiBold,
         fontSize = 28.sp,
+        color = Color(0xFF3A2C2A),
     ),
-    titleLarge = TextStyle(fontFamily = FontFamily.Serif, fontSize = 22.sp),
-    bodyLarge = TextStyle(fontFamily = FontFamily.SansSerif, fontSize = 16.sp),
+    titleLarge = TextStyle(
+        fontFamily = FontFamily.Serif,
+        fontSize = 22.sp,
+        color = Color(0xFF3A2C2A),
+    ),
+    bodyLarge = TextStyle(
+        fontFamily = FontFamily.SansSerif,
+        fontSize = 16.sp,
+        lineHeight = 24.sp,
+    ),
+    bodySmall = TextStyle(
+        fontFamily = FontFamily.SansSerif,
+        fontSize = 13.sp,
+        lineHeight = 18.sp,
+        color = Stone,
+    ),
+    labelMedium = TextStyle(
+        fontFamily = FontFamily.SansSerif,
+        fontWeight = FontWeight.Medium,
+        fontSize = 11.sp,
+        letterSpacing = 1.2.sp,
+        color = Stone,
+    ),
+    labelSmall = TextStyle(
+        fontFamily = FontFamily.SansSerif,
+        fontWeight = FontWeight.Medium,
+        fontSize = 10.sp,
+        letterSpacing = 1.4.sp,
+        color = Stone,
+    ),
 )
 
 @Composable
@@ -56,9 +93,11 @@ fun LoverTheme(content: @Composable () -> Unit) {
         colorScheme = LoverColors,
         typography = LoverTypography,
         shapes = Shapes(
-            small = RoundedCornerShape(14.dp),
-            medium = RoundedCornerShape(24.dp),
-            large = RoundedCornerShape(36.dp),
+            extraSmall = RoundedCornerShape(14.dp),
+            small = RoundedCornerShape(18.dp),
+            medium = RoundedCornerShape(26.dp),
+            large = RoundedCornerShape(34.dp),
+            extraLarge = RoundedCornerShape(40.dp),
         ),
         content = content,
     )

@@ -5,17 +5,18 @@ import com.lover.app.BuildConfig
 import com.lover.app.core.data.TokenStore
 import com.lover.app.core.network.ApiHostAuthInterceptor
 import com.lover.app.core.network.ApiService
+import com.lover.app.core.network.OkHttpClients
 import com.lover.app.core.network.RefreshApi
 import com.lover.app.core.network.TokenAuthenticator
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
 import dagger.hilt.components.SingletonComponent
-import javax.inject.Singleton
 import javax.inject.Named
+import javax.inject.Singleton
 import kotlinx.serialization.json.Json
-import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.HttpUrl.Companion.toHttpUrl
+import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.logging.HttpLoggingInterceptor
 import retrofit2.Retrofit
@@ -36,7 +37,7 @@ object AppModule {
     fun refreshApi(json: Json): RefreshApi =
         Retrofit.Builder()
             .baseUrl(BuildConfig.API_BASE_URL)
-            .client(OkHttpClient())
+            .client(OkHttpClients.builder().build())
             .addConverterFactory(json.asConverterFactory("application/json".toMediaType()))
             .build()
             .create(RefreshApi::class.java)
@@ -44,7 +45,7 @@ object AppModule {
     @Provides
     @Singleton
     @Named("asset-upload")
-    fun assetUploadClient(): OkHttpClient = OkHttpClient.Builder().build()
+    fun assetUploadClient(): OkHttpClient = OkHttpClients.builder().build()
 
     @Provides
     @Singleton
@@ -63,7 +64,7 @@ object AppModule {
         val authInterceptor = ApiHostAuthInterceptor(
             BuildConfig.API_BASE_URL.toHttpUrl(),
         ) { tokenStore.snapshot.accessToken }
-        val client = OkHttpClient.Builder()
+        val client = OkHttpClients.builder()
             .addNetworkInterceptor(authInterceptor)
             .authenticator(tokenAuthenticator)
             .addInterceptor(logging)

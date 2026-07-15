@@ -1,5 +1,6 @@
 package com.lover.app.core.network
 
+import com.lover.app.BuildConfig
 import com.lover.app.core.model.ApiErrorEnvelope
 import java.io.IOException
 import kotlinx.serialization.json.Json
@@ -22,6 +23,20 @@ fun Throwable.toUserFacing(json: Json): BackendException = when (this) {
             cause = this,
         )
     }
-    is IOException -> BackendException("NETWORK_ERROR", "无法连接服务器，请检查网络与后端地址", this)
+    is IOException -> BackendException(
+        code = "NETWORK_ERROR",
+        message = buildString {
+            append("无法连接服务器")
+            if (BuildConfig.DEBUG) {
+                append('\n')
+                append(BuildConfig.API_BASE_URL.trimEnd('/'))
+                append('\n')
+                append(message ?: javaClass.simpleName)
+            } else {
+                append("，请检查网络与后端地址")
+            }
+        },
+        cause = this,
+    )
     else -> BackendException("CLIENT_ERROR", message ?: "操作失败", this)
 }
