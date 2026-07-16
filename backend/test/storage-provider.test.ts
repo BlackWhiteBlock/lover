@@ -73,7 +73,8 @@ test('qiniu upload policy pins bucket:key, insert-only key, and tolerates size/M
     Buffer.from(videoGrant.uploadToken.split(':')[2]!, 'base64url').toString('utf8'),
   );
   assert.match(videoPolicy.mimeLimit, /video\/3gpp/);
-  assert.ok(videoPolicy.fsizeLimit > 5_000_000);
+  assert.equal(videoPolicy.fsizeLimit, 300 * 1024 * 1024);
+  assert.equal(videoPolicy.fsizeMin, 1);
 });
 
 test('qiniu stat uses guaranteed size and MIME fields without requiring endUser', async () => {

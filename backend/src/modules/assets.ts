@@ -60,7 +60,15 @@ export function sizeToleranceBytes(expectedSize: number): number {
   return Math.max(SIZE_TOLERANCE_MIN_BYTES, Math.ceil(expectedSize * SIZE_TOLERANCE_RATIO));
 }
 
-export function sizeWithinTolerance(expectedSize: number, actualSize: number): boolean {
+export function sizeWithinTolerance(
+  expectedSize: number,
+  actualSize: number,
+  mimeType?: string,
+): boolean {
+  // 视频申报体积在部分机型上严重不准；上传策略已放宽，完成校验只拦业务上限
+  if (mimeType?.startsWith('video/')) {
+    return actualSize > 0 && actualSize <= 300 * 1024 * 1024;
+  }
   return Math.abs(actualSize - expectedSize) <= sizeToleranceBytes(expectedSize);
 }
 
@@ -80,7 +88,7 @@ export function validateStoredObject(
   asset: AssetVerificationRecord,
   stat: StoredObjectInfo,
 ) {
-  if (!sizeWithinTolerance(asset.expectedSize, stat.sizeBytes)) {
+  if (!sizeWithinTolerance(asset.expectedSize, stat.sizeBytes, asset.mimeType)) {
     throw badRequest('SIZE_MISMATCH', '存储对象大小与申请不一致');
   }
   if (asset.provider === 'qiniu' && !mimeCompatible(asset.mimeType, stat.mimeType)) {
@@ -149,7 +157,7 @@ export function registerAssets(app: FastifyInstance, context: AppContext, auth: 
       await pipeline(part.file, createWriteStream(target, { flags: 'wx' }));
       const stat = await fs.stat(target);
       const expected = Number(asset.rows[0].expected_size);
-      if (!sizeWithinTolerance(expected, stat.size)) {
+      if (!sizeWithinTolerance(expected, stat.size, asset.rows[0].mime_type)) {
         await fs.unlink(target);
         throw badRequest('SIZE_MISMATCH', '文件大小与申请不一致');
       }

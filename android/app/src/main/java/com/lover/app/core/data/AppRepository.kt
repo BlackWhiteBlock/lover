@@ -404,21 +404,32 @@ class AppRepository @Inject constructor(
         addMediaBatch(listOf(uri), caption, date)
     }
 
+    data class MediaUploadProgress(
+        val completedFiles: Int,
+        val totalFiles: Int,
+        /** 当前文件 0~1 */
+        val fileFraction: Float,
+        val phase: String,
+    )
+
     suspend fun addMediaBatch(
         uris: List<Uri>,
         caption: String,
         date: String,
-        onProgress: (completed: Int, total: Int) -> Unit = { _, _ -> },
+        onProgress: (MediaUploadProgress) -> Unit = {},
     ) {
         require(uris.isNotEmpty()) { "请选择至少一张照片或视频" }
         LocalDate.parse(date)
         val trimmed = caption.trim()
-        onProgress(0, uris.size)
+        onProgress(MediaUploadProgress(0, uris.size, 0f, "准备上传"))
         val assets = ArrayList<CreateMediaAssetRequest>(uris.size)
         uris.forEachIndexed { index, uri ->
-            assets += uploadMediaPart(uri)
-            onProgress(index + 1, uris.size)
+            assets += uploadMediaPart(uri) { fraction, phase ->
+                onProgress(MediaUploadProgress(index, uris.size, fraction, phase))
+            }
+            onProgress(MediaUploadProgress(index + 1, uris.size, 1f, "本项已完成"))
         }
+        onProgress(MediaUploadProgress(uris.size, uris.size, 1f, "正在保存"))
         call {
             api.createMedia(
                 CreateMediaRequest(
@@ -431,9 +442,14 @@ class AppRepository @Inject constructor(
         refreshMedia()
     }
 
-    private suspend fun uploadMediaPart(uri: Uri): CreateMediaAssetRequest {
+    private suspend fun uploadMediaPart(
+        uri: Uri,
+        onPartProgress: (fraction: Float, phase: String) -> Unit = { _, _ -> },
+    ): CreateMediaAssetRequest {
+        onPartProgress(0.02f, "读取文件")
         val source = withContext(Dispatchers.IO) { mediaResolver.resolve(uri) }
         val thumbnailAssetId = if (source.isVideo) {
+            onPartProgress(0.05f, "生成封面")
             val thumbnail = withContext(Dispatchers.IO) {
                 thumbnailExtractor.extract(source.uri, source.fileName)
             }
@@ -442,11 +458,22 @@ class AppRepository @Inject constructor(
                 mimeType = "image/jpeg",
                 sizeBytes = thumbnail.bytes.size.toLong(),
                 body = thumbnail.bytes.toRequestBody("image/jpeg".toMediaType()),
+                onBytes = { written, total ->
+                    val f = if (total > 0) written.toFloat() / total else 0f
+                    onPartProgress(0.08f + f * 0.12f, "上传封面")
+                },
             )
         } else {
             null
         }
-        val assetId = uploadAsset(source)
+        val base = if (source.isVideo) 0.22f else 0.05f
+        val span = if (source.isVideo) 0.72f else 0.9f
+        onPartProgress(base, "上传媒体")
+        val assetId = uploadAsset(source, onBytes = { written, total ->
+            val f = if (total > 0) written.toFloat() / total else 0f
+            onPartProgress(base + f * span, "上传媒体")
+        })
+        onPartProgress(0.98f, "确认文件")
         return CreateMediaAssetRequest(
             type = if (source.isVideo) MediaType.VIDEO else MediaType.IMAGE,
             assetId = assetId,
@@ -567,8 +594,12 @@ class AppRepository @Inject constructor(
         return uploadAsset(source, purpose = "cover")
     }
 
-    private suspend fun uploadAsset(source: ResolvedMedia, purpose: String = "media"): String =
-        uploadAsset(source.fileName, source.mimeType, source.sizeBytes, source.body, purpose)
+    private suspend fun uploadAsset(
+        source: ResolvedMedia,
+        purpose: String = "media",
+        onBytes: ((Long, Long) -> Unit)? = null,
+    ): String =
+        uploadAsset(source.fileName, source.mimeType, source.sizeBytes, source.body, purpose, onBytes)
 
     private suspend fun uploadAsset(
         fileName: String,
@@ -576,11 +607,12 @@ class AppRepository @Inject constructor(
         sizeBytes: Long,
         body: RequestBody,
         purpose: String = "media",
+        onBytes: ((Long, Long) -> Unit)? = null,
     ): String {
         val token = call {
             api.assetToken(TokenAssetRequest(fileName, mimeType, sizeBytes, purpose))
         }
-        call { assetUploader.upload(token, fileName, body) }
+        call { assetUploader.upload(token, fileName, body, onBytes) }
         call { api.completeAsset(AssetRequest(token.assetId)) }
         return token.assetId
     }

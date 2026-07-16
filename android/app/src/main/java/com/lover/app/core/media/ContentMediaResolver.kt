@@ -5,6 +5,7 @@ import android.net.Uri
 import android.provider.OpenableColumns
 import android.webkit.MimeTypeMap
 import dagger.hilt.android.qualifiers.ApplicationContext
+import java.io.FileInputStream
 import java.io.IOException
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -46,17 +47,22 @@ class ContentMediaResolver @Inject constructor(
             ?: throw IllegalArgumentException("无法识别媒体类型，请换一张照片或视频再试")
         val policy = MediaUploadPolicy.forMimeType(mimeType)
 
-        // 华为等机型上 OpenableColumns.SIZE 对视频常不准确，优先用 AssetFileDescriptor
-        val afdSize = resolver.openAssetFileDescriptor(uri, "r")?.use { descriptor ->
-            descriptor.length.takeIf { it > 0 }
-                ?: descriptor.parcelFileDescriptor.statSize.takeIf { it > 0 }
-        }
-        val cursorSize = queriedSize?.takeIf { it > 0 }
-        val size = when {
-            afdSize != null && cursorSize != null && afdSize != cursorSize -> afdSize
-            afdSize != null -> afdSize
-            cursorSize != null -> cursorSize
-            else -> throw IllegalArgumentException("无法可靠获取媒体文件大小")
+        // 视频：必须尽量拿到真实字节数。申报过小会触发七牛/网关 413。
+        val size = if (policy.isVideo) {
+            measureExactSize(uri)
+                ?: throw IllegalArgumentException("无法可靠获取视频大小，请换一段视频再试")
+        } else {
+            val afdSize = resolver.openAssetFileDescriptor(uri, "r")?.use { descriptor ->
+                descriptor.length.takeIf { it > 0 }
+                    ?: descriptor.parcelFileDescriptor.statSize.takeIf { it > 0 }
+            }
+            val cursorSize = queriedSize?.takeIf { it > 0 }
+            when {
+                afdSize != null && cursorSize != null && afdSize != cursorSize -> afdSize
+                afdSize != null -> afdSize
+                cursorSize != null -> cursorSize
+                else -> throw IllegalArgumentException("无法可靠获取媒体文件大小")
+            }
         }
         require(size <= policy.maxBytes) {
             if (policy.isVideo) "视频不能超过 200 MB" else "图片不能超过 30 MB"
@@ -93,6 +99,33 @@ class ContentMediaResolver @Inject constructor(
         "image/jpg" -> "image/jpeg"
         "video/mp4v-es", "video/x-m4v" -> "video/mp4"
         else -> mimeType.lowercase()
+    }
+
+    private fun measureExactSize(uri: Uri): Long? {
+        val resolver = context.contentResolver
+        resolver.openFileDescriptor(uri, "r")?.use { pfd ->
+            FileInputStream(pfd.fileDescriptor).channel.use { channel ->
+                val size = channel.size()
+                if (size > 0L) return size
+            }
+        }
+        resolver.openAssetFileDescriptor(uri, "r")?.use { descriptor ->
+            descriptor.length.takeIf { it > 0 }?.let { return it }
+            descriptor.parcelFileDescriptor.statSize.takeIf { it > 0 }?.let { return it }
+        }
+        // 最后手段：完整读一遍（大视频会慢，但能避免 413）
+        return runCatching {
+            resolver.openInputStream(uri)?.use { input ->
+                var total = 0L
+                val buf = ByteArray(64 * 1024)
+                while (true) {
+                    val n = input.read(buf)
+                    if (n < 0) break
+                    total += n
+                }
+                total.takeIf { it > 0 }
+            }
+        }.getOrNull()
     }
 
     private fun extension(mimeType: String) = when (mimeType) {

@@ -26,9 +26,15 @@ data class PendingMediaUpload(
     val assetCount: Int,
     val completed: Int = 0,
     val total: Int,
+    val fileFraction: Float = 0f,
+    val phase: String = "准备上传",
 ) {
     val progress: Float
-        get() = if (total <= 0) 0f else (completed.toFloat() / total).coerceIn(0f, 1f)
+        get() {
+            if (total <= 0) return 0f
+            val overall = (completed + fileFraction.coerceIn(0f, 1f)) / total
+            return overall.coerceIn(0f, 1f)
+        }
 }
 
 @HiltViewModel
@@ -171,14 +177,20 @@ class MainViewModel @Inject constructor(
             assetCount = uris.size,
             completed = 0,
             total = uris.size,
+            phase = "准备上传",
         )
         _pendingMediaUploads.value = listOf(pending) + _pendingMediaUploads.value
         _selectedTab.value = MainTab.TIMELINE
         viewModelScope.launch {
             runCatching {
-                repository.addMediaBatch(uris, caption, date) { completed, total ->
+                repository.addMediaBatch(uris, caption, date) { progress ->
                     _pendingMediaUploads.value = _pendingMediaUploads.value.map { item ->
-                        if (item.id == jobId) item.copy(completed = completed, total = total) else item
+                        if (item.id != jobId) item else item.copy(
+                            completed = progress.completedFiles,
+                            total = progress.totalFiles,
+                            fileFraction = progress.fileFraction,
+                            phase = progress.phase,
+                        )
                     }
                 }
             }.onSuccess {

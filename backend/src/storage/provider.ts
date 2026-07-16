@@ -95,9 +95,11 @@ export class QiniuStorageProvider implements StorageProvider {
 
   async createUploadGrant(input: UploadGrantInput): Promise<UploadGrant> {
     assertSafeObjectKey(input.objectKey);
-    // MediaStore / 部分机型申报的 size、MIME 可能与实际上传略有偏差
+    // MediaStore / 部分机型申报的 size、MIME 可能与实际上传略有偏差。
+    // 视频若申报过小，精确 fsizeLimit 会让七牛直接 413，故视频放宽到业务上限。
+    const isVideo = input.mimeType.startsWith('video/');
     const slack = Math.max(256 * 1024, Math.ceil(input.sizeBytes * 0.02));
-    const mimeLimit = input.mimeType.startsWith('video/')
+    const mimeLimit = isVideo
       ? 'video/mp4;video/quicktime;video/3gpp;video/3gpp2;video/webm;video/x-matroska'
       : input.mimeType;
     const policy = new qiniu.rs.PutPolicy({
@@ -106,8 +108,8 @@ export class QiniuStorageProvider implements StorageProvider {
       insertOnly: 1,
       forceSaveKey: true,
       saveKey: input.objectKey,
-      fsizeMin: Math.max(1, input.sizeBytes - slack),
-      fsizeLimit: input.sizeBytes + slack,
+      fsizeMin: isVideo ? 1 : Math.max(1, input.sizeBytes - slack),
+      fsizeLimit: isVideo ? 300 * 1024 * 1024 : input.sizeBytes + slack,
       mimeLimit,
       detectMime: 1,
       returnBody: JSON.stringify({

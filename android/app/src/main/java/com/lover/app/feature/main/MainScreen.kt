@@ -62,6 +62,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.DialogProperties
 import coil.compose.AsyncImage
 import com.lover.app.core.design.*
+import com.lover.app.core.media.LocalMediaThumb
 import com.lover.app.core.media.PickGalleryImage
 import com.lover.app.core.media.listMediaImageRequest
 import com.lover.app.core.media.signedMediaImageRequest
@@ -675,22 +676,42 @@ private fun FeaturedMediaCard(
 
 @Composable
 private fun UploadingMediaCard(pending: PendingMediaUpload) {
+    val pulse = rememberInfiniteTransition(label = "uploadPulse")
+    val glow by pulse.animateFloat(
+        initialValue = 0.35f,
+        targetValue = 0.7f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(1100, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse,
+        ),
+        label = "uploadGlow",
+    )
+    val spin by pulse.animateFloat(
+        initialValue = 0f,
+        targetValue = 360f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(1400, easing = LinearEasing),
+            repeatMode = RepeatMode.Restart,
+        ),
+        label = "uploadSpin",
+    )
+    val percent = (pending.progress * 100).toInt().coerceIn(0, 99)
+
     Box(
         Modifier
             .aspectRatio(.8f)
             .clip(RoundedCornerShape(26.dp))
             .background(Blush),
     ) {
-        AsyncImage(
-            model = pending.previewUri,
-            contentDescription = pending.caption,
-            contentScale = ContentScale.Crop,
+        LocalMediaThumb(
+            uri = pending.previewUri,
             modifier = Modifier.fillMaxSize(),
+            showVideoBadge = false,
         )
         Box(
             Modifier
                 .fillMaxSize()
-                .background(Color.Black.copy(alpha = 0.45f)),
+                .background(Color.Black.copy(alpha = 0.42f + glow * 0.18f)),
         )
         Column(
             Modifier
@@ -699,14 +720,32 @@ private fun UploadingMediaCard(pending: PendingMediaUpload) {
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
+            Box(contentAlignment = Alignment.Center) {
+                CircularProgressIndicator(
+                    progress = { pending.progress.coerceAtLeast(0.04f) },
+                    modifier = Modifier
+                        .size(54.dp)
+                        .graphicsLayer { rotationZ = if (pending.progress < 0.05f) spin else 0f },
+                    color = Color.White,
+                    trackColor = Color.White.copy(alpha = 0.25f),
+                    strokeWidth = 3.dp,
+                )
+                Text(
+                    "$percent%",
+                    color = Color.White,
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.SemiBold,
+                )
+            }
             Text(
-                "正在上传",
+                pending.phase.ifBlank { "正在上传" },
                 color = Color.White,
                 style = MaterialTheme.typography.titleSmall,
                 fontWeight = FontWeight.SemiBold,
+                textAlign = TextAlign.Center,
             )
             LinearProgressIndicator(
-                progress = { pending.progress },
+                progress = { pending.progress.coerceAtLeast(0.04f) },
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(6.dp)
@@ -715,9 +754,14 @@ private fun UploadingMediaCard(pending: PendingMediaUpload) {
                 trackColor = Color.White.copy(alpha = 0.35f),
             )
             Text(
-                "${pending.completed}/${pending.total}",
+                if (pending.total > 1) {
+                    "${pending.completed.coerceAtMost(pending.total)}/${pending.total} · 后台上传中"
+                } else {
+                    "后台上传中，可继续浏览"
+                },
                 color = Color.White.copy(alpha = 0.85f),
                 style = MaterialTheme.typography.labelSmall,
+                textAlign = TextAlign.Center,
             )
         }
         Box(
