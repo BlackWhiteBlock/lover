@@ -373,14 +373,19 @@ class AppRepository @Inject constructor(
         return item.copy(assets = merged)
     }
 
-    /** 列表/掠影：只签缩略图，避免刷屏拉原图 */
+    /** 列表/掠影：只签缩略图，避免刷屏拉原图；thumb 失败时回退原图，避免迁移后整页空白 */
     private suspend fun signAssetForList(part: MediaAssetPart): MediaAssetPart {
         val thumbUrl = runCatching {
             when {
                 part.type == MediaType.VIDEO && !part.thumbnailAssetId.isNullOrBlank() ->
                     call { api.signAsset(part.thumbnailAssetId!!, SignAssetRequest("original")) }.url
-                else ->
-                    call { api.signAsset(part.assetId, SignAssetRequest("thumb")) }.url
+                else -> {
+                    runCatching {
+                        call { api.signAsset(part.assetId, SignAssetRequest("thumb")) }.url
+                    }.getOrElse {
+                        call { api.signAsset(part.assetId, SignAssetRequest("original")) }.url
+                    }
+                }
             }
         }.getOrNull()
         return part.copy(url = "", thumbnailUrl = thumbUrl)

@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import path from 'node:path';
 import test from 'node:test';
 import { resolveLocalObjectPath } from '../src/storage/local.js';
 import { serializeLetter } from '../src/modules/letters.js';
@@ -6,7 +7,7 @@ import { serializeLetter } from '../src/modules/letters.js';
 test('local storage path remains below its configured root', () => {
   assert.equal(
     resolveLocalObjectPath('/srv/lover', 'couples/abc/2026-07/file.jpg'),
-    '/srv/lover/couples/abc/2026-07/file.jpg',
+    path.resolve('/srv/lover', 'couples', 'abc', '2026-07', 'file.jpg'),
   );
   for (const key of ['../secret', 'couples/../../secret', '/etc/passwd', 'a\\..\\secret', 'a//b', './a']) {
     assert.throws(() => resolveLocalObjectPath('/srv/lover', key), /Invalid object key/);

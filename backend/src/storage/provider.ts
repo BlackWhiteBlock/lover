@@ -144,7 +144,9 @@ export class QiniuStorageProvider implements StorageProvider {
 
   async signDownload(objectKey: string, mimeType: string, variant: DownloadVariant) {
     assertSafeObjectKey(objectKey);
-    const processQuery = variant === 'thumb' && mimeType.startsWith('image/')
+    // HEIC 等格式走 imageMogr2/format/webp 时常失败；缩略图对其直接签原图，保证 App 能显示。
+    const canProcess = mimeType.startsWith('image/') && !mimeType.includes('heic') && !mimeType.includes('heif');
+    const processQuery = variant === 'thumb' && canProcess
       ? this.config.storage.qiniu.imageThumbFop
       : '';
     const key = processQuery ? `${objectKey}?${processQuery}` : objectKey;

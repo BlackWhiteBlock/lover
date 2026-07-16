@@ -28,7 +28,9 @@ const qiniuConfig = loadConfig({
 
 test('object keys are server-shaped, space-scoped, and traversal-safe', () => {
   const key = buildObjectKey(spaceId, '../../portrait.JPG', 'image/jpeg', new Date('2026-07-14T00:00:00Z'));
-  assert.match(key, new RegExp(`^couples/${spaceId}/2026-07/[a-f0-9]{24}\\.jpg$`));
+  assert.match(key, new RegExp(`^couples/${spaceId}/images/2026-07/[a-f0-9]{24}\\.jpg$`));
+  const videoKey = buildObjectKey(spaceId, 'clip.MP4', 'video/mp4', new Date('2026-07-14T00:00:00Z'));
+  assert.match(videoKey, new RegExp(`^couples/${spaceId}/videos/2026-07/[a-f0-9]{24}\\.mp4$`));
   assert.equal(assertObjectKeyBelongsToSpace(key, spaceId), key);
   assert.throws(() => assertObjectKeyBelongsToSpace(key, '22222222-2222-4222-8222-222222222222'), /does not belong/);
   for (const unsafe of ['../x', '/absolute', 'a//b', 'a/./b', 'a\\b', 'a?x=1', 'a#fragment']) {

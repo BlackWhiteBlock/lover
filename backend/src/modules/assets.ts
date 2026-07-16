@@ -9,7 +9,7 @@ import { z } from 'zod';
 import type { AppContext, AuthHandler } from '../types.js';
 import { AppError, badRequest, conflict, forbidden, notFound } from '../errors.js';
 import { activeSpaceId } from './couples.js';
-import { personalSpaceId } from './spaces.js';
+import { personalSpaceId, readableSpaceIds } from './spaces.js';
 import { resolveLocalObjectPath } from '../storage/local.js';
 import { assertObjectKeyBelongsToSpace, buildObjectKey } from '../storage/object-key.js';
 import {
@@ -211,17 +211,20 @@ export function registerAssets(app: FastifyInstance, context: AppContext, auth: 
   app.post('/api/media-assets/:assetId/sign', { preHandler: auth }, async (request) => {
     const { assetId } = assetIdSchema.parse(request.params);
     const { variant } = signSchema.parse(request.body ?? {});
-    const spaceId = await activeSpaceId(context, request.user.id);
+    // 与时光列表一致：个人空间 / 对方个人空间 / 情侣空间内的资产都应可签。
+    // 绑定后 activeSpace 是 lover space，若仍按写入空间过滤，旧的个人空间照片会全部 404。
+    const spaceIds = await readableSpaceIds(context, request.user.id);
     const asset = await db.query<{
-      object_key: string; mime_type: string; provider: 'local' | 'qiniu'; bucket: string | null;
+      object_key: string; mime_type: string; provider: 'local' | 'qiniu';
+      bucket: string | null; space_id: string;
     }>(
-      `select object_key, mime_type, provider, bucket from media_assets
-       where id = $1 and space_id = $2 and status = 'ready'`,
-      [assetId, spaceId],
+      `select object_key, mime_type, provider, bucket, space_id from media_assets
+       where id = $1 and space_id = any($2::uuid[]) and status = 'ready'`,
+      [assetId, spaceIds],
     );
     const row = asset.rows[0];
     if (!row) throw notFound('媒体资产不存在');
-    assertObjectKeyBelongsToSpace(row.object_key, spaceId);
+    assertObjectKeyBelongsToSpace(row.object_key, row.space_id);
     if (row.provider !== provider.name || row.bucket !== provider.bucket) {
       throw conflict('STORAGE_PROVIDER_MISMATCH', '资产所属存储 provider 当前不可用');
     }
@@ -230,7 +233,13 @@ export function registerAssets(app: FastifyInstance, context: AppContext, auth: 
       return { ...signed, provider: provider.name, variant };
     }
     const signed = jwt.sign(
-      { type: 'download', assetId, objectKey: row.object_key, spaceId, sub: request.user.id },
+      {
+        type: 'download',
+        assetId,
+        objectKey: row.object_key,
+        spaceId: row.space_id,
+        sub: request.user.id,
+      },
       config.storage.signingSecret,
       { expiresIn: config.storage.tokenTtlSeconds },
     );

@@ -70,7 +70,7 @@ test('local signed media URL still requires current active membership', async ()
   }
 });
 
-test('qiniu sign endpoint cannot sign an asset outside the active space', async () => {
+test('qiniu sign endpoint cannot sign an asset outside readable spaces', async () => {
   const config = loadConfig({
     NODE_ENV: 'test',
     LOG_LEVEL: 'silent',
@@ -97,7 +97,7 @@ test('qiniu sign endpoint cannot sign an asset outside the active space', async 
           }],
         };
       }
-      // writeSpaceId: unbound user → personal space
+      // writeSpaceId / readableSpaceIds: unbound user → personal space only
       if (text.includes('from couple_links')) {
         return { rowCount: 0, rows: [] };
       }
@@ -122,6 +122,98 @@ test('qiniu sign endpoint cannot sign an asset outside the active space', async 
     });
     assert.equal(response.statusCode, 404);
     assert.equal(response.json().error.code, 'NOT_FOUND');
+  } finally {
+    await app.close();
+  }
+});
+
+test('qiniu sign endpoint can sign personal-space assets after couple bind', async () => {
+  const config = loadConfig({
+    NODE_ENV: 'test',
+    LOG_LEVEL: 'silent',
+    STORAGE_PROVIDER: 'qiniu',
+    QINIU_ACCESS_KEY: 'access',
+    QINIU_SECRET_KEY: 'secret',
+    QINIU_BUCKET: 'private',
+    QINIU_DOWNLOAD_DOMAIN: 'https://private.example.com',
+  });
+  const assetId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+  const personalSpace = '11111111-1111-4111-8111-111111111111';
+  const loverSpace = '22222222-2222-4222-8222-222222222222';
+  const partnerSpace = '33333333-3333-4333-8333-333333333333';
+  const objectKey = `couples/${personalSpace}/images/2026-07/abcd.jpg`;
+  const database = {
+    query: async (text: string, values?: unknown[]) => {
+      if (text.includes('from users u join auth_sessions')) {
+        return {
+          rowCount: 1,
+          rows: [{
+            id: 'user-a',
+            phone: '13800138000',
+            nickname: 'A',
+            avatarUrl: null,
+            gender: null,
+            birthday: null,
+            profileCompleted: true,
+            personalSpaceId: personalSpace,
+          }],
+        };
+      }
+      if (text.includes('from couple_links')) {
+        return {
+          rowCount: 1,
+          rows: [{
+            id: 'link-1',
+            userAId: 'user-a',
+            userBId: 'user-b',
+            loverSpaceId: loverSpace,
+            togetherDate: null,
+            status: 'active',
+          }],
+        };
+      }
+      if (text.includes('personal_space_id from users')) {
+        // readableSpaceIds: self then partner
+        const userId = values?.[0];
+        if (userId === 'user-a') return { rowCount: 1, rows: [{ personal_space_id: personalSpace }] };
+        if (userId === 'user-b') return { rowCount: 1, rows: [{ personal_space_id: partnerSpace }] };
+        return { rowCount: 0, rows: [] };
+      }
+      if (text.includes('from media_assets') && text.includes('any($2::uuid[])')) {
+        assert.ok(Array.isArray(values?.[1]));
+        assert.ok((values?.[1] as string[]).includes(personalSpace));
+        return {
+          rowCount: 1,
+          rows: [{
+            object_key: objectKey,
+            mime_type: 'image/jpeg',
+            provider: 'qiniu',
+            bucket: 'private',
+            space_id: personalSpace,
+          }],
+        };
+      }
+      throw new Error(`Unexpected database query: ${text}`);
+    },
+  } as unknown as Database;
+  const app = await buildApp(config, database);
+  const accessToken = jwt.sign(
+    { sub: 'user-a', sid: 'session-a', type: 'access' },
+    config.jwt.accessSecret,
+    { expiresIn: 60 },
+  );
+  try {
+    const response = await app.inject({
+      method: 'POST',
+      url: `/api/media-assets/${assetId}/sign`,
+      headers: { authorization: `Bearer ${accessToken}` },
+      payload: { variant: 'thumb' },
+    });
+    assert.equal(response.statusCode, 200);
+    const body = response.json();
+    assert.equal(body.provider, 'qiniu');
+    assert.equal(body.variant, 'thumb');
+    assert.match(body.url, /^https:\/\/private\.example\.com\//);
   } finally {
     await app.close();
   }

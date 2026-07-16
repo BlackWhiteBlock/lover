@@ -22,7 +22,10 @@ export function buildObjectKey(spaceId: string, fileName: string, mimeType: stri
   if (!/^[0-9a-f-]{36}$/i.test(spaceId)) throw new Error('Invalid space id');
   const extension = fileExtension(fileName, mimeType);
   const month = now.toISOString().slice(0, 7);
-  return assertSafeObjectKey(`couples/${spaceId}/${month}/${randomBytes(12).toString('hex')}.${extension}`);
+  const kind = mimeType.startsWith('video/') ? 'videos' : 'images';
+  return assertSafeObjectKey(
+    `couples/${spaceId}/${kind}/${month}/${randomBytes(12).toString('hex')}.${extension}`,
+  );
 }
 
 function fileExtension(name: string, mime: string) {
