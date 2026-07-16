@@ -181,7 +181,40 @@ class AppRepository @Inject constructor(
         refreshAll()
     }
 
+    /** 更新「我们」卡片：空间名/在一起日期双方同步；情侣合照仅本账号。 */
+    suspend fun updateCoupleCard(
+        name: String? = null,
+        togetherDate: String? = null,
+        coverUri: Uri? = null,
+        clearCover: Boolean = false,
+    ) {
+        val trimmedName = name?.trim()?.takeIf { it.isNotEmpty() }
+        if (trimmedName != null || togetherDate != null) {
+            call {
+                api.updateCoupleLink(
+                    UpdateCoupleLinkRequest(
+                        name = trimmedName,
+                        togetherDate = togetherDate,
+                    ),
+                )
+            }
+        }
+        when {
+            clearCover -> {
+                val user = call { api.patchMe(PatchMeRequest(clearCoupleCover = true)) }.user
+                tokenStore.update { it.copy(user = user) }
+            }
+            coverUri != null -> {
+                val assetId = uploadCoupleCover(coverUri)
+                val user = call { api.patchMe(PatchMeRequest(coupleCoverAssetId = assetId)) }.user
+                tokenStore.update { it.copy(user = user) }
+            }
+        }
+        refreshAll()
+    }
+
     suspend fun refreshAll() = coroutineScope {
+        val meDeferred = async { runCatching { call { api.me() } }.getOrNull() }
         val bootstrapDeferred = async { runCatching { call { api.bootstrap() } }.getOrNull() }
         val coupleDeferred = async { runCatching { call { api.coupleSpace() } }.getOrNull() }
         val pendingDeferred = async { runCatching { call { api.pendingBinds() } }.getOrNull() }
@@ -195,6 +228,7 @@ class AppRepository @Inject constructor(
             runCatching { call { api.letters().items } }.getOrDefault(emptyList())
         }
 
+        val me = meDeferred.await()
         val bootstrap = bootstrapDeferred.await()
         val coupleBase = coupleDeferred.await()
         val pending = pendingDeferred.await()
@@ -202,7 +236,7 @@ class AppRepository @Inject constructor(
         val anniversaries = anniversariesDeferred.await()
         val letters = lettersDeferred.await()
 
-        if (bootstrap == null && coupleBase == null && pending == null) {
+        if (me == null && bootstrap == null && coupleBase == null && pending == null) {
             error("刷新失败，请检查网络后重试")
         }
 
@@ -237,10 +271,18 @@ class AppRepository @Inject constructor(
         // 一次原子写入：绑定状态 + 列表，避免二次 update 冲掉邀请
         tokenStore.update {
             it.copy(
-                activeSpaceId = bootstrap?.space?.id ?: couple?.id ?: it.activeSpaceId,
-                personalSpaceId = couple?.personalSpaceId ?: it.personalSpaceId,
-                loverSpaceId = couple?.loverSpaceId ?: it.loverSpaceId,
-                linked = bootstrap?.linked == true || couple?.linked == true,
+                user = me?.user ?: it.user,
+                activeSpaceId = me?.activeSpaceId
+                    ?: bootstrap?.space?.id
+                    ?: couple?.id
+                    ?: it.activeSpaceId,
+                personalSpaceId = me?.personalSpaceId
+                    ?: couple?.personalSpaceId
+                    ?: it.personalSpaceId,
+                loverSpaceId = me?.loverSpaceId
+                    ?: couple?.loverSpaceId
+                    ?: it.loverSpaceId,
+                linked = me?.linked == true || bootstrap?.linked == true || couple?.linked == true,
                 couple = couple,
                 pendingIncomingBinds = incoming,
                 pendingOutgoingBind = outgoing,
@@ -300,14 +342,16 @@ class AppRepository @Inject constructor(
         uris: List<Uri>,
         caption: String,
         date: String,
-        onProgress: (current: Int, total: Int) -> Unit = { _, _ -> },
+        onProgress: (completed: Int, total: Int) -> Unit = { _, _ -> },
     ) {
         require(uris.isNotEmpty()) { "请选择至少一张照片或视频" }
         LocalDate.parse(date)
         val trimmed = caption.trim()
-        val assets = uris.mapIndexed { index, uri ->
+        onProgress(0, uris.size)
+        val assets = ArrayList<CreateMediaAssetRequest>(uris.size)
+        uris.forEachIndexed { index, uri ->
+            assets += uploadMediaPart(uri)
             onProgress(index + 1, uris.size)
-            uploadMediaPart(uri)
         }
         call {
             api.createMedia(
@@ -413,6 +457,12 @@ class AppRepository @Inject constructor(
         val source = withContext(Dispatchers.IO) { mediaResolver.resolve(uri) }
         require(!source.isVideo) { "头像仅支持图片" }
         return uploadAsset(source, purpose = "avatar")
+    }
+
+    private suspend fun uploadCoupleCover(uri: Uri): String {
+        val source = withContext(Dispatchers.IO) { mediaResolver.resolve(uri) }
+        require(!source.isVideo) { "情侣头像仅支持图片" }
+        return uploadAsset(source, purpose = "cover")
     }
 
     private suspend fun uploadAsset(source: ResolvedMedia, purpose: String = "media"): String =

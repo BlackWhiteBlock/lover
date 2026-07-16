@@ -94,7 +94,7 @@ export const openApiDocument = {
     '/api/auth/sms/login': { post: { tags: ['Auth'], summary: '验证码登录/注册', responses: { '200': ok, '201': ok } } },
     '/api/auth/refresh': { post: { tags: ['Auth'], summary: '轮换刷新令牌', responses: { '200': ok } } },
     '/api/auth/logout': secured('注销当前会话', ['post']),
-    '/api/me': secured('当前用户 / 更新头像资产', ['get', 'patch']),
+    '/api/me': secured('当前用户 / 更新头像或情侣合照', ['get', 'patch']),
     '/api/bootstrap': secured('首页 bootstrap'),
     '/api/couple-space': secured('情侣空间详情/更新', ['get', 'patch']),
     '/api/couple-invites': secured('创建邀请（返回 code + inviteUrl；新建空间须带 togetherDate）', ['post']),

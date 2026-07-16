@@ -30,7 +30,7 @@ const tokenSchema = z.object({
   sizeBytes: z.number().int().positive().max(300 * 1024 * 1024),
   purpose: z.preprocess(
     (value) => (value == null ? 'media' : value),
-    z.enum(['media', 'avatar']),
+    z.enum(['media', 'avatar', 'cover']),
   ),
 }).strict();
 const assetIdSchema = z.object({ assetId: z.string().uuid() }).strict();
@@ -72,10 +72,11 @@ export function registerAssets(app: FastifyInstance, context: AppContext, auth: 
     config: { rateLimit: { max: 30, timeWindow: '1 minute' } },
   }, async (request, reply) => {
     const input = tokenSchema.parse(request.body);
-    if (input.purpose === 'avatar' && !avatarMime.has(input.mimeType)) {
+    const personalPurpose = input.purpose === 'avatar' || input.purpose === 'cover';
+    if (personalPurpose && !avatarMime.has(input.mimeType)) {
       throw badRequest('INVALID_AVATAR_TYPE', '头像仅支持图片');
     }
-    const spaceId = input.purpose === 'avatar'
+    const spaceId = personalPurpose
       ? await personalSpaceId(context, request.user.id)
       : await activeSpaceId(context, request.user.id);
     const assetId = randomUUID();
@@ -222,25 +223,31 @@ export function registerAssets(app: FastifyInstance, context: AppContext, auth: 
              $5::boolean
              and exists (
                select 1 from users u
-               where u.avatar_asset_id = a.id
-                 and (
-                   u.id = $4
-                   or exists (
-                     select 1 from couple_links cl
-                     where cl.status = 'active'
-                       and ((cl.user_a_id = u.id and cl.user_b_id = $4)
-                         or (cl.user_b_id = u.id and cl.user_a_id = $4))
-                   )
-                   -- 绑定邀请待确认期间，双方可查看对方头像
-                   or exists (
-                     select 1 from couple_bind_requests br
-                     where br.status = 'pending' and br.expires_at > now()
-                       and (
-                         (br.requester_id = u.id and br.target_user_id = $4)
-                         or (br.target_user_id = u.id and br.requester_id = $4)
-                       )
+               where (
+                 -- 情侣合照：仅本人可见（各账号独立）
+                 (u.couple_cover_asset_id = a.id and u.id = $4)
+                 or (
+                   u.avatar_asset_id = a.id
+                   and (
+                     u.id = $4
+                     or exists (
+                       select 1 from couple_links cl
+                       where cl.status = 'active'
+                         and ((cl.user_a_id = u.id and cl.user_b_id = $4)
+                           or (cl.user_b_id = u.id and cl.user_a_id = $4))
+                     )
+                     -- 绑定邀请待确认期间，双方可查看对方头像
+                     or exists (
+                       select 1 from couple_bind_requests br
+                       where br.status = 'pending' and br.expires_at > now()
+                         and (
+                           (br.requester_id = u.id and br.target_user_id = $4)
+                           or (br.target_user_id = u.id and br.requester_id = $4)
+                         )
+                     )
                    )
                  )
+               )
              )
            )
          )`,

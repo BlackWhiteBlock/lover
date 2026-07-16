@@ -17,6 +17,20 @@ import kotlinx.coroutines.launch
 
 enum class MainTab { HOME, TIMELINE, ANNIVERSARY, LETTERS, PROFILE }
 
+/** 时光页展示中的本地上传任务（未入库前） */
+data class PendingMediaUpload(
+    val id: String,
+    val caption: String,
+    val mediaDate: String,
+    val previewUri: Uri,
+    val assetCount: Int,
+    val completed: Int = 0,
+    val total: Int,
+) {
+    val progress: Float
+        get() = if (total <= 0) 0f else (completed.toFloat() / total).coerceIn(0f, 1f)
+}
+
 @HiltViewModel
 class MainViewModel @Inject constructor(
     private val repository: AppRepository,
@@ -29,6 +43,8 @@ class MainViewModel @Inject constructor(
     val restoreComplete = _restoreComplete.asStateFlow()
     private val _promptTogetherDate = MutableStateFlow(false)
     val promptTogetherDate = _promptTogetherDate.asStateFlow()
+    private val _pendingMediaUploads = MutableStateFlow<List<PendingMediaUpload>>(emptyList())
+    val pendingMediaUploads = _pendingMediaUploads.asStateFlow()
 
     init {
         // 登出后 Tab 立刻回到 HOME，避免再次登录时先闪「我们」再切「空间」
@@ -103,17 +119,72 @@ class MainViewModel @Inject constructor(
         _promptTogetherDate.value = false
     }
 
+    fun updateCoupleCard(
+        name: String,
+        togetherDate: String?,
+        coverUri: Uri?,
+        clearCover: Boolean,
+    ) = launchAction("已保存") {
+        require(name.isNotBlank()) { "请填写空间名称" }
+        if (togetherDate != null) LocalDate.parse(togetherDate)
+        repository.updateCoupleCard(
+            name = name.trim(),
+            togetherDate = togetherDate,
+            coverUri = coverUri,
+            clearCover = clearCover,
+        )
+    }
+
     private fun requireSpace() {
         require(repository.state.value.profileCompleted && repository.state.value.personalSpaceId != null) {
             "请先完成空间创建"
         }
     }
 
-    fun addMedia(uris: List<Uri>, caption: String, date: String) = launchAction("已保存") {
-        requireSpace()
-        require(uris.isNotEmpty()) { "请选择至少一张照片或视频" }
-        LocalDate.parse(date)
-        repository.addMediaBatch(uris, caption, date)
+    fun addMedia(uris: List<Uri>, caption: String, date: String) {
+        if (!repository.state.value.profileCompleted || repository.state.value.personalSpaceId == null) {
+            noticeStore.error("请先完成空间创建")
+            return
+        }
+        if (uris.isEmpty()) {
+            noticeStore.error("请选择至少一张照片或视频")
+            return
+        }
+        runCatching { LocalDate.parse(date) }.onFailure {
+            noticeStore.error("日期无效")
+            return
+        }
+        val jobId = java.util.UUID.randomUUID().toString()
+        val pending = PendingMediaUpload(
+            id = jobId,
+            caption = caption.trim(),
+            mediaDate = date,
+            previewUri = uris.first(),
+            assetCount = uris.size,
+            completed = 0,
+            total = uris.size,
+        )
+        _pendingMediaUploads.value = listOf(pending) + _pendingMediaUploads.value
+        _selectedTab.value = MainTab.TIMELINE
+        viewModelScope.launch {
+            runCatching {
+                repository.addMediaBatch(uris, caption, date) { completed, total ->
+                    _pendingMediaUploads.value = _pendingMediaUploads.value.map { item ->
+                        if (item.id == jobId) item.copy(completed = completed, total = total) else item
+                    }
+                }
+            }.onSuccess {
+                _pendingMediaUploads.value = _pendingMediaUploads.value.filterNot { it.id == jobId }
+                noticeStore.success("已保存")
+            }.onFailure { error ->
+                _pendingMediaUploads.value = _pendingMediaUploads.value.filterNot { it.id == jobId }
+                if (error.isUnauthorized() || repository.state.value.accessToken == null) {
+                    noticeStore.clear()
+                } else {
+                    noticeStore.error(error.message ?: "上传失败")
+                }
+            }
+        }
     }
 
     fun updateMedia(id: String, caption: String, date: String) = launchAction("已更新") {

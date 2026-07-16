@@ -257,10 +257,15 @@ export function registerCouples(app: FastifyInstance, context: AppContext, auth:
       );
     }
     const refreshed = await getActiveCoupleLink(context, request.user.id);
+    const space = await db.query<{ name: string }>(
+      `select name from couple_spaces where id = $1`,
+      [refreshed!.loverSpaceId],
+    );
     return {
       id: refreshed!.id,
       loverSpaceId: refreshed!.loverSpaceId,
       togetherDate: refreshed!.togetherDate,
+      name: space.rows[0]?.name ?? null,
     };
   });
 

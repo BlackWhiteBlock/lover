@@ -20,6 +20,10 @@ import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
+import android.net.Uri
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -31,8 +35,10 @@ import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.*
 import androidx.compose.material3.*
@@ -47,6 +53,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -54,6 +61,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.DialogProperties
 import coil.compose.AsyncImage
 import com.lover.app.core.design.*
+import com.lover.app.core.media.signedMediaImageRequest
 import com.lover.app.core.model.*
 
 internal const val MaxMediaPick = 9
@@ -64,6 +72,7 @@ enum class Editor { MEDIA, ANNIVERSARY, LETTER }
 fun MainScreen(viewModel: MainViewModel) {
     val state by viewModel.data.collectAsState()
     val tab by viewModel.selectedTab.collectAsState()
+    val pendingUploads by viewModel.pendingMediaUploads.collectAsState()
     var editor by remember { mutableStateOf<Editor?>(null) }
     var mediaDetail by remember { mutableStateOf<MediaItem?>(null) }
     var letterDetail by remember { mutableStateOf<Letter?>(null) }
@@ -147,11 +156,10 @@ fun MainScreen(viewModel: MainViewModel) {
                             },
                         )
                         MainTab.TIMELINE -> TimelinePage(
-                            state.media,
-                            { item -> viewModel.openMediaDetail(item) { mediaDetail = it } },
-                        ) {
-                            editor = Editor.MEDIA
-                        }
+                            media = state.media,
+                            pendingUploads = pendingUploads,
+                            onMedia = { item -> viewModel.openMediaDetail(item) { mediaDetail = it } },
+                        )
                         MainTab.ANNIVERSARY -> AnniversaryPage(state.anniversaries) {
                             editor = Editor.ANNIVERSARY
                         }
@@ -473,12 +481,14 @@ private fun QuickAction(
 }
 
 @Composable
-private fun TimelinePage(media: List<MediaItem>, onMedia: (MediaItem) -> Unit, onAdd: () -> Unit) {
+private fun TimelinePage(
+    media: List<MediaItem>,
+    pendingUploads: List<PendingMediaUpload>,
+    onMedia: (MediaItem) -> Unit,
+) {
     Column {
-        PageHeader("相爱时光", "Visual Memories") {
-            IconButton(onClick = onAdd) { Icon(Icons.Rounded.AddCircle, "新增", tint = Rose) }
-        }
-        if (media.isEmpty()) {
+        PageHeader("相爱时光", "Visual Memories")
+        if (media.isEmpty() && pendingUploads.isEmpty()) {
             EmptyHint("选择照片或视频，记录共同的故事", Icons.Rounded.PhotoLibrary)
         } else {
             LazyVerticalGrid(
@@ -487,10 +497,89 @@ private fun TimelinePage(media: List<MediaItem>, onMedia: (MediaItem) -> Unit, o
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
+                items(pendingUploads, key = { "pending-${it.id}" }) { pending ->
+                    UploadingMediaCard(pending)
+                }
                 items(media, key = { it.id }) {
                     MediaImage(it, Modifier.aspectRatio(.8f).clickable { onMedia(it) })
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun UploadingMediaCard(pending: PendingMediaUpload) {
+    Box(
+        Modifier
+            .aspectRatio(.8f)
+            .clip(RoundedCornerShape(26.dp))
+            .background(Blush),
+    ) {
+        AsyncImage(
+            model = pending.previewUri,
+            contentDescription = pending.caption,
+            contentScale = ContentScale.Crop,
+            modifier = Modifier.fillMaxSize(),
+        )
+        Box(
+            Modifier
+                .fillMaxSize()
+                .background(Color.Black.copy(alpha = 0.45f)),
+        )
+        Column(
+            Modifier
+                .align(Alignment.Center)
+                .padding(horizontal = 14.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Text(
+                "正在上传",
+                color = Color.White,
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.SemiBold,
+            )
+            LinearProgressIndicator(
+                progress = { pending.progress },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(6.dp)
+                    .clip(RoundedCornerShape(4.dp)),
+                color = Rose,
+                trackColor = Color.White.copy(alpha = 0.35f),
+            )
+            Text(
+                "${pending.completed}/${pending.total}",
+                color = Color.White.copy(alpha = 0.85f),
+                style = MaterialTheme.typography.labelSmall,
+            )
+        }
+        Box(
+            Modifier
+                .align(Alignment.BottomCenter)
+                .fillMaxWidth()
+                .background(Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(alpha = .5f))))
+                .padding(12.dp),
+        ) {
+            Text(
+                pending.caption.ifBlank { pending.mediaDate },
+                color = Color.White,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        if (pending.assetCount > 1) {
+            Text(
+                "${pending.assetCount}",
+                color = Color.White,
+                style = MaterialTheme.typography.labelMedium,
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(10.dp)
+                    .background(Color.Black.copy(alpha = 0.45f), RoundedCornerShape(10.dp))
+                    .padding(horizontal = 8.dp, vertical = 3.dp),
+            )
         }
     }
 }
@@ -671,6 +760,7 @@ private fun ProfilePage(
     var confirm by remember { mutableStateOf<String?>(null) }
     var reason by rememberSaveable { mutableStateOf("") }
     var showBindSheet by rememberSaveable { mutableStateOf(false) }
+    var showEditCard by rememberSaveable { mutableStateOf(false) }
     var togetherDraft by rememberSaveable { mutableStateOf(java.time.LocalDate.now().minusYears(1).toString()) }
     val promptTogether by viewModel.promptTogetherDate.collectAsState()
     val partner = state.couple?.members?.firstOrNull { it.id != state.user?.id }
@@ -713,31 +803,17 @@ private fun ProfilePage(
                     )
                 }
             } else {
-                Card(
-                    colors = CardDefaults.cardColors(containerColor = Blush.copy(alpha = 0.85f)),
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(32.dp),
-                    elevation = CardDefaults.cardElevation(0.dp),
-                ) {
-                    Column(
-                        Modifier.padding(28.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(12.dp),
-                    ) {
-                        CoupleBondVisual(
-                            mode = CoupleBondMode.Bound,
-                            leftNickname = state.user?.nickname ?: "我",
-                            leftAvatarUrl = state.user?.avatarUrl,
-                            rightNickname = partner!!.nickname,
-                            rightAvatarUrl = partner.avatarUrl,
-                        )
-                        Text(state.couple?.name ?: "我们", style = MaterialTheme.typography.headlineMedium)
-                        Text(
-                            "Established ${state.couple?.togetherDate?.replace('-', '.') ?: "待设置"}",
-                            color = Stone,
-                        )
-                    }
-                }
+                BoundCoupleCard(
+                    spaceName = state.couple?.name ?: "我们",
+                    togetherDate = state.couple?.togetherDate,
+                    lovingDays = state.lovingDays,
+                    meNickname = state.user?.nickname ?: "我",
+                    meAvatarUrl = state.user?.avatarUrl,
+                    partnerNickname = partner!!.nickname,
+                    partnerAvatarUrl = partner.avatarUrl,
+                    coupleCoverUrl = state.user?.coupleCoverUrl,
+                    onEdit = { showEditCard = true },
+                )
             }
         }
         item { Spacer(Modifier.height(20.dp)); Text("空间设置", style = MaterialTheme.typography.titleLarge) }
@@ -784,6 +860,19 @@ private fun ProfilePage(
             onConfirm = { phone ->
                 viewModel.requestBind(phone)
                 showBindSheet = false
+            },
+        )
+    }
+
+    if (showEditCard && hasPartner) {
+        CoupleCardEditSheet(
+            initialName = state.couple?.name ?: "我们",
+            initialTogetherDate = state.couple?.togetherDate,
+            currentCoverUrl = state.user?.coupleCoverUrl,
+            onDismiss = { showEditCard = false },
+            onSave = { name, togetherDate, coverUri, clearCover ->
+                viewModel.updateCoupleCard(name, togetherDate, coverUri, clearCover)
+                showEditCard = false
             },
         )
     }
@@ -1011,29 +1100,117 @@ private fun IncomingBindCard(
 private enum class CoupleBondMode { Empty, Linking, Bound }
 
 @Composable
+private fun BoundCoupleCard(
+    spaceName: String,
+    togetherDate: String?,
+    lovingDays: Int?,
+    meNickname: String,
+    meAvatarUrl: String?,
+    partnerNickname: String,
+    partnerAvatarUrl: String?,
+    coupleCoverUrl: String?,
+    onEdit: () -> Unit,
+) {
+    Card(
+        colors = CardDefaults.cardColors(containerColor = Blush.copy(alpha = 0.85f)),
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(32.dp),
+        elevation = CardDefaults.cardElevation(0.dp),
+    ) {
+        Box(Modifier = Modifier.fillMaxWidth()) {
+            IconButton(
+                onClick = onEdit,
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(6.dp),
+            ) {
+                Icon(
+                    Icons.Rounded.Edit,
+                    contentDescription = "编辑",
+                    tint = DeepRose.copy(alpha = 0.75f),
+                    modifier = Modifier.size(20.dp),
+                )
+            }
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 28.dp, vertical = 28.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                CoupleBondVisual(
+                    mode = CoupleBondMode.Bound,
+                    leftNickname = meNickname,
+                    leftAvatarUrl = meAvatarUrl,
+                    rightNickname = partnerNickname,
+                    rightAvatarUrl = partnerAvatarUrl,
+                    coupleCoverUrl = coupleCoverUrl,
+                )
+                Text(spaceName, style = MaterialTheme.typography.headlineMedium)
+                Text(
+                    togetherDateLabel(togetherDate, lovingDays),
+                    color = Stone,
+                    textAlign = TextAlign.Center,
+                )
+            }
+        }
+    }
+}
+
+private fun togetherDateLabel(togetherDate: String?, lovingDays: Int?): String {
+    if (togetherDate.isNullOrBlank()) return "我们一起的时间还未设置"
+    val pretty = togetherDate.replace('-', '.')
+    return if (lovingDays != null && lovingDays > 0) {
+        "在一起第 $lovingDays 天 · $pretty"
+    } else {
+        "在一起自 $pretty"
+    }
+}
+
+@Composable
 private fun CoupleBondVisual(
     mode: CoupleBondMode,
     leftNickname: String,
     leftAvatarUrl: String?,
     rightNickname: String,
     rightAvatarUrl: String?,
+    coupleCoverUrl: String? = null,
 ) {
     when (mode) {
         CoupleBondMode.Bound -> {
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    PersonAvatar(
-                        nickname = leftNickname,
-                        avatarUrl = leftAvatarUrl,
-                        modifier = Modifier.size(72.dp),
-                    )
-                    PersonAvatar(
-                        nickname = rightNickname,
-                        avatarUrl = rightAvatarUrl,
-                        modifier = Modifier
-                            .offset(x = (-14).dp)
-                            .size(72.dp),
-                    )
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                if (!coupleCoverUrl.isNullOrBlank()) {
+                    CoupleCoverAvatar(coverUrl = coupleCoverUrl)
+                } else {
+                    Box(
+                        modifier = Modifier.fillMaxWidth(),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        // 72 + 72 - 14 overlap = 130；用固定宽居中，避免 offset 造成视觉偏左
+                        Box(
+                            modifier = Modifier
+                                .width(130.dp)
+                                .height(72.dp),
+                        ) {
+                            PersonAvatar(
+                                nickname = leftNickname,
+                                avatarUrl = leftAvatarUrl,
+                                modifier = Modifier
+                                    .align(Alignment.CenterStart)
+                                    .size(72.dp),
+                            )
+                            PersonAvatar(
+                                nickname = rightNickname,
+                                avatarUrl = rightAvatarUrl,
+                                modifier = Modifier
+                                    .align(Alignment.CenterEnd)
+                                    .size(72.dp),
+                            )
+                        }
+                    }
                 }
                 Spacer(Modifier.height(10.dp))
                 Text(
@@ -1042,6 +1219,7 @@ private fun CoupleBondVisual(
                     style = MaterialTheme.typography.bodyMedium,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
+                    textAlign = TextAlign.Center,
                 )
             }
         }
@@ -1073,6 +1251,29 @@ private fun CoupleBondVisual(
                 )
             }
         }
+    }
+}
+
+@Composable
+private fun CoupleCoverAvatar(coverUrl: String) {
+    val context = LocalContext.current
+    Box(
+        modifier = Modifier
+            .size(96.dp)
+            .background(Color.White, CircleShape)
+            .border(2.dp, Color.White, CircleShape)
+            .padding(3.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        AsyncImage(
+            model = signedMediaImageRequest(context, coverUrl),
+            contentDescription = "情侣头像",
+            modifier = Modifier
+                .fillMaxSize()
+                .clip(CircleShape)
+                .background(Rose.copy(alpha = 0.9f)),
+            contentScale = ContentScale.Crop,
+        )
     }
 }
 
@@ -1190,8 +1391,9 @@ private fun PersonAvatar(
         ) {
             when {
                 !avatarUrl.isNullOrBlank() -> {
+                    val context = LocalContext.current
                     AsyncImage(
-                        model = avatarUrl,
+                        model = signedMediaImageRequest(context, avatarUrl),
                         contentDescription = nickname,
                         modifier = Modifier.fillMaxSize(),
                         contentScale = ContentScale.Crop,
@@ -1214,6 +1416,169 @@ private fun PersonAvatar(
 
 private fun displayName(nickname: String): String =
     nickname.trim().ifBlank { "我" }.take(12)
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun CoupleCardEditSheet(
+    initialName: String,
+    initialTogetherDate: String?,
+    currentCoverUrl: String?,
+    onDismiss: () -> Unit,
+    onSave: (name: String, togetherDate: String?, coverUri: Uri?, clearCover: Boolean) -> Unit,
+) {
+    var name by rememberSaveable { mutableStateOf(initialName) }
+    var togetherDate by rememberSaveable {
+        mutableStateOf(initialTogetherDate.orEmpty())
+    }
+    var dateTouched by rememberSaveable { mutableStateOf(false) }
+    var draftCoverUri by remember { mutableStateOf<Uri?>(null) }
+    var clearCover by rememberSaveable { mutableStateOf(false) }
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val pickCover = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.PickVisualMedia(),
+    ) { uri ->
+        if (uri != null) {
+            draftCoverUri = uri
+            clearCover = false
+        }
+    }
+    val previewUrl = when {
+        clearCover -> null
+        draftCoverUri != null -> draftCoverUri.toString()
+        else -> currentCoverUrl
+    }
+    val hasCover = !previewUrl.isNullOrBlank()
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
+        containerColor = WarmBackground,
+        shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
+    ) {
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 24.dp)
+                .padding(bottom = 32.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+        ) {
+            Text("编辑我们", style = MaterialTheme.typography.headlineMedium)
+            Text("情侣头像仅影响你这边的展示；空间名称与在一起的日子会同步给双方", color = Stone)
+
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                modifier = Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(104.dp)
+                        .clip(CircleShape)
+                        .background(Blush)
+                        .clickable {
+                            pickCover.launch(
+                                PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly),
+                            )
+                        },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    when {
+                        draftCoverUri != null -> {
+                            AsyncImage(
+                                model = draftCoverUri,
+                                contentDescription = "情侣头像预览",
+                                modifier = Modifier.fillMaxSize(),
+                                contentScale = ContentScale.Crop,
+                            )
+                        }
+                        !clearCover && !currentCoverUrl.isNullOrBlank() -> {
+                            val context = LocalContext.current
+                            AsyncImage(
+                                model = signedMediaImageRequest(context, currentCoverUrl),
+                                contentDescription = "情侣头像",
+                                modifier = Modifier.fillMaxSize(),
+                                contentScale = ContentScale.Crop,
+                            )
+                        }
+                        else -> {
+                            Icon(
+                                Icons.Rounded.AddAPhoto,
+                                contentDescription = null,
+                                tint = Rose,
+                                modifier = Modifier.size(32.dp),
+                            )
+                        }
+                    }
+                }
+                Text(
+                    if (hasCover) "点击更换情侣头像" else "设置一张我们一起的照片",
+                    color = Stone,
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                if (hasCover) {
+                    TextButton(
+                        onClick = {
+                            draftCoverUri = null
+                            clearCover = true
+                        },
+                        colors = ButtonDefaults.textButtonColors(contentColor = Stone),
+                    ) { Text("取消情侣头像") }
+                }
+            }
+
+            SoftTextField(
+                value = name,
+                onValueChange = { name = it.take(40) },
+                label = "空间名称",
+                placeholder = "我们的小宇宙",
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+            )
+
+            LoverDateField(
+                value = togetherDate.ifBlank {
+                    java.time.LocalDate.now().minusYears(1).toString()
+                },
+                onValueChange = {
+                    togetherDate = it
+                    dateTouched = true
+                },
+                label = "在一起的那天",
+                maxDate = java.time.LocalDate.now(),
+                modifier = Modifier.fillMaxWidth(),
+            )
+            if (initialTogetherDate.isNullOrBlank() && !dateTouched) {
+                Text(
+                    "尚未设置在一起的日子，选择日期后保存即可同步给双方",
+                    color = Stone,
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
+
+            Button(
+                onClick = {
+                    val dateToSave = when {
+                        dateTouched -> togetherDate.trim().takeIf { it.isNotEmpty() }
+                        !initialTogetherDate.isNullOrBlank() ->
+                            togetherDate.trim().ifBlank { initialTogetherDate }
+                        else -> null
+                    }
+                    onSave(
+                        name.trim().ifBlank { "我们" },
+                        dateToSave,
+                        draftCoverUri,
+                        clearCover && draftCoverUri == null,
+                    )
+                },
+                enabled = name.isNotBlank(),
+                modifier = Modifier.fillMaxWidth().height(52.dp),
+                shape = RoundedCornerShape(22.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = Rose),
+            ) { Text("保存") }
+        }
+    }
+}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable

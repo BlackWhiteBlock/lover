@@ -10,6 +10,8 @@ data class User(
     val phone: String = "",
     val nickname: String = "我",
     val avatarUrl: String? = null,
+    /** 个人偏好的情侣合照（各账号独立，不与伴侣同步） */
+    val coupleCoverUrl: String? = null,
     val gender: String? = null,
     val birthday: String? = null,
     val profileCompleted: Boolean = false,
@@ -248,6 +250,7 @@ data class AppState(
     val id: String? = null,
     val loverSpaceId: String? = null,
     val togetherDate: String? = null,
+    val name: String? = null,
 )
 @Serializable data class UpdateCoupleSpaceRequest(val name: String? = null, val togetherDate: String? = null)
 @Serializable data class BootstrapResponse(
@@ -269,7 +272,11 @@ data class AppState(
     val sizeBytes: Long,
     val purpose: String = "media",
 )
-@Serializable data class PatchMeRequest(val avatarAssetId: String)
+@Serializable data class PatchMeRequest(
+    val avatarAssetId: String? = null,
+    val coupleCoverAssetId: String? = null,
+    val clearCoupleCover: Boolean = false,
+)
 @Serializable data class PatchMeResponse(val user: User)
 @Serializable data class TokenAssetResponse(
     val assetId: String,

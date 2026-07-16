@@ -28,9 +28,53 @@ const loginSchema = z.object({
 }).strict();
 const refreshSchema = z.object({ refreshToken: z.string().min(1) }).strict();
 const patchMeSchema = z.object({
-  avatarAssetId: z.string().uuid(),
-}).strict();
+  avatarAssetId: z.string().uuid().optional(),
+  coupleCoverAssetId: z.string().uuid().nullable().optional(),
+  clearCoupleCover: z.boolean().optional(),
+}).strict().refine(
+  (value) => value.avatarAssetId !== undefined
+    || value.coupleCoverAssetId !== undefined
+    || value.clearCoupleCover === true,
+  '至少提供一个更新字段',
+);
 const avatarMime = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/heic']);
+
+type MeProfileRow = AuthUser & {
+  avatarAssetId: string | null;
+  coupleCoverAssetId: string | null;
+};
+
+async function presentMeUser(context: AppContext, profile: MeProfileRow, viewerUserId: string) {
+  const { avatarAssetId: _avatarAssetId, coupleCoverAssetId: _coverAssetId, ...rest } = profile;
+  const [avatarUrl, coupleCoverUrl] = await Promise.all([
+    presentUserAvatar(context, profile, viewerUserId),
+    presentUserAvatar(
+      context,
+      { avatarUrl: null, avatarAssetId: profile.coupleCoverAssetId },
+      viewerUserId,
+    ),
+  ]);
+  return { ...rest, avatarUrl, coupleCoverUrl };
+}
+
+async function assertPersonalImageAsset(
+  context: AppContext,
+  userId: string,
+  assetId: string,
+  label: string,
+) {
+  const spaceId = await personalSpaceId(context, userId);
+  const asset = await context.db.query<{ id: string; mime_type: string }>(
+    `select id, mime_type from media_assets
+     where id = $1 and space_id = $2 and status = 'ready'`,
+    [assetId, spaceId],
+  );
+  const row = asset.rows[0];
+  if (!row) throw forbidden(`${label}资产不存在或无权使用`);
+  if (!avatarMime.has(row.mime_type)) {
+    throw badRequest('INVALID_AVATAR_TYPE', `${label}仅支持图片`);
+  }
+}
 
 function normalizePhone(value: string) {
   return value.replace(/[\s-]/g, '').replace(/^\+?86/, '');
@@ -162,9 +206,10 @@ export function registerAuth(app: FastifyInstance, context: AppContext) {
   });
 
   app.get('/api/me', { preHandler: createAuthHandler(context) }, async (request) => {
-    const user = await db.query<AuthUser & { avatarAssetId: string | null }>(
+    const user = await db.query<MeProfileRow>(
       `select id, phone, nickname, avatar_url as "avatarUrl",
               avatar_asset_id as "avatarAssetId",
+              couple_cover_asset_id as "coupleCoverAssetId",
               gender, birthday::text as birthday,
               profile_completed as "profileCompleted",
               personal_space_id as "personalSpaceId"
@@ -177,10 +222,8 @@ export function registerAuth(app: FastifyInstance, context: AppContext) {
       [request.user.id],
     );
     const profile = user.rows[0]!;
-    const { avatarAssetId: _assetId, ...rest } = profile;
-    const avatarUrl = await presentUserAvatar(context, profile, request.user.id);
     return {
-      user: { ...rest, avatarUrl },
+      user: await presentMeUser(context, profile, request.user.id),
       personalSpaceId: profile.personalSpaceId ?? null,
       loverSpaceId: link.rows[0]?.lover_space_id ?? null,
       activeSpaceId: link.rows[0]?.lover_space_id ?? profile.personalSpaceId ?? null,
@@ -190,32 +233,40 @@ export function registerAuth(app: FastifyInstance, context: AppContext) {
   });
 
   app.patch('/api/me', { preHandler: createAuthHandler(context) }, async (request) => {
-    const { avatarAssetId } = patchMeSchema.parse(request.body);
-    const spaceId = await personalSpaceId(context, request.user.id);
-    const asset = await db.query<{ id: string; mime_type: string }>(
-      `select id, mime_type from media_assets
-       where id = $1 and space_id = $2 and status = 'ready'`,
-      [avatarAssetId, spaceId],
-    );
-    const row = asset.rows[0];
-    if (!row) throw forbidden('头像资产不存在或无权使用');
-    if (!avatarMime.has(row.mime_type)) {
-      throw badRequest('INVALID_AVATAR_TYPE', '头像仅支持图片');
+    const input = patchMeSchema.parse(request.body);
+    if (input.avatarAssetId !== undefined) {
+      await assertPersonalImageAsset(context, request.user.id, input.avatarAssetId, '头像');
     }
-    const updated = await db.query<AuthUser & { avatarAssetId: string | null }>(
-      `update users set avatar_asset_id = $2, updated_at = now()
+    const clearCover = input.clearCoupleCover === true || input.coupleCoverAssetId === null;
+    if (input.coupleCoverAssetId) {
+      await assertPersonalImageAsset(context, request.user.id, input.coupleCoverAssetId, '情侣头像');
+    }
+
+    const updated = await db.query<MeProfileRow>(
+      `update users set
+         avatar_asset_id = coalesce($2::uuid, avatar_asset_id),
+         couple_cover_asset_id = case
+           when $4::boolean then null
+           when $3::uuid is not null then $3::uuid
+           else couple_cover_asset_id
+         end,
+         updated_at = now()
        where id = $1
        returning id, phone, nickname, avatar_url as "avatarUrl",
                  avatar_asset_id as "avatarAssetId",
+                 couple_cover_asset_id as "coupleCoverAssetId",
                  gender, birthday::text as birthday,
                  profile_completed as "profileCompleted",
                  personal_space_id as "personalSpaceId"`,
-      [request.user.id, avatarAssetId],
+      [
+        request.user.id,
+        input.avatarAssetId ?? null,
+        clearCover ? null : (input.coupleCoverAssetId ?? null),
+        clearCover,
+      ],
     );
     const profile = updated.rows[0]!;
-    const { avatarAssetId: _assetId, ...rest } = profile;
-    const avatarUrl = await presentUserAvatar(context, profile, request.user.id);
-    return { user: { ...rest, avatarUrl } };
+    return { user: await presentMeUser(context, profile, request.user.id) };
   });
 }
 
