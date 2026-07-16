@@ -8,39 +8,35 @@ alwaysApply: false
 
 Kotlin 大小写敏感。`Modifier`（参数名 / 局部变量）与 `Modifier`（Compose 类型/伴生对象）绝不能混用。
 
-## 命名参数必须用小写
+## 命名参数必须用小写 `modifier`
 
 ```kotlin
-// ❌ BAD — 命名参数写成 Modifier，Box 等无法匹配 content 重载
+// ❌ BAD — 参数名误写成大写 Modifier（会导致 Box 等 content 重载匹配失败）
 Box(Modifier = Modifier.fillMaxWidth()) { ... }
 
-// ✅ GOOD
+// ✅ GOOD — 参数名小写 modifier，右侧类型/工厂大写 Modifier
 Box(modifier = Modifier.fillMaxWidth()) { ... }
 ```
 
-## 传入 Modifier 值时写清楚
+## 传入值时写全 `modifier = Modifier.…`
 
 ```kotlin
-// ❌ BAD — 在无 modifier 参数的 Composable 里引用不存在的 modifier
-Column(modifier.weight(1f)) { ... }
-
-// ❌ BAD — 误把类型名当接收者（易与参数名混淆）
+// ❌ BAD — 当前 Composable 没有 modifier 参数时，裸写 modifier.xxx 会 Unresolved
+// ❌ BAD — 或误写成 Modifier.weight 却漏了 modifier =（难读、易再错）
 Column(Modifier.weight(1f)) { ... }
 
-// ✅ GOOD — 显式命名参数 + Modifier 工厂
+// ✅ GOOD — 默认写法：显式命名参数 + Modifier 工厂
 Column(modifier = Modifier.weight(1f)) { ... }
 
-// ✅ GOOD — 函数本身接收了 modifier 参数时再链式扩展
+// ✅ GOOD — 仅当函数声明了 modifier: Modifier 时，才链式用小写变量
 @Composable
 fun Foo(modifier: Modifier = Modifier) {
-    Column(modifier.weight(1f)) { ... } // 仅当外层是 Row/Box 等 Scope 且确有 modifier 参数时
+    Column(modifier = modifier.fillMaxWidth()) { ... }
 }
 ```
 
-## 自检
+## 自检（改完 Compose 布局必做）
 
-写完含 `Box` / `Column` / `Row` / `IconButton` 的代码后确认：
-
-1. 命名参数一律是 `modifier =`
-2. 右侧构造一律是 `Modifier.xxx`（大写 M）
-3. 只有当前函数声明了 `modifier: Modifier` 时，才能写 `modifier.xxx`（小写 m 开头的变量）
+1. 命名参数只能是小写：`modifier =`
+2. 新建 Modifier 链用大写：`Modifier.…`
+3. 小写 `modifier.xxx` 仅当本函数参数列表里已有 `modifier: Modifier`
