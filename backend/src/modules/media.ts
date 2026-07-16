@@ -4,6 +4,8 @@ import type { AppContext, AuthHandler } from '../types.js';
 import { badRequest, forbidden, notFound } from '../errors.js';
 import { readableSpaceIds, writeSpaceId } from './spaces.js';
 
+const MAX_MEDIA_ASSETS = 20;
+
 const dateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
 const mediaAssetPart = z.object({
   type: z.enum(['image', 'video']),
@@ -14,23 +16,29 @@ const mediaAssetPart = z.object({
     ctx.addIssue({ code: 'custom', path: ['thumbnailAssetId'], message: '视频必须提供封面资产' });
   }
 });
+const assetOrderKeep = z.object({ partId: z.string().uuid() }).strict();
+const assetOrderItem = z.union([assetOrderKeep, mediaAssetPart]);
+
 const mediaInput = z.object({
   caption: z.string().trim().max(200).default(''),
   mediaDate: dateSchema,
-  assets: z.array(mediaAssetPart).min(1).max(9),
+  assets: z.array(mediaAssetPart).min(1).max(MAX_MEDIA_ASSETS),
 }).strict();
 const mediaUpdate = z.object({
   caption: z.string().trim().max(200).optional(),
   mediaDate: dateSchema.optional(),
-  addAssets: z.array(mediaAssetPart).max(9).optional(),
+  addAssets: z.array(mediaAssetPart).max(MAX_MEDIA_ASSETS).optional(),
   removeAssetPartIds: z.array(z.string().uuid()).optional(),
+  /** 最终媒体顺序：保留用 partId，新增用 asset 字段；提供时以该列表为准 */
+  assetOrder: z.array(assetOrderItem).min(1).max(MAX_MEDIA_ASSETS).optional(),
 }).strict().refine(
   (value) => Object.keys(value).length > 0,
   '至少提供一个更新字段',
 );
 const idParams = z.object({ id: z.string().uuid() }).strict();
+/** cursor: `${mediaDate}|${createdAt ISO}`，兼容旧版纯 createdAt ISO */
 const pageQuery = z.object({
-  cursor: z.string().datetime({ offset: true }).optional(),
+  cursor: z.string().min(1).optional(),
   limit: z.coerce.number().int().min(1).max(100).default(30),
 }).strict();
 
@@ -51,22 +59,56 @@ type MediaAssetRow = {
   thumbnailAssetId: string | null;
 };
 
+function formatMediaDate(value: string | Date): string {
+  if (typeof value === 'string') return value.slice(0, 10);
+  return value.toISOString().slice(0, 10);
+}
+
+function formatCreatedAt(value: string | Date): string {
+  if (typeof value === 'string') return value;
+  return value.toISOString();
+}
+
+function encodeMediaCursor(row: MediaRow): string {
+  return `${formatMediaDate(row.mediaDate)}|${formatCreatedAt(row.createdAt)}`;
+}
+
+function parseMediaCursor(cursor: string | undefined): { mediaDate: string; createdAt: string } | null {
+  if (!cursor) return null;
+  const sep = cursor.indexOf('|');
+  if (sep > 0) {
+    return { mediaDate: cursor.slice(0, sep), createdAt: cursor.slice(sep + 1) };
+  }
+  // 旧客户端：仅 createdAt，退化为按创建时间翻页
+  return { mediaDate: '9999-12-31', createdAt: cursor };
+}
+
 export function registerMedia(app: FastifyInstance, context: AppContext, auth: AuthHandler) {
   const { db } = context;
 
   app.get('/api/media', { preHandler: auth }, async (request) => {
     const spaceIds = await readableSpaceIds(context, request.user.id);
     const query = pageQuery.parse(request.query);
+    const cursor = parseMediaCursor(query.cursor);
     const result = await db.query<MediaRow>(
       `select id, caption, media_date as "mediaDate", uploader_id as "uploaderId", created_at as "createdAt"
-       from media_items where space_id = any($1::uuid[]) and ($2::timestamptz is null or created_at < $2)
-       order by created_at desc limit $3`,
-      [spaceIds, query.cursor ?? null, query.limit + 1],
+       from media_items
+       where space_id = any($1::uuid[])
+         and (
+           $2::date is null
+           or (media_date, created_at) < ($2::date, $3::timestamptz)
+         )
+       order by media_date desc, created_at desc
+       limit $4`,
+      [spaceIds, cursor?.mediaDate ?? null, cursor?.createdAt ?? null, query.limit + 1],
     );
     const hasMore = result.rows.length > query.limit;
     const rows = hasMore ? result.rows.slice(0, query.limit) : result.rows;
     const items = await hydrateMediaItems(context, rows);
-    return { items, nextCursor: hasMore ? (rows.at(-1) as MediaRow).createdAt : null };
+    return {
+      items,
+      nextCursor: hasMore ? encodeMediaCursor(rows.at(-1) as MediaRow) : null,
+    };
   });
 
   app.get('/api/media/:id', { preHandler: auth }, async (request) => {
@@ -121,9 +163,10 @@ export function registerMedia(app: FastifyInstance, context: AppContext, auth: A
     const current = await findMediaRow(context, spaceIds, id);
     if (!current) throw notFound('媒体记录不存在');
     const isUploader = current.uploaderId === request.user.id;
-    const needsUploader = input.mediaDate !== undefined
-      || (input.addAssets?.length ?? 0) > 0
-      || (input.removeAssetPartIds?.length ?? 0) > 0;
+    const mutatesAssets = (input.addAssets?.length ?? 0) > 0
+      || (input.removeAssetPartIds?.length ?? 0) > 0
+      || (input.assetOrder?.length ?? 0) > 0;
+    const needsUploader = input.mediaDate !== undefined || mutatesAssets;
     if (needsUploader && !isUploader) {
       throw forbidden('仅创建者可修改日期或增删照片/视频');
     }
@@ -144,6 +187,16 @@ export function registerMedia(app: FastifyInstance, context: AppContext, auth: A
           [id, input.mediaDate, request.user.id],
         );
       }
+
+      if (input.assetOrder?.length) {
+        await applyAssetOrder(context, client, {
+          mediaItemId: id,
+          spaceId: target.spaceId,
+          order: input.assetOrder,
+        });
+        return;
+      }
+
       if (input.removeAssetPartIds?.length) {
         const existing = await client.query<{ id: string }>(
           `select id from media_item_assets where media_item_id = $1`,
@@ -172,7 +225,9 @@ export function registerMedia(app: FastifyInstance, context: AppContext, auth: A
         const currentCount = Number(count.rows[0]?.count ?? 0);
         const removed = input.removeAssetPartIds?.length ?? 0;
         const nextCount = currentCount - removed + input.addAssets.length;
-        if (nextCount > 9) throw badRequest('TOO_MANY_ASSETS', '每条时光最多 9 个媒体');
+        if (nextCount > MAX_MEDIA_ASSETS) {
+          throw badRequest('TOO_MANY_ASSETS', `每条时光最多 ${MAX_MEDIA_ASSETS} 个媒体`);
+        }
         await assertReadyAssets(
           context,
           target.spaceId,
@@ -211,12 +266,93 @@ export function registerMedia(app: FastifyInstance, context: AppContext, auth: A
   });
 }
 
+type DbClient = {
+  query: AppContext['db']['query'];
+};
+
+async function applyAssetOrder(
+  context: AppContext,
+  client: DbClient,
+  args: {
+    mediaItemId: string;
+    spaceId: string;
+    order: Array<{ partId: string } | z.infer<typeof mediaAssetPart>>;
+  },
+) {
+  const existing = await client.query<{ id: string }>(
+    `select id from media_item_assets where media_item_id = $1`,
+    [args.mediaItemId],
+  );
+  const existingIds = new Set(existing.rows.map((row) => row.id));
+  const keepIds = new Set<string>();
+  const newParts: z.infer<typeof mediaAssetPart>[] = [];
+
+  for (const item of args.order) {
+    if ('partId' in item) {
+      if (!existingIds.has(item.partId)) {
+        throw badRequest('INVALID_ASSET_PART', '媒体片段不存在');
+      }
+      if (keepIds.has(item.partId)) {
+        throw badRequest('DUPLICATE_ASSET_PART', '媒体片段重复');
+      }
+      keepIds.add(item.partId);
+    } else {
+      newParts.push(item);
+    }
+  }
+
+  if (args.order.length < 1) {
+    throw badRequest('MIN_ASSETS', '至少需要保留一张照片或视频');
+  }
+
+  await assertReadyAssets(
+    context,
+    args.spaceId,
+    newParts.flatMap((part) => [part.assetId, part.thumbnailAssetId]),
+  );
+
+  const removeIds = [...existingIds].filter((partId) => !keepIds.has(partId));
+  if (removeIds.length) {
+    await client.query(
+      `delete from media_item_assets
+       where media_item_id = $1 and id = any($2::uuid[])`,
+      [args.mediaItemId, removeIds],
+    );
+  }
+
+  // 先挪到临时大序号，避免 sort_order 唯一冲突
+  await client.query(
+    `update media_item_assets
+     set sort_order = sort_order + 1000
+     where media_item_id = $1`,
+    [args.mediaItemId],
+  );
+
+  for (const [index, item] of args.order.entries()) {
+    if ('partId' in item) {
+      await client.query(
+        `update media_item_assets
+         set sort_order = $3
+         where id = $1 and media_item_id = $2`,
+        [item.partId, args.mediaItemId, index],
+      );
+    } else {
+      await client.query(
+        `insert into media_item_assets(media_item_id, sort_order, type, asset_id, thumbnail_asset_id)
+         values ($1, $2, $3, $4, $5)`,
+        [args.mediaItemId, index, item.type, item.assetId, item.thumbnailAssetId ?? null],
+      );
+    }
+  }
+}
+
 export async function listRecentMedia(context: AppContext, spaceIds: string | string[], limit = 6) {
   const ids = Array.isArray(spaceIds) ? spaceIds : [spaceIds];
   const result = await context.db.query<MediaRow>(
     `select id, caption, media_date as "mediaDate", uploader_id as "uploaderId", created_at as "createdAt"
      from media_items where space_id = any($1::uuid[])
-     order by created_at desc limit $2`,
+     order by media_date desc, created_at desc
+     limit $2`,
     [ids, limit],
   );
   return hydrateMediaItems(context, result.rows);
@@ -266,19 +402,26 @@ async function hydrateMediaItems(context: AppContext, rows: MediaRow[]) {
     return {
       id: row.id,
       caption: row.caption,
-      mediaDate: row.mediaDate,
+      mediaDate: formatMediaDate(row.mediaDate),
       uploaderId: row.uploaderId,
-      createdAt: row.createdAt,
+      createdAt: formatCreatedAt(row.createdAt),
       assets: itemAssets,
     };
   });
 }
 
-async function assertReadyAssets(context: AppContext, spaceId: string, values: Array<string | null | undefined>) {
-  const ids = [...new Set(values.filter((value): value is string => Boolean(value)))];
+async function assertReadyAssets(
+  context: AppContext,
+  spaceId: string,
+  assetIds: Array<string | null | undefined>,
+) {
+  const ids = [...new Set(assetIds.filter((id): id is string => Boolean(id)))];
+  if (!ids.length) return;
   const result = await context.db.query<{ id: string }>(
     `select id from media_assets where space_id = $1 and status = 'ready' and id = any($2::uuid[])`,
     [spaceId, ids],
   );
-  if (result.rows.length !== ids.length) throw badRequest('ASSET_NOT_READY', '媒体资产不存在、未就绪或不属于当前空间');
+  if (result.rows.length !== ids.length) {
+    throw badRequest('ASSET_NOT_READY', '存在未就绪或不属于当前空间的媒体资产');
+  }
 }

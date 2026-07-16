@@ -76,8 +76,8 @@ import com.lover.app.core.design.SoftSurface
 import com.lover.app.core.design.SoftTextField
 import com.lover.app.core.design.Stone
 import com.lover.app.core.design.WarmBackground
+import com.lover.app.core.data.AppRepository
 import com.lover.app.core.media.MediaTakenDateReader
-import com.lover.app.core.media.listMediaImageRequest
 import com.lover.app.core.model.AnniversaryType
 import com.lover.app.core.model.LetterType
 import com.lover.app.core.model.MediaAssetPart
@@ -87,8 +87,6 @@ import java.time.LocalDate
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-
-private const val ComposerMaxMediaPick = 9
 
 @Composable
 fun ComposerHost(
@@ -283,7 +281,11 @@ fun MediaComposeScreen(
 
     ComposerScaffold(
         title = "存下这些属于我们的时光",
-        subtitle = if (uris.isEmpty()) "添加照片或视频" else "已选 ${uris.size} 项 · 点击预览",
+        subtitle = if (uris.isEmpty()) {
+            "添加照片或视频"
+        } else {
+            "已选 ${uris.size} 项 · 点击预览 · 长按排序"
+        },
         onClose = onClose,
         actionEnabled = uris.isNotEmpty(),
         actionLabel = "保存",
@@ -325,85 +327,23 @@ fun MediaComposeScreen(
                 }
             } else {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    uris.chunked(3).forEachIndexed { rowIndex, row ->
-                        Row(
-                            Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        ) {
-                            row.forEachIndexed { colIndex, uri ->
-                                val index = rowIndex * 3 + colIndex
-                                val isVideo = remember(uri) {
-                                    context.contentResolver.getType(uri)?.startsWith("video/") == true
-                                }
-                                Box(
-                                    Modifier
-                                        .weight(1f)
-                                        .aspectRatio(1f)
-                                        .clip(RoundedCornerShape(16.dp))
-                                        .background(Blush)
-                                        .clickable { previewIndex = index },
-                                ) {
-                                    if (isVideo) {
-                                        Box(
-                                            Modifier.fillMaxSize().background(Peach.copy(alpha = 0.45f)),
-                                            contentAlignment = Alignment.Center,
-                                        ) {
-                                            AsyncImage(
-                                                model = uri,
-                                                contentDescription = null,
-                                                modifier = Modifier.fillMaxSize(),
-                                                contentScale = ContentScale.Crop,
-                                            )
-                                            Icon(
-                                                Icons.Rounded.PlayCircle,
-                                                null,
-                                                tint = Color.White,
-                                                modifier = Modifier.size(28.dp),
-                                            )
-                                        }
-                                    } else {
-                                        AsyncImage(
-                                            model = uri,
-                                            contentDescription = null,
-                                            modifier = Modifier.fillMaxSize(),
-                                            contentScale = ContentScale.Crop,
-                                        )
-                                    }
-                                    IconButton(
-                                        onClick = {
-                                            uris = uris.filterNot { it.toString() == uri.toString() }
-                                        },
-                                        modifier = Modifier
-                                            .align(Alignment.TopEnd)
-                                            .size(28.dp),
-                                    ) {
-                                        Icon(
-                                            Icons.Rounded.Cancel,
-                                            "移除",
-                                            tint = Color.White,
-                                            modifier = Modifier
-                                                .background(Color.Black.copy(alpha = 0.4f), CircleShape)
-                                                .padding(2.dp)
-                                                .size(16.dp),
-                                        )
-                                    }
-                                    Text(
-                                        "${index + 1}",
-                                        color = Color.White,
-                                        style = MaterialTheme.typography.labelSmall,
-                                        modifier = Modifier
-                                            .align(Alignment.BottomStart)
-                                            .padding(6.dp)
-                                            .background(Rose.copy(alpha = 0.9f), RoundedCornerShape(6.dp))
-                                            .padding(horizontal = 5.dp, vertical = 1.dp),
-                                    )
-                                }
-                            }
-                            repeat(3 - row.size) {
-                                Spacer(Modifier.weight(1f))
-                            }
-                        }
-                    }
+                    ReorderableMediaDraftGrid(
+                        cells = uris.map { MediaDraftCell.Local(it) },
+                        canReorder = uris.size > 1,
+                        onReorder = { from, to ->
+                            uris = uris.toMutableList().apply { add(to, removeAt(from)) }
+                        },
+                        onPreview = { previewIndex = it },
+                        canRemoveAt = { true },
+                        onRemoveAt = { index ->
+                            uris = uris.toMutableList().also { it.removeAt(index) }
+                        },
+                    )
+                    Text(
+                        "长按拖动可调整顺序",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Stone,
+                    )
                 }
                 if (remaining > 0) {
                     TextButton(
@@ -463,54 +403,71 @@ fun MediaEditScreen(
     item: MediaItem,
     currentUserId: String?,
     onClose: () -> Unit,
-    onSave: (caption: String, date: String?, newUris: List<Uri>, removedPartIds: List<String>) -> Unit,
+    onSave: (
+        caption: String,
+        date: String?,
+        assetOrder: List<AppRepository.MediaEditOrderItem>?,
+    ) -> Unit,
     onDelete: () -> Unit,
 ) {
     val isOwner = !currentUserId.isNullOrBlank() && item.uploaderId == currentUserId
     var caption by rememberSaveable(item.id) { mutableStateOf(item.caption) }
     var date by rememberSaveable(item.id) { mutableStateOf(item.mediaDate) }
-    var keptAssets by remember(item.id) { mutableStateOf(item.assets.sortedBy { it.sortOrder }) }
-    var newUris by remember { mutableStateOf<List<Uri>>(emptyList()) }
-    var removedPartIds by remember { mutableStateOf<List<String>>(emptyList()) }
+    val initialCells = remember(item.id) {
+        item.assets.sortedBy { it.sortOrder }.map { MediaDraftCell.Remote(it) as MediaDraftCell }
+    }
+    var cells by remember(item.id) { mutableStateOf(initialCells) }
     var previewIndex by remember { mutableStateOf<Int?>(null) }
     var confirmDelete by remember { mutableStateOf(false) }
     val context = LocalContext.current
-    val totalCount = keptAssets.size + newUris.size
+    val totalCount = cells.size
     val remaining = (ComposerMaxMediaPick - totalCount).coerceAtLeast(0)
+    val mediaDirty = cells.map { it.key } != initialCells.map { it.key }
     val dirty = caption.trim() != item.caption.trim()
         || (isOwner && date != item.mediaDate)
-        || newUris.isNotEmpty()
-        || removedPartIds.isNotEmpty()
+        || mediaDirty
 
     val pickMultiple = rememberLauncherForActivityResult(
         PickGalleryImageAndVideoMultiple(ComposerMaxMediaPick),
     ) { more ->
-        if (more.isEmpty()) return@rememberLauncherForActivityResult
-        val maxNew = (ComposerMaxMediaPick - keptAssets.size).coerceAtLeast(0)
-        newUris = (newUris + more).distinctBy { it.toString() }.take(maxNew)
+        if (more.isEmpty() || !isOwner) return@rememberLauncherForActivityResult
+        val room = (ComposerMaxMediaPick - cells.size).coerceAtLeast(0)
+        val extras = more.distinctBy { it.toString() }.take(room).map { MediaDraftCell.Local(it) }
+        cells = cells + extras
     }
     val pickSingle = rememberLauncherForActivityResult(PickGalleryImageOrVideo()) { uri ->
-        if (uri != null && remaining > 0) {
-            newUris = (newUris + uri).distinctBy { it.toString() }
+        if (uri != null && remaining > 0 && isOwner) {
+            cells = cells + MediaDraftCell.Local(uri)
         }
     }
     fun openPicker() {
-        if (remaining <= 0) return
+        if (!isOwner || remaining <= 0) return
         if (remaining == 1) pickSingle.launch(Unit) else pickMultiple.launch(Unit)
     }
 
     ComposerScaffold(
         title = "编辑时光",
-        subtitle = if (isOwner) "可修改描述与媒体" else "仅可修改文字描述",
+        subtitle = if (isOwner) "可修改描述与媒体 · 长按拖动排序" else "仅可修改文字描述",
         onClose = onClose,
         actionEnabled = dirty && totalCount > 0,
         actionLabel = "保存",
         onAction = {
+            val order = if (isOwner && mediaDirty) {
+                cells.map { cell ->
+                    when (cell) {
+                        is MediaDraftCell.Remote ->
+                            AppRepository.MediaEditOrderItem.Existing(cell.part.id)
+                        is MediaDraftCell.Local ->
+                            AppRepository.MediaEditOrderItem.New(cell.uri)
+                    }
+                }
+            } else {
+                null
+            }
             onSave(
                 caption,
                 if (isOwner && date != item.mediaDate) date else null,
-                newUris,
-                removedPartIds,
+                order,
             )
         },
         showTopAction = false,
@@ -527,115 +484,35 @@ fun MediaEditScreen(
             if (totalCount == 0) {
                 Text("至少需要保留一张照片或视频", color = MaterialTheme.colorScheme.error)
             } else {
-                val cells = buildList {
-                    keptAssets.forEach { add(it to null as Uri?) }
-                    newUris.forEach { add(null as MediaAssetPart? to it) }
-                }
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    cells.chunked(3).forEach { row ->
-                        Row(
-                            Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        ) {
-                            row.forEach { (existing, newUri) ->
-                                val index = cells.indexOfFirst {
-                                    it.first?.assetId == existing?.assetId && it.second == newUri
-                                }
-                                val canRemove = when {
-                                    existing != null -> isOwner && totalCount > 1
-                                    else -> true
-                                }
-                                Box(
-                                    Modifier
-                                        .weight(1f)
-                                        .aspectRatio(1f)
-                                        .clip(RoundedCornerShape(16.dp))
-                                        .background(Blush)
-                                        .clickable { previewIndex = index },
-                                ) {
-                                    when {
-                                        newUri != null -> {
-                                            val isVideo = context.contentResolver.getType(newUri)
-                                                ?.startsWith("video/") == true
-                                            if (isVideo) {
-                                                AsyncImage(
-                                                    model = newUri,
-                                                    contentDescription = null,
-                                                    modifier = Modifier.fillMaxSize(),
-                                                    contentScale = ContentScale.Crop,
-                                                )
-                                                Icon(
-                                                    Icons.Rounded.PlayCircle,
-                                                    null,
-                                                    tint = Color.White,
-                                                    modifier = Modifier.align(Alignment.Center).size(28.dp),
-                                                )
-                                            } else {
-                                                AsyncImage(
-                                                    model = newUri,
-                                                    contentDescription = null,
-                                                    modifier = Modifier.fillMaxSize(),
-                                                    contentScale = ContentScale.Crop,
-                                                )
-                                            }
-                                        }
-                                        existing != null -> {
-                                            val url = existing.previewUrl
-                                            if (url.isNotBlank()) {
-                                                AsyncImage(
-                                                    model = listMediaImageRequest(context, url, existing.assetId),
-                                                    contentDescription = null,
-                                                    modifier = Modifier.fillMaxSize(),
-                                                    contentScale = ContentScale.Crop,
-                                                )
-                                            }
-                                            if (existing.type == MediaType.VIDEO) {
-                                                Icon(
-                                                    Icons.Rounded.PlayCircle,
-                                                    null,
-                                                    tint = Color.White,
-                                                    modifier = Modifier.align(Alignment.Center).size(28.dp),
-                                                )
-                                            }
-                                        }
-                                    }
-                                    if (canRemove) {
-                                        IconButton(
-                                            onClick = {
-                                                if (existing != null) {
-                                                    if (existing.id.isNotBlank()) {
-                                                        removedPartIds = removedPartIds + existing.id
-                                                    }
-                                                    keptAssets = keptAssets.filterNot {
-                                                        it.id == existing.id && it.assetId == existing.assetId
-                                                    }
-                                                } else if (newUri != null) {
-                                                    newUris = newUris.filterNot { it == newUri }
-                                                }
-                                            },
-                                            modifier = Modifier
-                                                .align(Alignment.TopEnd)
-                                                .size(28.dp),
-                                        ) {
-                                            Icon(
-                                                Icons.Rounded.Cancel,
-                                                "移除",
-                                                tint = Color.White,
-                                                modifier = Modifier
-                                                    .background(Color.Black.copy(alpha = 0.4f), CircleShape)
-                                                    .padding(2.dp)
-                                                    .size(16.dp),
-                                            )
-                                        }
-                                    }
-                                }
+                    ReorderableMediaDraftGrid(
+                        cells = cells,
+                        canReorder = isOwner && cells.size > 1,
+                        onReorder = { from, to ->
+                            cells = cells.toMutableList().apply { add(to, removeAt(from)) }
+                        },
+                        onPreview = { previewIndex = it },
+                        canRemoveAt = { index ->
+                            when (val cell = cells.getOrNull(index)) {
+                                is MediaDraftCell.Remote -> isOwner && totalCount > 1
+                                is MediaDraftCell.Local -> true
+                                null -> false
                             }
-                            repeat(3 - row.size) { Spacer(Modifier.weight(1f)) }
-                        }
+                        },
+                        onRemoveAt = { index ->
+                            cells = cells.toMutableList().also { it.removeAt(index) }
+                        },
+                    )
+                    if (isOwner && cells.size > 1) {
+                        Text(
+                            "长按拖动可调整顺序",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = Stone,
+                        )
                     }
                 }
             }
-            if (remaining > 0) {
+            if (isOwner && remaining > 0) {
                 TextButton(
                     onClick = ::openPicker,
                     colors = ButtonDefaults.textButtonColors(contentColor = Rose),
@@ -696,25 +573,23 @@ fun MediaEditScreen(
     }
 
     previewIndex?.let { index ->
-        val previewAssets = buildList {
-            keptAssets.forEach { part ->
-                add(
-                    part.copy(
-                        url = part.url.ifBlank { part.previewUrl },
-                    ),
+        val previewAssets = cells.mapIndexed { i, cell ->
+            when (cell) {
+                is MediaDraftCell.Remote -> cell.part.copy(
+                    url = cell.part.url.ifBlank { cell.part.previewUrl },
+                    sortOrder = i,
                 )
-            }
-            newUris.forEachIndexed { i, uri ->
-                val isVideo = context.contentResolver.getType(uri)?.startsWith("video/") == true
-                add(
+                is MediaDraftCell.Local -> {
+                    val isVideo = context.contentResolver.getType(cell.uri)
+                        ?.startsWith("video/") == true
                     MediaAssetPart(
                         id = "new-$i",
                         type = if (isVideo) MediaType.VIDEO else MediaType.IMAGE,
                         assetId = "new-$i",
-                        url = uri.toString(),
-                        sortOrder = keptAssets.size + i,
-                    ),
-                )
+                        url = cell.uri.toString(),
+                        sortOrder = i,
+                    )
+                }
             }
         }
         MediaPreviewDialog(

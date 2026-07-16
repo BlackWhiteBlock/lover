@@ -308,11 +308,19 @@ data class AppState(
     val mediaDate: String,
     val assets: List<CreateMediaAssetRequest>,
 )
+/** 编辑时光最终顺序：保留已有片段用 partId，新增用 type/assetId */
+@Serializable data class MediaAssetOrderItem(
+    val partId: String? = null,
+    val type: MediaType? = null,
+    val assetId: String? = null,
+    val thumbnailAssetId: String? = null,
+)
 @Serializable data class UpdateMediaRequest(
     val caption: String? = null,
     val mediaDate: String? = null,
     val addAssets: List<CreateMediaAssetRequest>? = null,
     val removeAssetPartIds: List<String>? = null,
+    val assetOrder: List<MediaAssetOrderItem>? = null,
 )
 @Serializable data class CreateAnniversaryRequest(
     val title: String,

@@ -67,7 +67,7 @@ import com.lover.app.core.media.listMediaImageRequest
 import com.lover.app.core.media.signedMediaImageRequest
 import com.lover.app.core.model.*
 
-internal const val MaxMediaPick = 9
+internal const val MaxMediaPick = 20
 
 enum class Editor { MEDIA, ANNIVERSARY, LETTER }
 
@@ -283,13 +283,12 @@ fun MainScreen(viewModel: MainViewModel) {
                             mediaDetail = cached
                             mediaEdit = null
                         },
-                        onSave = { caption, date, newUris, removedPartIds ->
+                        onSave = { caption, date, assetOrder ->
                             viewModel.updateMedia(
                                 id = cached.id,
                                 caption = caption,
                                 date = date,
-                                newUris = newUris,
-                                removedPartIds = removedPartIds,
+                                assetOrder = assetOrder,
                             )
                             mediaDetail = cached
                             mediaEdit = null
@@ -1710,7 +1709,12 @@ private fun PersonalCardEditSheet(
                         }
                     }
                 }
-                Text("点击更换头像", color = Stone, style = MaterialTheme.typography.bodySmall)
+                Text(
+                    "点击更换头像",
+                    color = Stone,
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.clickable { pickAvatar.launch(Unit) },
+                )
             }
 
             SoftTextField(

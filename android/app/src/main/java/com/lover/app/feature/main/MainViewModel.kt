@@ -199,12 +199,11 @@ class MainViewModel @Inject constructor(
         id: String,
         caption: String,
         date: String? = null,
-        newUris: List<Uri> = emptyList(),
-        removedPartIds: List<String> = emptyList(),
+        assetOrder: List<AppRepository.MediaEditOrderItem>? = null,
     ) = launchAction("已保存") {
         requireSpace()
         date?.let { LocalDate.parse(it) }
-        repository.updateMedia(id, caption, date, newUris, removedPartIds)
+        repository.updateMedia(id, caption, date, assetOrder)
     }
 
     fun deleteMedia(id: String) = launchAction("已删除") {

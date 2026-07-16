@@ -237,7 +237,7 @@ class AppRepository @Inject constructor(
         val previous = tokenStore.snapshot
         val mediaDeferred = async {
             runCatching {
-                signMedia(call { api.media().items }, previous.media)
+                signMedia(sortMediaByRecordDate(call { api.media().items }), previous.media)
             }.getOrDefault(previous.media)
         }
         val anniversariesDeferred = async {
@@ -318,10 +318,16 @@ class AppRepository @Inject constructor(
     suspend fun refreshMedia() {
         val previous = tokenStore.snapshot.media
         val signed = runCatching {
-            signMedia(call { api.media().items }, previous)
+            signMedia(sortMediaByRecordDate(call { api.media().items }), previous)
         }.getOrDefault(previous)
         tokenStore.update { it.copy(media = signed) }
     }
+
+    private fun sortMediaByRecordDate(items: List<MediaItem>): List<MediaItem> =
+        items.sortedWith(
+            compareByDescending<MediaItem> { it.mediaDate }
+                .thenByDescending { it.createdAt },
+        )
 
     private suspend fun signMedia(
         items: List<MediaItem>,
@@ -448,26 +454,45 @@ class AppRepository @Inject constructor(
         )
     }
 
+    /**
+     * @param assetOrder 最终媒体顺序（含保留的 partId 与待上传的本地 Uri）。
+     * 为 null 时仅更新文案/日期；非 null 时以该顺序全量同步媒体。
+     */
     suspend fun updateMedia(
         id: String,
         caption: String,
         date: String? = null,
-        newUris: List<Uri> = emptyList(),
-        removedPartIds: List<String> = emptyList(),
+        assetOrder: List<MediaEditOrderItem>? = null,
     ) {
-        val addAssets = newUris.map { uploadMediaPart(it) }
+        val orderPayload = assetOrder?.map { item ->
+            when (item) {
+                is MediaEditOrderItem.Existing -> MediaAssetOrderItem(partId = item.partId)
+                is MediaEditOrderItem.New -> {
+                    val uploaded = uploadMediaPart(item.uri)
+                    MediaAssetOrderItem(
+                        type = uploaded.type,
+                        assetId = uploaded.assetId,
+                        thumbnailAssetId = uploaded.thumbnailAssetId,
+                    )
+                }
+            }
+        }
         call {
             api.updateMedia(
                 id,
                 UpdateMediaRequest(
                     caption = caption.trim(),
                     mediaDate = date,
-                    addAssets = addAssets.takeIf { it.isNotEmpty() },
-                    removeAssetPartIds = removedPartIds.takeIf { it.isNotEmpty() },
+                    assetOrder = orderPayload,
                 ),
             )
         }
         refreshMedia()
+    }
+
+    sealed class MediaEditOrderItem {
+        data class Existing(val partId: String) : MediaEditOrderItem()
+        data class New(val uri: Uri) : MediaEditOrderItem()
     }
 
     suspend fun deleteMedia(id: String) {
