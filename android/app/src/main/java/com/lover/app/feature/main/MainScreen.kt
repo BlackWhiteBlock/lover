@@ -1117,7 +1117,7 @@ private fun BoundCoupleCard(
         shape = RoundedCornerShape(32.dp),
         elevation = CardDefaults.cardElevation(0.dp),
     ) {
-        Box(Modifier = Modifier.fillMaxWidth()) {
+        Box(modifier = Modifier.fillMaxWidth()) {
             IconButton(
                 onClick = onEdit,
                 modifier = Modifier

@@ -134,18 +134,20 @@ export function registerAssets(app: FastifyInstance, context: AppContext, auth: 
 
   app.post('/api/media-assets/complete', { preHandler: auth }, async (request) => {
     const { assetId } = assetIdSchema.parse(request.body);
-    const spaceId = await activeSpaceId(context, request.user.id);
+    // 按 owner 定位：头像/情侣合照落在 personal space，绑定后 activeSpace 是 lover space，
+    // 不能再用 activeSpaceId 过滤，否则 complete 会 404。
     const asset = await db.query<{
       object_key: string; expected_size: string; mime_type: string;
-      status: string; provider: 'local' | 'qiniu'; bucket: string | null;
+      status: string; provider: 'local' | 'qiniu'; bucket: string | null; space_id: string;
     }>(
-      `select object_key, expected_size, mime_type, status, provider, bucket from media_assets
-       where id = $1 and space_id = $2 and owner_id = $3`,
-      [assetId, spaceId, request.user.id],
+      `select object_key, expected_size, mime_type, status, provider, bucket, space_id
+       from media_assets
+       where id = $1 and owner_id = $2`,
+      [assetId, request.user.id],
     );
     const row = asset.rows[0];
     if (!row) throw notFound('媒体资产不存在');
-    assertObjectKeyBelongsToSpace(row.object_key, spaceId);
+    assertObjectKeyBelongsToSpace(row.object_key, row.space_id);
     if (row.provider !== provider.name || row.bucket !== provider.bucket) {
       throw conflict('STORAGE_PROVIDER_MISMATCH', '资产所属存储 provider 当前不可用');
     }

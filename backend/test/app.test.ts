@@ -127,7 +127,7 @@ test('qiniu sign endpoint cannot sign an asset outside the active space', async 
   }
 });
 
-test('qiniu complete looks up the exact asset owner and active space before stat', async () => {
+test('qiniu complete looks up the asset by owner before stat', async () => {
   const config = loadConfig({
     NODE_ENV: 'test',
     LOG_LEVEL: 'silent',
@@ -156,14 +156,8 @@ test('qiniu complete looks up the exact asset owner and active space before stat
           }],
         };
       }
-      if (text.includes('from couple_links')) {
-        return { rowCount: 0, rows: [] };
-      }
-      if (text.includes('personal_space_id from users')) {
-        return { rowCount: 1, rows: [{ personal_space_id: 'space-a' }] };
-      }
-      if (text.includes('from media_assets') && text.includes('owner_id = $3')) {
-        assert.deepEqual(values, [assetId, 'space-a', 'user-a']);
+      if (text.includes('from media_assets') && text.includes('owner_id = $2')) {
+        assert.deepEqual(values, [assetId, 'user-a']);
         checkedBoundary = true;
         return { rowCount: 0, rows: [] };
       }
