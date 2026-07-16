@@ -5,9 +5,8 @@ package com.lover.app.feature.main
 import android.net.Uri
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.PickVisualMediaRequest
-import androidx.activity.result.contract.ActivityResultContracts.PickMultipleVisualMedia
-import androidx.activity.result.contract.ActivityResultContracts.PickVisualMedia
+import com.lover.app.core.media.PickGalleryImageAndVideoMultiple
+import com.lover.app.core.media.PickGalleryImageOrVideo
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -139,7 +138,7 @@ private fun ComposerScaffold(
     content: @Composable (PaddingValues) -> Unit,
 ) {
     Scaffold(
-        containerColor = Color.Transparent,
+        containerColor = WarmBackground,
         topBar = {
             Column(
                 Modifier
@@ -271,16 +270,15 @@ fun MediaComposeScreen(
         if (wasEmpty) prefillDateFromFirst(next)
     }
 
-    val pickMultiple = rememberLauncherForActivityResult(PickMultipleVisualMedia(ComposerMaxMediaPick)) { more ->
-        mergePicked(more)
-    }
-    val pickSingle = rememberLauncherForActivityResult(PickVisualMedia()) { uri ->
+    val pickMultiple = rememberLauncherForActivityResult(
+        PickGalleryImageAndVideoMultiple(ComposerMaxMediaPick),
+    ) { more -> mergePicked(more) }
+    val pickSingle = rememberLauncherForActivityResult(PickGalleryImageOrVideo()) { uri ->
         if (uri != null) mergePicked(listOf(uri))
     }
     fun launchPick() {
         if (remaining <= 0) return
-        val request = PickVisualMediaRequest(PickVisualMedia.ImageAndVideo)
-        if (remaining == 1) pickSingle.launch(request) else pickMultiple.launch(request)
+        if (remaining == 1) pickSingle.launch(Unit) else pickMultiple.launch(Unit)
     }
 
     ComposerScaffold(
@@ -484,20 +482,21 @@ fun MediaEditScreen(
         || newUris.isNotEmpty()
         || removedPartIds.isNotEmpty()
 
-    val pickMultiple = rememberLauncherForActivityResult(PickMultipleVisualMedia(ComposerMaxMediaPick)) { more ->
+    val pickMultiple = rememberLauncherForActivityResult(
+        PickGalleryImageAndVideoMultiple(ComposerMaxMediaPick),
+    ) { more ->
         if (more.isEmpty()) return@rememberLauncherForActivityResult
         val maxNew = (ComposerMaxMediaPick - keptAssets.size).coerceAtLeast(0)
         newUris = (newUris + more).distinctBy { it.toString() }.take(maxNew)
     }
-    val pickSingle = rememberLauncherForActivityResult(PickVisualMedia()) { uri ->
+    val pickSingle = rememberLauncherForActivityResult(PickGalleryImageOrVideo()) { uri ->
         if (uri != null && remaining > 0) {
             newUris = (newUris + uri).distinctBy { it.toString() }
         }
     }
     fun openPicker() {
         if (remaining <= 0) return
-        val request = PickVisualMediaRequest(PickVisualMedia.ImageAndVideo)
-        if (remaining == 1) pickSingle.launch(request) else pickMultiple.launch(request)
+        if (remaining == 1) pickSingle.launch(Unit) else pickMultiple.launch(Unit)
     }
 
     ComposerScaffold(

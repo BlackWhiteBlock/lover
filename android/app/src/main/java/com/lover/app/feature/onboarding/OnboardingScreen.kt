@@ -2,8 +2,6 @@ package com.lover.app.feature.onboarding
 
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.PickVisualMediaRequest
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -56,6 +54,7 @@ import com.lover.app.core.design.SoftOutline
 import com.lover.app.core.design.SoftTextField
 import com.lover.app.core.design.Stone
 import com.lover.app.core.design.WarmBackground
+import com.lover.app.core.media.PickGalleryImage
 import java.time.LocalDate
 
 @Composable
@@ -67,9 +66,7 @@ fun OnboardingScreen(viewModel: OnboardingViewModel) {
     var avatarUri by rememberSaveable { mutableStateOf<String?>(null) }
     val submitting by viewModel.submitting.collectAsState()
 
-    val pickAvatar = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.PickVisualMedia(),
-    ) { uri: Uri? ->
+    val pickAvatar = rememberLauncherForActivityResult(PickGalleryImage()) { uri: Uri? ->
         avatarUri = uri?.toString()
     }
 
@@ -90,11 +87,7 @@ fun OnboardingScreen(viewModel: OnboardingViewModel) {
 
         OnboardingAvatarPicker(
             avatarUri = avatarUri,
-            onClick = {
-                pickAvatar.launch(
-                    PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly),
-                )
-            },
+            onClick = { pickAvatar.launch(Unit) },
         )
         Spacer(Modifier.height(24.dp))
 

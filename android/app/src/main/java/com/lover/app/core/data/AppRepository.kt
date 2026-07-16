@@ -181,6 +181,22 @@ class AppRepository @Inject constructor(
         refreshAll()
     }
 
+    /** 未绑定：改个人空间名 + 可选头像 */
+    suspend fun updatePersonalCard(spaceName: String, avatarUri: Uri? = null) {
+        val trimmed = spaceName.trim()
+        require(trimmed.isNotEmpty()) { "请填写空间名称" }
+        call { api.updateCoupleSpace(UpdateCoupleSpaceRequest(name = trimmed)) }
+        if (avatarUri != null) {
+            val assetId = uploadAvatar(avatarUri)
+            val user = call { api.patchMe(PatchMeRequest(avatarAssetId = assetId)) }.user
+            tokenStore.update { it.copy(user = user) }
+        }
+        refreshAll()
+    }
+
+    suspend fun lookupUser(phone: String): UserLookupResponse =
+        call { api.lookupUser(phone.trim()) }
+
     /** 更新「我们」卡片：空间名/在一起日期双方同步；情侣合照仅本账号。 */
     suspend fun updateCoupleCard(
         name: String? = null,

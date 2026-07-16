@@ -1,0 +1,46 @@
+---
+description: Compose Modifier 命名与传参约定，避免 modifier/Modifier 混用
+globs: android/**/*.kt
+alwaysApply: false
+---
+
+# Compose `modifier` 约定
+
+Kotlin 大小写敏感。`Modifier`（参数名 / 局部变量）与 `Modifier`（Compose 类型/伴生对象）绝不能混用。
+
+## 命名参数必须用小写
+
+```kotlin
+// ❌ BAD — 命名参数写成 Modifier，Box 等无法匹配 content 重载
+Box(Modifier = Modifier.fillMaxWidth()) { ... }
+
+// ✅ GOOD
+Box(modifier = Modifier.fillMaxWidth()) { ... }
+```
+
+## 传入 Modifier 值时写清楚
+
+```kotlin
+// ❌ BAD — 在无 modifier 参数的 Composable 里引用不存在的 modifier
+Column(modifier.weight(1f)) { ... }
+
+// ❌ BAD — 误把类型名当接收者（易与参数名混淆）
+Column(Modifier.weight(1f)) { ... }
+
+// ✅ GOOD — 显式命名参数 + Modifier 工厂
+Column(modifier = Modifier.weight(1f)) { ... }
+
+// ✅ GOOD — 函数本身接收了 modifier 参数时再链式扩展
+@Composable
+fun Foo(modifier: Modifier = Modifier) {
+    Column(modifier.weight(1f)) { ... } // 仅当外层是 Row/Box 等 Scope 且确有 modifier 参数时
+}
+```
+
+## 自检
+
+写完含 `Box` / `Column` / `Row` / `IconButton` 的代码后确认：
+
+1. 命名参数一律是 `modifier =`
+2. 右侧构造一律是 `Modifier.xxx`（大写 M）
+3. 只有当前函数声明了 `modifier: Modifier` 时，才能写 `modifier.xxx`（小写 m 开头的变量）

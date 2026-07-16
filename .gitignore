@@ -9,6 +9,10 @@ uploads/
 **/build/
 local.properties
 *.apk
+*.aab
+*.jks
+*.keystore
+android/keystore.properties
 
 # IDE / OS
 .idea/

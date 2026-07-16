@@ -21,9 +21,8 @@ import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
 import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.PickVisualMediaRequest
-import androidx.activity.result.contract.ActivityResultContracts
 import android.net.Uri
+import kotlinx.coroutines.delay
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -32,6 +31,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
@@ -58,9 +58,11 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.DialogProperties
 import coil.compose.AsyncImage
 import com.lover.app.core.design.*
+import com.lover.app.core.media.PickGalleryImage
 import com.lover.app.core.media.listMediaImageRequest
 import com.lover.app.core.media.signedMediaImageRequest
 import com.lover.app.core.model.*
@@ -211,9 +213,15 @@ fun MainScreen(viewModel: MainViewModel) {
         }
 
         AnimatedVisibility(
-            visible = mediaDetailOpen,
-            enter = fadeIn(tween(280)) + slideInVertically(tween(320)) { it / 10 },
-            exit = fadeOut(tween(180)) + slideOutVertically(tween(220)) { it / 12 },
+            visible = mediaDetailOpen && !mediaEditOpen,
+            enter = slideInHorizontally(
+                animationSpec = tween(450, easing = FastOutSlowInEasing),
+                initialOffsetX = { it },
+            ) + fadeIn(tween(280)),
+            exit = slideOutHorizontally(
+                animationSpec = tween(350, easing = FastOutSlowInEasing),
+                targetOffsetX = { it },
+            ) + fadeOut(tween(200)),
         ) {
             val current = mediaDetail
             if (current != null) {
@@ -223,7 +231,15 @@ fun MainScreen(viewModel: MainViewModel) {
                         caption = cached.caption,
                         mediaDate = cached.mediaDate,
                         assets = if (current.assets.any { it.url.isNotBlank() }) {
-                            current.assets
+                            // 保留已签发原图，缩略图用列表最新
+                            current.assets.map { part ->
+                                val fresh = cached.assets.firstOrNull { it.assetId == part.assetId }
+                                if (fresh != null && part.url.isNotBlank()) {
+                                    fresh.copy(url = part.url, thumbnailUrl = fresh.thumbnailUrl ?: part.thumbnailUrl)
+                                } else {
+                                    fresh ?: part
+                                }
+                            }
                         } else {
                             cached.assets
                         },
@@ -235,41 +251,56 @@ fun MainScreen(viewModel: MainViewModel) {
                     item = live,
                     members = state.couple?.members.orEmpty(),
                     onClose = { mediaDetail = null },
-                    onEdit = {
-                        mediaDetail = null
-                        mediaEdit = live
-                    },
+                    onEdit = { mediaEdit = live },
                 )
             }
         }
 
         AnimatedVisibility(
             visible = mediaEditOpen,
-            enter = fadeIn(tween(280)) + slideInVertically(tween(320)) { it / 10 },
-            exit = fadeOut(tween(180)) + slideOutVertically(tween(220)) { it / 12 },
+            enter = slideInHorizontally(
+                animationSpec = tween(400, easing = FastOutSlowInEasing),
+                initialOffsetX = { it },
+            ) + fadeIn(tween(220)),
+            exit = slideOutHorizontally(
+                animationSpec = tween(320, easing = FastOutSlowInEasing),
+                targetOffsetX = { it },
+            ) + fadeOut(tween(180)),
         ) {
             val editing = mediaEdit
             if (editing != null) {
                 val cached = state.media.firstOrNull { it.id == editing.id } ?: editing
-                MediaEditScreen(
-                    item = cached,
-                    currentUserId = state.user?.id,
-                    onClose = { mediaEdit = null },
-                    onSave = { caption, date, newUris, removedPartIds ->
-                        viewModel.updateMedia(
-                            id = cached.id,
-                            caption = caption,
-                            date = date,
-                            newUris = newUris,
-                            removedPartIds = removedPartIds,
-                        )
-                        mediaEdit = null
-                    },
-                    onDelete = {
-                        viewModel.deleteMedia(cached.id)
-                        mediaEdit = null
-                    },
-                )
+                Box(
+                    Modifier
+                        .fillMaxSize()
+                        .background(WarmBackground),
+                ) {
+                    MediaEditScreen(
+                        item = cached,
+                        currentUserId = state.user?.id,
+                        onClose = {
+                            // 返回详情页
+                            mediaDetail = cached
+                            mediaEdit = null
+                        },
+                        onSave = { caption, date, newUris, removedPartIds ->
+                            viewModel.updateMedia(
+                                id = cached.id,
+                                caption = caption,
+                                date = date,
+                                newUris = newUris,
+                                removedPartIds = removedPartIds,
+                            )
+                            mediaDetail = cached
+                            mediaEdit = null
+                        },
+                        onDelete = {
+                            viewModel.deleteMedia(cached.id)
+                            mediaEdit = null
+                            mediaDetail = null
+                        },
+                    )
+                }
             }
         }
 
@@ -399,7 +430,7 @@ private fun PageHeader(title: String, subtitle: String, action: (@Composable () 
         Modifier.fillMaxWidth().padding(horizontal = 22.dp, vertical = 18.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Column(Modifier.weight(1f)) {
+        Column(modifier = Modifier.weight(1f)) {
             Text(title, style = MaterialTheme.typography.headlineMedium)
             Text(subtitle.uppercase(), style = MaterialTheme.typography.labelSmall, color = Stone)
         }
@@ -533,13 +564,112 @@ private fun TimelinePage(
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
-                items(pendingUploads, key = { "pending-${it.id}" }) { pending ->
+                items(
+                    pendingUploads,
+                    key = { "pending-${it.id}" },
+                    span = { GridItemSpan(1) },
+                ) { pending ->
                     UploadingMediaCard(pending)
                 }
-                items(media, key = { it.id }) {
-                    MediaImage(it, Modifier.aspectRatio(.8f).clickable { onMedia(it) })
+                if (media.isNotEmpty()) {
+                    val featured = media.first()
+                    item(
+                        key = "featured-${featured.id}",
+                        span = { GridItemSpan(maxLineSpan) },
+                    ) {
+                        FeaturedMediaCard(
+                            item = featured,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .aspectRatio(4f / 3f)
+                                .clickable { onMedia(featured) },
+                        )
+                    }
+                    items(
+                        media.drop(1),
+                        key = { it.id },
+                        span = { GridItemSpan(1) },
+                    ) {
+                        MediaImage(it, Modifier.aspectRatio(1f).clickable { onMedia(it) })
+                    }
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun FeaturedMediaCard(
+    item: MediaItem,
+    modifier: Modifier = Modifier,
+) {
+    val context = LocalContext.current
+    val cover = item.cover
+    val thumbUrl = item.thumbnailUrl ?: item.url
+    Box(
+        modifier
+            .clip(RoundedCornerShape(28.dp))
+            .background(Blush),
+    ) {
+        if (!thumbUrl.isNullOrBlank() && cover != null) {
+            AsyncImage(
+                model = listMediaImageRequest(context, thumbUrl, cover.assetId),
+                contentDescription = item.caption,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize(),
+            )
+        }
+        Box(
+            Modifier
+                .fillMaxSize()
+                .background(
+                    Brush.verticalGradient(
+                        0f to Color.Transparent,
+                        0.45f to Color.Transparent,
+                        1f to Color.Black.copy(alpha = 0.55f),
+                    ),
+                ),
+        )
+        Column(
+            Modifier
+                .align(Alignment.BottomStart)
+                .fillMaxWidth()
+                .padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            Text(
+                "精选",
+                color = Color.White.copy(alpha = 0.85f),
+                style = MaterialTheme.typography.labelSmall,
+                letterSpacing = 2.sp,
+            )
+            Text(
+                item.caption.ifBlank { item.mediaDate },
+                color = Color.White,
+                style = MaterialTheme.typography.titleLarge,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        if (item.assetCount > 1) {
+            Text(
+                "${item.assetCount}",
+                color = Color.White,
+                style = MaterialTheme.typography.labelMedium,
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(12.dp)
+                    .background(Color.Black.copy(alpha = 0.45f), RoundedCornerShape(10.dp))
+                    .padding(horizontal = 8.dp, vertical = 3.dp),
+            )
+        }
+        if (item.type == MediaType.VIDEO && item.assetCount <= 1) {
+            Icon(
+                Icons.Rounded.PlayCircle,
+                "视频",
+                tint = Color.White,
+                modifier = Modifier.align(Alignment.Center).size(52.dp),
+            )
         }
     }
 }
@@ -822,22 +952,27 @@ private fun ProfilePage(
         item {
             PageHeader("我们的小宇宙", "Our Private World")
             if (!hasPartner) {
+                val spaceName = state.couple?.name?.takeIf { it.isNotBlank() } ?: "我们的小宇宙"
                 val invite = incoming.firstOrNull { it.id.isNotBlank() }
                 if (invite != null) {
                     IncomingBindCard(
+                        spaceName = spaceName,
                         meNickname = state.user?.nickname,
                         meAvatarUrl = state.user?.avatarUrl,
                         inviterNickname = invite.requesterNickname,
                         inviterAvatarUrl = invite.requesterAvatarUrl,
                         inviterLabel = bindInviterLabel(invite.requesterNickname, invite.requesterPhone),
+                        onEdit = { showEditCard = true },
                         onAccept = { viewModel.acceptBind(invite.id) },
                         onReject = { viewModel.rejectBind(invite.id) },
                     )
                 } else {
                     EmptyCoupleCard(
+                        spaceName = spaceName,
                         meNickname = state.user?.nickname,
                         meAvatarUrl = state.user?.avatarUrl,
                         outgoing = outgoing?.takeIf { it.id.isNotBlank() },
+                        onEdit = { showEditCard = true },
                         onBind = { showBindSheet = true },
                         onCancelOutgoing = outgoing?.id?.takeIf { it.isNotBlank() }?.let { id ->
                             { viewModel.cancelBind(id) }
@@ -899,6 +1034,7 @@ private fun ProfilePage(
     if (showBindSheet) {
         PhoneBindSheet(
             onDismiss = { showBindSheet = false },
+            onLookup = { phone -> viewModel.lookupUser(phone) },
             onConfirm = { phone ->
                 viewModel.requestBind(phone)
                 showBindSheet = false
@@ -906,17 +1042,29 @@ private fun ProfilePage(
         )
     }
 
-    if (showEditCard && hasPartner) {
-        CoupleCardEditSheet(
-            initialName = state.couple?.name ?: "我们",
-            initialTogetherDate = state.couple?.togetherDate,
-            currentCoverUrl = state.user?.coupleCoverUrl,
-            onDismiss = { showEditCard = false },
-            onSave = { name, togetherDate, coverUri, clearCover ->
-                viewModel.updateCoupleCard(name, togetherDate, coverUri, clearCover)
-                showEditCard = false
-            },
-        )
+    if (showEditCard) {
+        if (hasPartner) {
+            CoupleCardEditSheet(
+                initialName = state.couple?.name ?: "我们",
+                initialTogetherDate = state.couple?.togetherDate,
+                currentCoverUrl = state.user?.coupleCoverUrl,
+                onDismiss = { showEditCard = false },
+                onSave = { name, togetherDate, coverUri, clearCover ->
+                    viewModel.updateCoupleCard(name, togetherDate, coverUri, clearCover)
+                    showEditCard = false
+                },
+            )
+        } else {
+            PersonalCardEditSheet(
+                initialName = state.couple?.name?.takeIf { it.isNotBlank() } ?: "我们的小宇宙",
+                currentAvatarUrl = state.user?.avatarUrl,
+                onDismiss = { showEditCard = false },
+                onSave = { name, avatarUri ->
+                    viewModel.updatePersonalCard(name, avatarUri)
+                    showEditCard = false
+                },
+            )
+        }
     }
 
     if (promptTogether) {
@@ -1015,9 +1163,11 @@ private fun ProfilePage(
 
 @Composable
 private fun EmptyCoupleCard(
+    spaceName: String,
     meNickname: String?,
     meAvatarUrl: String?,
     outgoing: OutgoingBindRequest?,
+    onEdit: () -> Unit,
     onBind: () -> Unit,
     onCancelOutgoing: (() -> Unit)?,
 ) {
@@ -1030,6 +1180,18 @@ private fun EmptyCoupleCard(
         shape = RoundedCornerShape(32.dp),
         elevation = CardDefaults.cardElevation(0.dp),
     ) {
+        Box(modifier = Modifier.fillMaxWidth()) {
+            IconButton(
+                onClick = onEdit,
+                modifier = Modifier.align(Alignment.TopEnd).padding(6.dp),
+            ) {
+                Icon(
+                    Icons.Rounded.Edit,
+                    contentDescription = "编辑",
+                    tint = DeepRose.copy(alpha = 0.75f),
+                    modifier = Modifier.size(20.dp),
+                )
+            }
         Column(
             Modifier.padding(28.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
@@ -1052,7 +1214,7 @@ private fun EmptyCoupleCard(
                     rightAvatarUrl = null,
                 )
             }
-            Text("我们的小宇宙", style = MaterialTheme.typography.headlineMedium)
+            Text(spaceName, style = MaterialTheme.typography.headlineMedium)
             if (outgoing != null && outgoingLabel != null) {
                 Text(
                     "已向 $outgoingLabel 发送绑定邀请",
@@ -1083,16 +1245,19 @@ private fun EmptyCoupleCard(
                 ) { Text("绑定另一半") }
             }
         }
+        }
     }
 }
 
 @Composable
 private fun IncomingBindCard(
+    spaceName: String,
     meNickname: String?,
     meAvatarUrl: String?,
     inviterNickname: String,
     inviterAvatarUrl: String?,
     inviterLabel: String,
+    onEdit: () -> Unit,
     onAccept: () -> Unit,
     onReject: () -> Unit,
 ) {
@@ -1102,6 +1267,18 @@ private fun IncomingBindCard(
         shape = RoundedCornerShape(32.dp),
         elevation = CardDefaults.cardElevation(0.dp),
     ) {
+        Box(modifier = Modifier.fillMaxWidth()) {
+            IconButton(
+                onClick = onEdit,
+                modifier = Modifier.align(Alignment.TopEnd).padding(6.dp),
+            ) {
+                Icon(
+                    Icons.Rounded.Edit,
+                    contentDescription = "编辑",
+                    tint = DeepRose.copy(alpha = 0.75f),
+                    modifier = Modifier.size(20.dp),
+                )
+            }
         Column(
             Modifier.padding(28.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
@@ -1114,7 +1291,7 @@ private fun IncomingBindCard(
                 rightNickname = meNickname ?: "我",
                 rightAvatarUrl = meAvatarUrl,
             )
-            Text("我们的小宇宙", style = MaterialTheme.typography.headlineMedium)
+            Text(spaceName, style = MaterialTheme.typography.headlineMedium)
             Text(
                 "${inviterLabel}邀请您绑定",
                 color = Stone,
@@ -1135,6 +1312,7 @@ private fun IncomingBindCard(
                     colors = ButtonDefaults.buttonColors(containerColor = Rose),
                 ) { Text("同意") }
             }
+        }
         }
     }
 }
@@ -1461,6 +1639,104 @@ private fun displayName(nickname: String): String =
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
+private fun PersonalCardEditSheet(
+    initialName: String,
+    currentAvatarUrl: String?,
+    onDismiss: () -> Unit,
+    onSave: (name: String, avatarUri: Uri?) -> Unit,
+) {
+    var name by rememberSaveable { mutableStateOf(initialName) }
+    var draftAvatarUri by remember { mutableStateOf<Uri?>(null) }
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val pickAvatar = rememberLauncherForActivityResult(PickGalleryImage()) { uri ->
+        if (uri != null) draftAvatarUri = uri
+    }
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
+        containerColor = WarmBackground,
+        shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
+    ) {
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 24.dp)
+                .padding(bottom = 32.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+        ) {
+            Text("编辑我的空间", style = MaterialTheme.typography.headlineMedium)
+            Text("可以更换头像和空间名称，绑定后双方还会有共同的空间设置", color = Stone)
+
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                modifier = Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(104.dp)
+                        .clip(CircleShape)
+                        .background(Blush)
+                        .clickable { pickAvatar.launch(Unit) },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    when {
+                        draftAvatarUri != null -> {
+                            AsyncImage(
+                                model = draftAvatarUri,
+                                contentDescription = "头像预览",
+                                modifier = Modifier.fillMaxSize(),
+                                contentScale = ContentScale.Crop,
+                            )
+                        }
+                        !currentAvatarUrl.isNullOrBlank() -> {
+                            val context = LocalContext.current
+                            AsyncImage(
+                                model = signedMediaImageRequest(context, currentAvatarUrl),
+                                contentDescription = "头像",
+                                modifier = Modifier.fillMaxSize(),
+                                contentScale = ContentScale.Crop,
+                            )
+                        }
+                        else -> {
+                            Icon(
+                                Icons.Rounded.AddAPhoto,
+                                contentDescription = null,
+                                tint = Rose,
+                                modifier = Modifier.size(32.dp),
+                            )
+                        }
+                    }
+                }
+                Text("点击更换头像", color = Stone, style = MaterialTheme.typography.bodySmall)
+            }
+
+            SoftTextField(
+                value = name,
+                onValueChange = { name = it.take(40) },
+                label = "空间名称",
+                placeholder = "我们的小宇宙",
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+            )
+
+            Button(
+                onClick = {
+                    onSave(name.trim().ifBlank { "我们的小宇宙" }, draftAvatarUri)
+                },
+                enabled = name.isNotBlank(),
+                modifier = Modifier.fillMaxWidth().height(52.dp),
+                shape = RoundedCornerShape(22.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = Rose),
+            ) { Text("保存") }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
 private fun CoupleCardEditSheet(
     initialName: String,
     initialTogetherDate: String?,
@@ -1476,9 +1752,7 @@ private fun CoupleCardEditSheet(
     var draftCoverUri by remember { mutableStateOf<Uri?>(null) }
     var clearCover by rememberSaveable { mutableStateOf(false) }
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    val pickCover = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.PickVisualMedia(),
-    ) { uri ->
+    val pickCover = rememberLauncherForActivityResult(PickGalleryImage()) { uri ->
         if (uri != null) {
             draftCoverUri = uri
             clearCover = false
@@ -1518,11 +1792,7 @@ private fun CoupleCardEditSheet(
                         .size(104.dp)
                         .clip(CircleShape)
                         .background(Blush)
-                        .clickable {
-                            pickCover.launch(
-                                PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly),
-                            )
-                        },
+                        .clickable { pickCover.launch(Unit) },
                     contentAlignment = Alignment.Center,
                 ) {
                     when {
@@ -1626,10 +1896,26 @@ private fun CoupleCardEditSheet(
 @Composable
 private fun PhoneBindSheet(
     onDismiss: () -> Unit,
+    onLookup: suspend (String) -> UserLookupResponse,
     onConfirm: (String) -> Unit,
 ) {
     var phone by rememberSaveable { mutableStateOf("") }
+    var lookup by remember { mutableStateOf<UserLookupResponse?>(null) }
+    var lookingUp by remember { mutableStateOf(false) }
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+
+    LaunchedEffect(phone) {
+        if (phone.length != 11) {
+            lookup = null
+            lookingUp = false
+            return@LaunchedEffect
+        }
+        lookingUp = true
+        delay(350)
+        lookup = runCatching { onLookup(phone) }.getOrNull()
+        lookingUp = false
+    }
+
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
@@ -1650,9 +1936,51 @@ private fun PhoneBindSheet(
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth(),
             )
+            when {
+                phone.length < 11 -> Unit
+                lookingUp -> {
+                    Text("正在查找账号…", color = Stone, style = MaterialTheme.typography.bodySmall)
+                }
+                lookup == null -> {
+                    Text("查找失败，请稍后重试", color = Stone, style = MaterialTheme.typography.bodySmall)
+                }
+                lookup?.found != true -> {
+                    Text("没有对应账号", color = MaterialTheme.colorScheme.error)
+                }
+                lookup?.self == true -> {
+                    Text("不能绑定自己的手机号", color = MaterialTheme.colorScheme.error)
+                }
+                else -> {
+                    val nickname = lookup?.nickname.orEmpty()
+                    val avatarUrl = lookup?.avatarUrl
+                    Row(
+                        Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(20.dp))
+                            .background(SoftSurface)
+                            .padding(12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    ) {
+                        PersonAvatar(
+                            nickname = nickname.ifBlank { "对方" },
+                            avatarUrl = avatarUrl,
+                            modifier = Modifier.size(48.dp),
+                        )
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                nickname.ifBlank { "Lover 用户" },
+                                fontWeight = FontWeight.SemiBold,
+                                color = DeepRose,
+                            )
+                            Text("已找到对方账号", color = Stone, style = MaterialTheme.typography.bodySmall)
+                        }
+                    }
+                }
+            }
             Button(
                 onClick = { onConfirm(phone) },
-                enabled = phone.length == 11,
+                enabled = phone.length == 11 && lookup?.found == true && lookup?.self != true,
                 modifier = Modifier.fillMaxWidth().height(52.dp),
                 shape = RoundedCornerShape(22.dp),
                 colors = ButtonDefaults.buttonColors(containerColor = Rose),

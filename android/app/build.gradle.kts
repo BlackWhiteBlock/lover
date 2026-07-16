@@ -7,6 +7,9 @@ plugins {
     id("com.google.dagger.hilt.android")
 }
 
+import java.util.Properties
+import java.io.FileInputStream
+
 val loverApiBaseUrl = providers.gradleProperty("LOVER_API_BASE_URL")
     .orElse(providers.environmentVariable("LOVER_API_BASE_URL"))
     .orElse("http://10.0.2.2:4000/")
@@ -27,6 +30,13 @@ val inviteHost = inviteBase
     .substringBefore(':')
     .ifBlank { "localhost" }
 
+// Release signing: android/keystore.properties（勿提交）+ lover-release.jks
+val keystorePropertiesFile = rootProject.file("keystore.properties")
+val keystoreProperties = Properties()
+if (keystorePropertiesFile.exists()) {
+    FileInputStream(keystorePropertiesFile).use { keystoreProperties.load(it) }
+}
+
 android {
     namespace = "com.lover.app"
     compileSdk = 36
@@ -45,6 +55,18 @@ android {
         manifestPlaceholders["inviteHttpsScheme"] = inviteHttpsScheme
     }
 
+    signingConfigs {
+        create("release") {
+            val storePath = keystoreProperties.getProperty("storeFile")
+            if (!storePath.isNullOrBlank()) {
+                storeFile = rootProject.file(storePath)
+                storePassword = keystoreProperties.getProperty("storePassword")
+                keyAlias = keystoreProperties.getProperty("keyAlias")
+                keyPassword = keystoreProperties.getProperty("keyPassword")
+            }
+        }
+    }
+
     buildTypes {
         debug {
             applicationIdSuffix = ".debug"
@@ -55,6 +77,7 @@ android {
             isMinifyEnabled = false
             manifestPlaceholders["usesCleartextTraffic"] = "false"
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+            signingConfig = signingConfigs.getByName("release")
         }
     }
 

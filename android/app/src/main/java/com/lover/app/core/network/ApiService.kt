@@ -41,6 +41,9 @@ interface ApiService {
     @POST("api/onboarding")
     suspend fun onboarding(@Body request: OnboardingRequest): OnboardingResponse
 
+    @GET("api/users/lookup")
+    suspend fun lookupUser(@Query("phone") phone: String): UserLookupResponse
+
     @POST("api/couple-binds")
     suspend fun createBind(@Body request: CreateBindRequest): BindRequestDto
 

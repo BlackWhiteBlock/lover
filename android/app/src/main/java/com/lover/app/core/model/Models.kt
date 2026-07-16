@@ -224,6 +224,12 @@ data class AppState(
     val personalSpaceId: String,
     val spaceName: String,
 )
+@Serializable data class UserLookupResponse(
+    val found: Boolean = false,
+    val self: Boolean = false,
+    val nickname: String? = null,
+    val avatarUrl: String? = null,
+)
 @Serializable data class CreateBindRequest(val phone: String)
 @Serializable data class BindRequestDto(
     val id: String,

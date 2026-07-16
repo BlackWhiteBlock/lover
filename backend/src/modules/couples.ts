@@ -26,6 +26,12 @@ const bindPhoneSchema = z.object({
     .refine((phone) => /^1[3-9]\d{9}$/.test(phone), '请输入有效手机号'),
 }).strict();
 
+const lookupPhoneSchema = z.object({
+  phone: z.string().trim()
+    .transform((value) => value.replace(/[\s-]/g, '').replace(/^\+?86/, ''))
+    .refine((phone) => /^1[3-9]\d{9}$/.test(phone), '请输入有效手机号'),
+}).strict();
+
 const updateLinkSchema = z.object({
   togetherDate: dateSchema.nullable().optional(),
   name: z.string().trim().min(1).max(40).optional(),
@@ -238,6 +244,50 @@ export function registerCouples(app: FastifyInstance, context: AppContext, auth:
     );
     if (!result.rowCount) throw notFound('个人空间不存在');
     return result.rows[0];
+  });
+
+  /**
+   * 绑定前预览：按手机号查询已完成建档的用户昵称/头像。
+   * 调用方须已完成建档；未注册或未建档目标一律 found=false，不泄露细节。
+   */
+  app.get('/api/users/lookup', {
+    preHandler: auth,
+    config: { rateLimit: { max: 30, timeWindow: '1 minute' } },
+  }, async (request) => {
+    await personalSpaceId(context, request.user.id);
+    const { phone } = lookupPhoneSchema.parse(request.query);
+    if (phone === request.user.phone) {
+      const me = await db.query<{
+        nickname: string; avatarUrl: string | null; avatarAssetId: string | null;
+      }>(
+        `select nickname, avatar_url as "avatarUrl", avatar_asset_id as "avatarAssetId"
+         from users where id = $1`,
+        [request.user.id],
+      );
+      const row = me.rows[0]!;
+      return {
+        found: true,
+        self: true,
+        nickname: row.nickname,
+        avatarUrl: await presentUserAvatar(context, row, request.user.id),
+      };
+    }
+    const user = await db.query<{
+      nickname: string; avatarUrl: string | null; avatarAssetId: string | null;
+    }>(
+      `select nickname, avatar_url as "avatarUrl", avatar_asset_id as "avatarAssetId"
+       from users
+       where phone = $1 and profile_completed = true`,
+      [phone],
+    );
+    const row = user.rows[0];
+    if (!row) return { found: false, self: false, nickname: null, avatarUrl: null };
+    return {
+      found: true,
+      self: false,
+      nickname: row.nickname,
+      avatarUrl: await presentUserAvatar(context, row, request.user.id),
+    };
   });
 
   app.patch('/api/couple-link', { preHandler: auth }, async (request) => {

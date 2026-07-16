@@ -135,6 +135,14 @@ class MainViewModel @Inject constructor(
         )
     }
 
+    fun updatePersonalCard(spaceName: String, avatarUri: Uri?) = launchAction("已保存") {
+        require(spaceName.isNotBlank()) { "请填写空间名称" }
+        repository.updatePersonalCard(spaceName.trim(), avatarUri)
+    }
+
+    suspend fun lookupUser(phone: String): UserLookupResponse =
+        repository.lookupUser(phone)
+
     private fun requireSpace() {
         require(repository.state.value.profileCompleted && repository.state.value.personalSpaceId != null) {
             "请先完成空间创建"
