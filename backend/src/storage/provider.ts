@@ -144,10 +144,11 @@ export class QiniuStorageProvider implements StorageProvider {
 
   async signDownload(objectKey: string, mimeType: string, variant: DownloadVariant) {
     assertSafeObjectKey(objectKey);
-    // HEIC 等格式走 imageMogr2/format/webp 时常失败；缩略图对其直接签原图，保证 App 能显示。
+    // HEIC 等格式走 imageMogr2 时常失败；缩略图对其直接签原图。
     const canProcess = mimeType.startsWith('image/') && !mimeType.includes('heic') && !mimeType.includes('heif');
+    // blur/Nx0 在七牛侧经常直接 4xx；自动剥掉，避免列表签名成功但图片加载失败。
     const processQuery = variant === 'thumb' && canProcess
-      ? this.config.storage.qiniu.imageThumbFop
+      ? sanitizeImageThumbFop(this.config.storage.qiniu.imageThumbFop)
       : '';
     const key = processQuery ? `${objectKey}?${processQuery}` : objectKey;
     const expiresIn = this.config.storage.qiniu.downloadExpiresSeconds;
@@ -157,6 +158,13 @@ export class QiniuStorageProvider implements StorageProvider {
       expiresIn,
     };
   }
+}
+
+function sanitizeImageThumbFop(fop: string): string {
+  return fop
+    .replace(/\/?blur\/\d+x0(?=\/|$)/g, '')
+    .replace(/\/{2,}/g, '/')
+    .replace(/\/$/, '');
 }
 
 export function createStorageProvider(config: Config): StorageProvider {

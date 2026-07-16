@@ -13,7 +13,8 @@
     "build": "tsc",
     "start": "node dist/src/server.js",
     "db:migrate": "tsx scripts/migrate.ts",
-    "storage:migrate-local-to-qiniu": "tsx scripts/migrate-local-to-qiniu.ts"
+    "storage:migrate-local-to-qiniu": "tsx scripts/migrate-local-to-qiniu.ts",
+    "storage:diagnose-qiniu-read": "tsx scripts/diagnose-qiniu-read.ts"
   },
   "dependencies": {
     "@alicloud/dysmsapi20170525": "^4.6.0",
