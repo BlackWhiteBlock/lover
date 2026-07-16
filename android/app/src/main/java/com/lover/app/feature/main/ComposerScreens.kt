@@ -43,7 +43,9 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -76,9 +78,11 @@ import com.lover.app.core.design.SoftTextField
 import com.lover.app.core.design.Stone
 import com.lover.app.core.design.WarmBackground
 import com.lover.app.core.media.MediaTakenDateReader
+import com.lover.app.core.media.listMediaImageRequest
 import com.lover.app.core.model.AnniversaryType
 import com.lover.app.core.model.LetterType
 import com.lover.app.core.model.MediaAssetPart
+import com.lover.app.core.model.MediaItem
 import com.lover.app.core.model.MediaType
 import java.time.LocalDate
 import kotlinx.coroutines.Dispatchers
@@ -452,6 +456,299 @@ fun MediaComposeScreen(
             caption = caption,
             mediaDate = date,
             onDismiss = { previewIndex = null },
+        )
+    }
+}
+
+@Composable
+fun MediaEditScreen(
+    item: MediaItem,
+    currentUserId: String?,
+    onClose: () -> Unit,
+    onSave: (caption: String, date: String?, newUris: List<Uri>, removedPartIds: List<String>) -> Unit,
+    onDelete: () -> Unit,
+) {
+    val isOwner = !currentUserId.isNullOrBlank() && item.uploaderId == currentUserId
+    var caption by rememberSaveable(item.id) { mutableStateOf(item.caption) }
+    var date by rememberSaveable(item.id) { mutableStateOf(item.mediaDate) }
+    var keptAssets by remember(item.id) { mutableStateOf(item.assets.sortedBy { it.sortOrder }) }
+    var newUris by remember { mutableStateOf<List<Uri>>(emptyList()) }
+    var removedPartIds by remember { mutableStateOf<List<String>>(emptyList()) }
+    var previewIndex by remember { mutableStateOf<Int?>(null) }
+    var confirmDelete by remember { mutableStateOf(false) }
+    val context = LocalContext.current
+    val totalCount = keptAssets.size + newUris.size
+    val remaining = (ComposerMaxMediaPick - totalCount).coerceAtLeast(0)
+    val dirty = caption.trim() != item.caption.trim()
+        || (isOwner && date != item.mediaDate)
+        || newUris.isNotEmpty()
+        || removedPartIds.isNotEmpty()
+
+    val pickMultiple = rememberLauncherForActivityResult(PickMultipleVisualMedia(ComposerMaxMediaPick)) { more ->
+        if (more.isEmpty()) return@rememberLauncherForActivityResult
+        val maxNew = (ComposerMaxMediaPick - keptAssets.size).coerceAtLeast(0)
+        newUris = (newUris + more).distinctBy { it.toString() }.take(maxNew)
+    }
+    val pickSingle = rememberLauncherForActivityResult(PickVisualMedia()) { uri ->
+        if (uri != null && remaining > 0) {
+            newUris = (newUris + uri).distinctBy { it.toString() }
+        }
+    }
+    fun openPicker() {
+        if (remaining <= 0) return
+        val request = PickVisualMediaRequest(PickVisualMedia.ImageAndVideo)
+        if (remaining == 1) pickSingle.launch(request) else pickMultiple.launch(request)
+    }
+
+    ComposerScaffold(
+        title = "编辑时光",
+        subtitle = if (isOwner) "可修改描述与媒体" else "仅可修改文字描述",
+        onClose = onClose,
+        actionEnabled = dirty && totalCount > 0,
+        actionLabel = "保存",
+        onAction = {
+            onSave(
+                caption,
+                if (isOwner && date != item.mediaDate) date else null,
+                newUris,
+                removedPartIds,
+            )
+        },
+        showTopAction = false,
+    ) { padding ->
+        Column(
+            Modifier
+                .fillMaxSize()
+                .padding(padding)
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 20.dp)
+                .padding(bottom = 24.dp),
+            verticalArrangement = Arrangement.spacedBy(18.dp),
+        ) {
+            if (totalCount == 0) {
+                Text("至少需要保留一张照片或视频", color = MaterialTheme.colorScheme.error)
+            } else {
+                val cells = buildList {
+                    keptAssets.forEach { add(it to null as Uri?) }
+                    newUris.forEach { add(null as MediaAssetPart? to it) }
+                }
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    cells.chunked(3).forEach { row ->
+                        Row(
+                            Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            row.forEach { (existing, newUri) ->
+                                val index = cells.indexOfFirst {
+                                    it.first?.assetId == existing?.assetId && it.second == newUri
+                                }
+                                val canRemove = when {
+                                    existing != null -> isOwner && totalCount > 1
+                                    else -> true
+                                }
+                                Box(
+                                    Modifier
+                                        .weight(1f)
+                                        .aspectRatio(1f)
+                                        .clip(RoundedCornerShape(16.dp))
+                                        .background(Blush)
+                                        .clickable { previewIndex = index },
+                                ) {
+                                    when {
+                                        newUri != null -> {
+                                            val isVideo = context.contentResolver.getType(newUri)
+                                                ?.startsWith("video/") == true
+                                            if (isVideo) {
+                                                AsyncImage(
+                                                    model = newUri,
+                                                    contentDescription = null,
+                                                    modifier = Modifier.fillMaxSize(),
+                                                    contentScale = ContentScale.Crop,
+                                                )
+                                                Icon(
+                                                    Icons.Rounded.PlayCircle,
+                                                    null,
+                                                    tint = Color.White,
+                                                    modifier = Modifier.align(Alignment.Center).size(28.dp),
+                                                )
+                                            } else {
+                                                AsyncImage(
+                                                    model = newUri,
+                                                    contentDescription = null,
+                                                    modifier = Modifier.fillMaxSize(),
+                                                    contentScale = ContentScale.Crop,
+                                                )
+                                            }
+                                        }
+                                        existing != null -> {
+                                            val url = existing.previewUrl
+                                            if (url.isNotBlank()) {
+                                                AsyncImage(
+                                                    model = listMediaImageRequest(context, url, existing.assetId),
+                                                    contentDescription = null,
+                                                    modifier = Modifier.fillMaxSize(),
+                                                    contentScale = ContentScale.Crop,
+                                                )
+                                            }
+                                            if (existing.type == MediaType.VIDEO) {
+                                                Icon(
+                                                    Icons.Rounded.PlayCircle,
+                                                    null,
+                                                    tint = Color.White,
+                                                    modifier = Modifier.align(Alignment.Center).size(28.dp),
+                                                )
+                                            }
+                                        }
+                                    }
+                                    if (canRemove) {
+                                        IconButton(
+                                            onClick = {
+                                                if (existing != null) {
+                                                    if (existing.id.isNotBlank()) {
+                                                        removedPartIds = removedPartIds + existing.id
+                                                    }
+                                                    keptAssets = keptAssets.filterNot {
+                                                        it.id == existing.id && it.assetId == existing.assetId
+                                                    }
+                                                } else if (newUri != null) {
+                                                    newUris = newUris.filterNot { it == newUri }
+                                                }
+                                            },
+                                            modifier = Modifier
+                                                .align(Alignment.TopEnd)
+                                                .size(28.dp),
+                                        ) {
+                                            Icon(
+                                                Icons.Rounded.Cancel,
+                                                "移除",
+                                                tint = Color.White,
+                                                modifier = Modifier
+                                                    .background(Color.Black.copy(alpha = 0.4f), CircleShape)
+                                                    .padding(2.dp)
+                                                    .size(16.dp),
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                            repeat(3 - row.size) { Spacer(Modifier.weight(1f)) }
+                        }
+                    }
+                }
+            }
+            if (remaining > 0) {
+                TextButton(
+                    onClick = ::openPicker,
+                    colors = ButtonDefaults.textButtonColors(contentColor = Rose),
+                ) {
+                    Icon(Icons.Rounded.AddPhotoAlternate, null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text("继续添加（还可 $remaining 项）")
+                }
+            }
+
+            SoftTextField(
+                value = caption,
+                onValueChange = { caption = it.take(200) },
+                label = "这一刻想说…",
+                placeholder = "写给这段时光的一句话",
+                singleLine = false,
+                minLines = 3,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            if (isOwner) {
+                LoverDateField(
+                    value = date,
+                    onValueChange = { date = it },
+                    label = "记录日期",
+                    maxDate = LocalDate.now(),
+                    modifier = Modifier.fillMaxWidth(),
+                    supportingText = "仅创建者可修改记录日期",
+                )
+            } else {
+                Surface(
+                    shape = RoundedCornerShape(22.dp),
+                    color = SoftSurface,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Row(
+                        Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 16.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                    ) {
+                        Text("记录日期", color = Stone)
+                        Text(date, color = DeepRose, fontWeight = FontWeight.Medium)
+                    }
+                }
+            }
+
+            if (isOwner) {
+                OutlinedButton(
+                    onClick = { confirmDelete = true },
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(22.dp),
+                    colors = ButtonDefaults.outlinedButtonColors(
+                        contentColor = MaterialTheme.colorScheme.error,
+                    ),
+                ) {
+                    Text("删除这段时光")
+                }
+            }
+        }
+    }
+
+    previewIndex?.let { index ->
+        val previewAssets = buildList {
+            keptAssets.forEach { part ->
+                add(
+                    part.copy(
+                        url = part.url.ifBlank { part.previewUrl },
+                    ),
+                )
+            }
+            newUris.forEachIndexed { i, uri ->
+                val isVideo = context.contentResolver.getType(uri)?.startsWith("video/") == true
+                add(
+                    MediaAssetPart(
+                        id = "new-$i",
+                        type = if (isVideo) MediaType.VIDEO else MediaType.IMAGE,
+                        assetId = "new-$i",
+                        url = uri.toString(),
+                        sortOrder = keptAssets.size + i,
+                    ),
+                )
+            }
+        }
+        MediaPreviewDialog(
+            assets = previewAssets,
+            initialIndex = index.coerceIn(0, previewAssets.lastIndex.coerceAtLeast(0)),
+            caption = caption,
+            mediaDate = date,
+            onDismiss = { previewIndex = null },
+        )
+    }
+
+    if (confirmDelete) {
+        AlertDialog(
+            onDismissRequest = { confirmDelete = false },
+            shape = RoundedCornerShape(28.dp),
+            containerColor = WarmBackground,
+            title = { Text("删除这段时光？") },
+            text = { Text("将删除整条时光及其中的全部照片/视频，确认删除吗？", color = Stone) },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        confirmDelete = false
+                        onDelete()
+                    },
+                    colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error),
+                ) { Text("删除") }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = { confirmDelete = false },
+                    colors = ButtonDefaults.textButtonColors(contentColor = Stone),
+                ) { Text("取消") }
+            },
         )
     }
 }

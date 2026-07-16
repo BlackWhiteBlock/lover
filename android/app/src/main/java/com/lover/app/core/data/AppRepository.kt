@@ -218,8 +218,11 @@ class AppRepository @Inject constructor(
         val bootstrapDeferred = async { runCatching { call { api.bootstrap() } }.getOrNull() }
         val coupleDeferred = async { runCatching { call { api.coupleSpace() } }.getOrNull() }
         val pendingDeferred = async { runCatching { call { api.pendingBinds() } }.getOrNull() }
+        val previous = tokenStore.snapshot
         val mediaDeferred = async {
-            runCatching { signMedia(call { api.media().items }) }.getOrDefault(emptyList())
+            runCatching {
+                signMedia(call { api.media().items }, previous.media)
+            }.getOrDefault(previous.media)
         }
         val anniversariesDeferred = async {
             runCatching { call { api.anniversaries().items } }.getOrDefault(emptyList())
@@ -241,7 +244,6 @@ class AppRepository @Inject constructor(
         }
 
         // pending == null 表示接口失败，保留本地；pending != null 则以服务端为准（含空列表）
-        val previous = tokenStore.snapshot
         val incoming = when {
             pending != null -> pending.incoming
             coupleBase != null -> coupleBase.pendingIncomingBinds
@@ -296,15 +298,57 @@ class AppRepository @Inject constructor(
         }
     }
 
-    private suspend fun signMedia(items: List<MediaItem>): List<MediaItem> = coroutineScope {
+    /** 仅刷新时光列表，保留已有缩略图签名，避免整页重载闪白 */
+    suspend fun refreshMedia() {
+        val previous = tokenStore.snapshot.media
+        val signed = runCatching {
+            signMedia(call { api.media().items }, previous)
+        }.getOrDefault(previous)
+        tokenStore.update { it.copy(media = signed) }
+    }
+
+    private suspend fun signMedia(
+        items: List<MediaItem>,
+        previous: List<MediaItem> = emptyList(),
+    ): List<MediaItem> = coroutineScope {
+        val previousById = previous.associateBy { it.id }
         items.map { item ->
             async {
-                val signedAssets = item.assets.map { part ->
-                    async { signAssetForList(part) }
-                }.awaitAll()
-                item.copy(assets = signedAssets)
+                val prev = previousById[item.id]
+                if (prev != null && canReuseSignedThumbs(item, prev)) {
+                    mergeSignedThumbs(item, prev)
+                } else {
+                    val signedAssets = item.assets.map { part ->
+                        async { signAssetForList(part) }
+                    }.awaitAll()
+                    item.copy(assets = signedAssets)
+                }
             }
         }.awaitAll()
+    }
+
+    private fun mediaAssetFingerprint(assets: List<MediaAssetPart>): List<String> =
+        assets.sortedBy { it.sortOrder }.map { part ->
+            "${part.id}:${part.assetId}:${part.type.name}:${part.sortOrder}"
+        }
+
+    private fun canReuseSignedThumbs(item: MediaItem, prev: MediaItem): Boolean {
+        if (mediaAssetFingerprint(item.assets) != mediaAssetFingerprint(prev.assets)) return false
+        return prev.assets.any { !it.thumbnailUrl.isNullOrBlank() }
+    }
+
+    private fun mergeSignedThumbs(item: MediaItem, prev: MediaItem): MediaItem {
+        val prevByPartId = prev.assets.filter { it.id.isNotBlank() }.associateBy { it.id }
+        val prevByAssetId = prev.assets.associateBy { it.assetId }
+        val merged = item.assets.map { part ->
+            val cached = prevByPartId[part.id] ?: prevByAssetId[part.assetId]
+            if (cached != null && !cached.thumbnailUrl.isNullOrBlank()) {
+                part.copy(url = cached.url, thumbnailUrl = cached.thumbnailUrl)
+            } else {
+                part
+            }
+        }
+        return item.copy(assets = merged)
     }
 
     /** 列表/掠影：只签缩略图，避免刷屏拉原图 */
@@ -362,7 +406,7 @@ class AppRepository @Inject constructor(
                 ),
             )
         }
-        refreshAll()
+        refreshMedia()
     }
 
     private suspend fun uploadMediaPart(uri: Uri): CreateMediaAssetRequest {
@@ -388,14 +432,31 @@ class AppRepository @Inject constructor(
         )
     }
 
-    suspend fun updateMedia(id: String, caption: String, date: String) {
-        call { api.updateMedia(id, UpdateMediaRequest(caption.trim(), date)) }
-        refreshAll()
+    suspend fun updateMedia(
+        id: String,
+        caption: String,
+        date: String? = null,
+        newUris: List<Uri> = emptyList(),
+        removedPartIds: List<String> = emptyList(),
+    ) {
+        val addAssets = newUris.map { uploadMediaPart(it) }
+        call {
+            api.updateMedia(
+                id,
+                UpdateMediaRequest(
+                    caption = caption.trim(),
+                    mediaDate = date,
+                    addAssets = addAssets.takeIf { it.isNotEmpty() },
+                    removeAssetPartIds = removedPartIds.takeIf { it.isNotEmpty() },
+                ),
+            )
+        }
+        refreshMedia()
     }
 
     suspend fun deleteMedia(id: String) {
         call { api.deleteMedia(id) }
-        refreshAll()
+        refreshMedia()
     }
 
     suspend fun addAnniversary(title: String, date: String, type: AnniversaryType) {

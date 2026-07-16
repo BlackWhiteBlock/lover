@@ -34,3 +34,15 @@ fun signedMediaImageRequest(
         .crossfade(crossfade)
         .build()
 }
+
+/** 时光列表/缩略图：稳定缓存键 + 无 crossfade，避免刷新时整页闪白 */
+fun listMediaImageRequest(
+    context: Context,
+    url: String,
+    assetId: String,
+): ImageRequest = signedMediaImageRequest(
+    context = context,
+    url = url,
+    cacheKey = "media-thumb-$assetId",
+    crossfade = false,
+)

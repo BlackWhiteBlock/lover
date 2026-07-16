@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import type { AppContext, AuthHandler } from '../types.js';
-import { badRequest, notFound } from '../errors.js';
+import { badRequest, forbidden, notFound } from '../errors.js';
 import { readableSpaceIds, writeSpaceId } from './spaces.js';
 
 const dateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
@@ -22,7 +22,12 @@ const mediaInput = z.object({
 const mediaUpdate = z.object({
   caption: z.string().trim().max(200).optional(),
   mediaDate: dateSchema.optional(),
-}).strict().refine((value) => Object.keys(value).length > 0);
+  addAssets: z.array(mediaAssetPart).max(9).optional(),
+  removeAssetPartIds: z.array(z.string().uuid()).optional(),
+}).strict().refine(
+  (value) => Object.keys(value).length > 0,
+  '至少提供一个更新字段',
+);
 const idParams = z.object({ id: z.string().uuid() }).strict();
 const pageQuery = z.object({
   cursor: z.string().datetime({ offset: true }).optional(),
@@ -115,16 +120,82 @@ export function registerMedia(app: FastifyInstance, context: AppContext, auth: A
     const input = mediaUpdate.parse(request.body);
     const current = await findMediaRow(context, spaceIds, id);
     if (!current) throw notFound('媒体记录不存在');
-    const caption = input.caption ?? current.caption;
-    const mediaDate = input.mediaDate ?? current.mediaDate;
-    const result = await db.query<MediaRow>(
-      `update media_items set caption = $3, media_date = $4, updated_at = now()
-       where id = $1 and space_id = any($2::uuid[]) and uploader_id = $5
-       returning id, caption, media_date as "mediaDate", uploader_id as "uploaderId", created_at as "createdAt"`,
-      [id, spaceIds, caption, mediaDate, request.user.id],
-    );
-    if (!result.rowCount) throw notFound('媒体记录不存在或无权编辑');
-    const hydrated = await hydrateMediaItems(context, result.rows);
+    const isUploader = current.uploaderId === request.user.id;
+    const needsUploader = input.mediaDate !== undefined
+      || (input.addAssets?.length ?? 0) > 0
+      || (input.removeAssetPartIds?.length ?? 0) > 0;
+    if (needsUploader && !isUploader) {
+      throw forbidden('仅创建者可修改日期或增删照片/视频');
+    }
+
+    const target = await writeSpaceId(context, request.user.id);
+
+    await db.transaction(async (client) => {
+      if (input.caption !== undefined) {
+        await client.query(
+          `update media_items set caption = $2, updated_at = now() where id = $1`,
+          [id, input.caption],
+        );
+      }
+      if (input.mediaDate !== undefined) {
+        await client.query(
+          `update media_items set media_date = $2, updated_at = now()
+           where id = $1 and uploader_id = $3`,
+          [id, input.mediaDate, request.user.id],
+        );
+      }
+      if (input.removeAssetPartIds?.length) {
+        const existing = await client.query<{ id: string }>(
+          `select id from media_item_assets where media_item_id = $1`,
+          [id],
+        );
+        const allowed = new Set(existing.rows.map((row) => row.id));
+        for (const partId of input.removeAssetPartIds) {
+          if (!allowed.has(partId)) throw badRequest('INVALID_ASSET_PART', '媒体片段不存在');
+        }
+        const remaining = existing.rows.length - input.removeAssetPartIds.length
+          + (input.addAssets?.length ?? 0);
+        if (remaining < 1) {
+          throw badRequest('MIN_ASSETS', '至少需要保留一张照片或视频');
+        }
+        await client.query(
+          `delete from media_item_assets
+           where media_item_id = $1 and id = any($2::uuid[])`,
+          [id, input.removeAssetPartIds],
+        );
+      }
+      if (input.addAssets?.length) {
+        const count = await client.query<{ count: string }>(
+          `select count(*)::text as count from media_item_assets where media_item_id = $1`,
+          [id],
+        );
+        const currentCount = Number(count.rows[0]?.count ?? 0);
+        const removed = input.removeAssetPartIds?.length ?? 0;
+        const nextCount = currentCount - removed + input.addAssets.length;
+        if (nextCount > 9) throw badRequest('TOO_MANY_ASSETS', '每条时光最多 9 个媒体');
+        await assertReadyAssets(
+          context,
+          target.spaceId,
+          input.addAssets.flatMap((part) => [part.assetId, part.thumbnailAssetId]),
+        );
+        const maxOrder = await client.query<{ max: number | null }>(
+          `select max(sort_order) as max from media_item_assets where media_item_id = $1`,
+          [id],
+        );
+        let sortOrder = (maxOrder.rows[0]?.max ?? -1) + 1;
+        for (const part of input.addAssets) {
+          await client.query(
+            `insert into media_item_assets(media_item_id, sort_order, type, asset_id, thumbnail_asset_id)
+             values ($1, $2, $3, $4, $5)`,
+            [id, sortOrder++, part.type, part.assetId, part.thumbnailAssetId ?? null],
+          );
+        }
+      }
+    });
+
+    const refreshed = await findMediaRow(context, spaceIds, id);
+    if (!refreshed) throw notFound('媒体记录不存在');
+    const hydrated = await hydrateMediaItems(context, [refreshed]);
     return hydrated[0];
   });
 

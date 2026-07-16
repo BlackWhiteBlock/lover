@@ -14,7 +14,6 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -29,27 +28,21 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.Close
-import androidx.compose.material.icons.rounded.Delete
+import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.PlayCircle
 import androidx.compose.material.icons.rounded.Videocam
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -69,37 +62,29 @@ import androidx.media3.ui.PlayerView
 import coil.compose.AsyncImage
 import com.lover.app.core.design.Blush
 import com.lover.app.core.design.DeepRose
-import com.lover.app.core.design.LoverDateField
 import com.lover.app.core.design.Peach
 import com.lover.app.core.design.Rose
-import com.lover.app.core.design.SoftOutline
 import com.lover.app.core.design.SoftSurface
-import com.lover.app.core.design.SoftTextField
 import com.lover.app.core.design.Stone
 import com.lover.app.core.design.WarmBackground
+import com.lover.app.core.media.listMediaImageRequest
 import com.lover.app.core.model.CoupleMember
 import com.lover.app.core.model.MediaAssetPart
 import com.lover.app.core.model.MediaItem
 import com.lover.app.core.model.MediaType
-import java.time.LocalDate
 
 @Composable
 fun MediaDetailScreen(
     item: MediaItem,
     members: List<CoupleMember>,
     onClose: () -> Unit,
-    onSave: (caption: String, date: String) -> Unit,
-    onDelete: () -> Unit,
+    onEdit: () -> Unit,
 ) {
     BackHandler(onBack = onClose)
-    var caption by rememberSaveable(item.id) { mutableStateOf(item.caption) }
-    var date by rememberSaveable(item.id) { mutableStateOf(item.mediaDate) }
     var previewIndex by remember { mutableStateOf<Int?>(null) }
-    var confirmDelete by remember { mutableStateOf(false) }
     val assets = item.assets.sortedBy { it.sortOrder }
     val uploaderName = members.firstOrNull { it.id == item.uploaderId }?.nickname
         ?: if (item.uploaderId.isNullOrBlank()) "我们" else "TA"
-    val dirty = caption.trim() != item.caption.trim() || date != item.mediaDate
     val typeLabel = when {
         assets.isEmpty() -> "空"
         assets.size == 1 && assets.first().type == MediaType.VIDEO -> "视频"
@@ -130,29 +115,9 @@ fun MediaDetailScreen(
                         Text("时光详情", style = MaterialTheme.typography.titleLarge, color = DeepRose)
                         Text("$typeLabel · $uploaderName", style = MaterialTheme.typography.labelSmall, color = Stone)
                     }
-                    IconButton(onClick = { confirmDelete = true }) {
-                        Icon(Icons.Rounded.Delete, "删除", tint = MaterialTheme.colorScheme.error)
+                    IconButton(onClick = onEdit) {
+                        Icon(Icons.Rounded.Edit, "编辑", tint = DeepRose.copy(alpha = 0.85f))
                     }
-                }
-            }
-        },
-        bottomBar = {
-            Surface(color = WarmBackground.copy(alpha = 0.96f)) {
-                Button(
-                    onClick = { onSave(caption, date) },
-                    enabled = dirty,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .navigationBarsPadding()
-                        .padding(horizontal = 20.dp, vertical = 14.dp)
-                        .height(52.dp),
-                    shape = RoundedCornerShape(22.dp),
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = Rose,
-                        disabledContainerColor = SoftOutline,
-                    ),
-                ) {
-                    Text(if (dirty) "保存修改" else "未修改")
                 }
             }
         },
@@ -163,7 +128,7 @@ fun MediaDetailScreen(
                 .padding(padding)
                 .verticalScroll(rememberScrollState())
                 .padding(horizontal = 20.dp)
-                .padding(bottom = 16.dp),
+                .padding(bottom = 24.dp),
             verticalArrangement = Arrangement.spacedBy(18.dp),
         ) {
             if (assets.size <= 1) {
@@ -214,23 +179,16 @@ fun MediaDetailScreen(
                 Text("左右滑动查看，点击可全屏预览", style = MaterialTheme.typography.labelSmall, color = Stone)
             }
 
-            SoftTextField(
-                value = caption,
-                onValueChange = { caption = it.take(200) },
-                label = "这一刻想说…",
-                placeholder = "写给这段时光的一句话",
-                singleLine = false,
-                minLines = 3,
-                modifier = Modifier.fillMaxWidth(),
-            )
-            LoverDateField(
-                value = date,
-                onValueChange = { date = it },
-                label = "记录日期",
-                maxDate = LocalDate.now(),
-                modifier = Modifier.fillMaxWidth(),
-                supportingText = "会作为这段回忆的日期标记",
-            )
+            if (item.caption.isNotBlank()) {
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text("这一刻想说…", style = MaterialTheme.typography.labelMedium, color = Stone)
+                    Text(
+                        item.caption,
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = DeepRose,
+                    )
+                }
+            }
 
             Surface(
                 shape = RoundedCornerShape(22.dp),
@@ -238,21 +196,11 @@ fun MediaDetailScreen(
                 modifier = Modifier.fillMaxWidth(),
             ) {
                 Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    DetailMetaRow("记录日期", item.mediaDate)
                     DetailMetaRow("媒体", typeLabel)
                     DetailMetaRow("上传者", uploaderName)
                     DetailMetaRow("添加于", item.createdAt.take(10).ifBlank { "—" })
                 }
-            }
-
-            OutlinedButton(
-                onClick = { confirmDelete = true },
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(22.dp),
-                colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error),
-            ) {
-                Icon(Icons.Rounded.Delete, null, modifier = Modifier.size(18.dp))
-                Spacer(Modifier.size(8.dp))
-                Text("删除这段时光")
             }
         }
     }
@@ -266,30 +214,6 @@ fun MediaDetailScreen(
             onDismiss = { previewIndex = null },
         )
     }
-    if (confirmDelete) {
-        AlertDialog(
-            onDismissRequest = { confirmDelete = false },
-            shape = RoundedCornerShape(28.dp),
-            containerColor = WarmBackground,
-            title = { Text("删除这段时光？") },
-            text = { Text("将删除整条时光及其中的全部照片/视频，确认删除吗？", color = Stone) },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        confirmDelete = false
-                        onDelete()
-                    },
-                    colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error),
-                ) { Text("删除") }
-            },
-            dismissButton = {
-                TextButton(
-                    onClick = { confirmDelete = false },
-                    colors = ButtonDefaults.textButtonColors(contentColor = Stone),
-                ) { Text("取消") }
-            },
-        )
-    }
 }
 
 @Composable
@@ -298,6 +222,7 @@ private fun MediaAssetThumb(
     modifier: Modifier = Modifier,
     showHint: Boolean,
 ) {
+    val context = LocalContext.current
     Box(
         modifier
             .clip(RoundedCornerShape(28.dp))
@@ -315,12 +240,15 @@ private fun MediaAssetThumb(
                 }
             }
             else -> {
-                AsyncImage(
-                    model = asset.previewUrl,
-                    contentDescription = null,
-                    contentScale = ContentScale.Crop,
-                    modifier = Modifier.fillMaxSize(),
-                )
+                val url = asset.previewUrl
+                if (url.isNotBlank()) {
+                    AsyncImage(
+                        model = listMediaImageRequest(context, url, asset.assetId),
+                        contentDescription = null,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                }
             }
         }
         if (asset?.type == MediaType.VIDEO) {
@@ -333,7 +261,7 @@ private fun MediaAssetThumb(
         }
         if (showHint && asset != null) {
             Text(
-                if (asset.type == MediaType.VIDEO) "点击播放" else "点击查看原图",
+                if (asset.type == MediaType.VIDEO) "点击播放" else "点击查看",
                 color = Color.White,
                 style = MaterialTheme.typography.labelSmall,
                 modifier = Modifier
@@ -378,11 +306,13 @@ fun MediaPreviewDialog(
             ) { page ->
                 val asset = assets[page]
                 if (asset.type == MediaType.VIDEO) {
-                    VideoPreviewPage(url = asset.url)
+                    VideoPreviewPage(url = asset.url.ifBlank { asset.previewUrl })
                 } else {
+                    val context = LocalContext.current
+                    val url = asset.url.ifBlank { asset.previewUrl }
                     AsyncImage(
-                        asset.url,
-                        caption,
+                        model = listMediaImageRequest(context, url, "${asset.assetId}-full"),
+                        contentDescription = caption,
                         Modifier
                             .fillMaxSize()
                             .clickable(onClick = onDismiss),

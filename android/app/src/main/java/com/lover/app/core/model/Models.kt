@@ -305,6 +305,8 @@ data class AppState(
 @Serializable data class UpdateMediaRequest(
     val caption: String? = null,
     val mediaDate: String? = null,
+    val addAssets: List<CreateMediaAssetRequest>? = null,
+    val removeAssetPartIds: List<String>? = null,
 )
 @Serializable data class CreateAnniversaryRequest(
     val title: String,

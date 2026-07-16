@@ -187,10 +187,16 @@ class MainViewModel @Inject constructor(
         }
     }
 
-    fun updateMedia(id: String, caption: String, date: String) = launchAction("已更新") {
+    fun updateMedia(
+        id: String,
+        caption: String,
+        date: String? = null,
+        newUris: List<Uri> = emptyList(),
+        removedPartIds: List<String> = emptyList(),
+    ) = launchAction("已保存") {
         requireSpace()
-        LocalDate.parse(date)
-        repository.updateMedia(id, caption, date)
+        date?.let { LocalDate.parse(it) }
+        repository.updateMedia(id, caption, date, newUris, removedPartIds)
     }
 
     fun deleteMedia(id: String) = launchAction("已删除") {

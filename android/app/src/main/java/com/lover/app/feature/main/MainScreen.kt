@@ -61,6 +61,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.DialogProperties
 import coil.compose.AsyncImage
 import com.lover.app.core.design.*
+import com.lover.app.core.media.listMediaImageRequest
 import com.lover.app.core.media.signedMediaImageRequest
 import com.lover.app.core.model.*
 
@@ -75,12 +76,14 @@ fun MainScreen(viewModel: MainViewModel) {
     val pendingUploads by viewModel.pendingMediaUploads.collectAsState()
     var editor by remember { mutableStateOf<Editor?>(null) }
     var mediaDetail by remember { mutableStateOf<MediaItem?>(null) }
+    var mediaEdit by remember { mutableStateOf<MediaItem?>(null) }
     var letterDetail by remember { mutableStateOf<Letter?>(null) }
     // 按用户区分；不持久化，避免换号/重新登录后弹窗被永久抑制
     var postponedBindIds by remember(state.user?.id) { mutableStateOf(listOf<String>()) }
     val composing = editor != null
     val mediaDetailOpen = mediaDetail != null
-    val overlayOpen = composing || mediaDetailOpen
+    val mediaEditOpen = mediaEdit != null
+    val overlayOpen = composing || mediaDetailOpen || mediaEditOpen
     val incomingBind = remember(state.pendingIncomingBinds, state.couple?.pendingIncomingBinds, state.linked) {
         if (state.linked) {
             null
@@ -214,10 +217,17 @@ fun MainScreen(viewModel: MainViewModel) {
         ) {
             val current = mediaDetail
             if (current != null) {
-                // 列表刷新可能只带缩略图；保留当前详情里已签发的原图 URL
                 val cached = state.media.firstOrNull { it.id == current.id }
                 val live = if (cached != null) {
-                    current.copy(caption = cached.caption, mediaDate = cached.mediaDate)
+                    current.copy(
+                        caption = cached.caption,
+                        mediaDate = cached.mediaDate,
+                        assets = if (current.assets.any { it.url.isNotBlank() }) {
+                            current.assets
+                        } else {
+                            cached.assets
+                        },
+                    )
                 } else {
                     current
                 }
@@ -225,13 +235,39 @@ fun MainScreen(viewModel: MainViewModel) {
                     item = live,
                     members = state.couple?.members.orEmpty(),
                     onClose = { mediaDetail = null },
-                    onSave = { caption, date ->
-                        viewModel.updateMedia(live.id, caption, date)
+                    onEdit = {
                         mediaDetail = null
+                        mediaEdit = live
+                    },
+                )
+            }
+        }
+
+        AnimatedVisibility(
+            visible = mediaEditOpen,
+            enter = fadeIn(tween(280)) + slideInVertically(tween(320)) { it / 10 },
+            exit = fadeOut(tween(180)) + slideOutVertically(tween(220)) { it / 12 },
+        ) {
+            val editing = mediaEdit
+            if (editing != null) {
+                val cached = state.media.firstOrNull { it.id == editing.id } ?: editing
+                MediaEditScreen(
+                    item = cached,
+                    currentUserId = state.user?.id,
+                    onClose = { mediaEdit = null },
+                    onSave = { caption, date, newUris, removedPartIds ->
+                        viewModel.updateMedia(
+                            id = cached.id,
+                            caption = caption,
+                            date = date,
+                            newUris = newUris,
+                            removedPartIds = removedPartIds,
+                        )
+                        mediaEdit = null
                     },
                     onDelete = {
-                        viewModel.deleteMedia(live.id)
-                        mediaDetail = null
+                        viewModel.deleteMedia(cached.id)
+                        mediaEdit = null
                     },
                 )
             }
@@ -586,13 +622,19 @@ private fun UploadingMediaCard(pending: PendingMediaUpload) {
 
 @Composable
 private fun MediaImage(item: MediaItem, modifier: Modifier = Modifier) {
+    val context = LocalContext.current
+    val cover = item.cover
+    val thumbUrl = item.thumbnailUrl ?: item.url
+    val cacheKey = cover?.assetId?.let { "media-thumb-$it" }
     Box(modifier.clip(RoundedCornerShape(26.dp)).background(Blush)) {
-        AsyncImage(
-            model = item.thumbnailUrl ?: item.url,
-            contentDescription = item.caption,
-            contentScale = ContentScale.Crop,
-            modifier = Modifier.fillMaxSize(),
-        )
+        if (!thumbUrl.isNullOrBlank() && cacheKey != null) {
+            AsyncImage(
+                model = listMediaImageRequest(context, thumbUrl, cover!!.assetId),
+                contentDescription = item.caption,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize(),
+            )
+        }
         Box(
             Modifier.align(Alignment.BottomCenter).fillMaxWidth()
                 .background(Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(alpha = .58f))))
