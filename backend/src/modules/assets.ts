@@ -21,9 +21,14 @@ import {
 
 const allowedMime = new Set([
   'image/jpeg', 'image/png', 'image/webp', 'image/heic',
-  'video/mp4', 'video/quicktime',
+  'video/mp4', 'video/quicktime', 'video/3gpp', 'video/3gpp2',
+  'video/webm', 'video/x-matroska',
 ]);
 const avatarMime = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/heic']);
+/** 申请大小与实际上传之间允许的偏差（部分机型 MediaStore 报的 size 不准） */
+const SIZE_TOLERANCE_RATIO = 0.02;
+const SIZE_TOLERANCE_MIN_BYTES = 256 * 1024;
+
 const tokenSchema = z.object({
   fileName: z.string().trim().min(1).max(200),
   mimeType: z.string().refine((value) => allowedMime.has(value), '不支持的媒体类型'),
@@ -51,14 +56,34 @@ export interface AssetVerificationRecord {
   mimeType: string;
 }
 
+export function sizeToleranceBytes(expectedSize: number): number {
+  return Math.max(SIZE_TOLERANCE_MIN_BYTES, Math.ceil(expectedSize * SIZE_TOLERANCE_RATIO));
+}
+
+export function sizeWithinTolerance(expectedSize: number, actualSize: number): boolean {
+  return Math.abs(actualSize - expectedSize) <= sizeToleranceBytes(expectedSize);
+}
+
+export function mimeCompatible(expected: string, actual: string | undefined): boolean {
+  if (!actual) return true;
+  if (expected === actual) return true;
+  // 华为等机型常把 mp4 报成 3gpp，七牛 detectMime 也可能与客户端不一致
+  if (expected.startsWith('video/') && actual.startsWith('video/')) return true;
+  if (
+    (expected === 'image/jpeg' || expected === 'image/jpg')
+    && (actual === 'image/jpeg' || actual === 'image/jpg')
+  ) return true;
+  return false;
+}
+
 export function validateStoredObject(
   asset: AssetVerificationRecord,
   stat: StoredObjectInfo,
 ) {
-  if (stat.sizeBytes !== asset.expectedSize) {
+  if (!sizeWithinTolerance(asset.expectedSize, stat.sizeBytes)) {
     throw badRequest('SIZE_MISMATCH', '存储对象大小与申请不一致');
   }
-  if (asset.provider === 'qiniu' && stat.mimeType !== asset.mimeType) {
+  if (asset.provider === 'qiniu' && !mimeCompatible(asset.mimeType, stat.mimeType)) {
     throw badRequest('MIME_MISMATCH', '存储对象 MIME 与申请不一致');
   }
 }
@@ -115,13 +140,16 @@ export function registerAssets(app: FastifyInstance, context: AppContext, auth: 
     if (!asset.rows[0] || asset.rows[0].status !== 'pending') throw forbidden();
     const part = await request.file();
     if (!part) throw badRequest('FILE_REQUIRED', '缺少上传文件');
-    if (part.mimetype !== asset.rows[0].mime_type) throw badRequest('MIME_MISMATCH', '文件类型不匹配');
+    if (!mimeCompatible(asset.rows[0].mime_type, part.mimetype)) {
+      throw badRequest('MIME_MISMATCH', '文件类型不匹配');
+    }
     const target = resolveLocalObjectPath(config.storage.dir, claims.objectKey);
     await fs.mkdir(path.dirname(target), { recursive: true });
     try {
       await pipeline(part.file, createWriteStream(target, { flags: 'wx' }));
       const stat = await fs.stat(target);
-      if (stat.size !== Number(asset.rows[0].expected_size)) {
+      const expected = Number(asset.rows[0].expected_size);
+      if (!sizeWithinTolerance(expected, stat.size)) {
         await fs.unlink(target);
         throw badRequest('SIZE_MISMATCH', '文件大小与申请不一致');
       }

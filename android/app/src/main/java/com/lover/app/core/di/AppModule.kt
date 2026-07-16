@@ -45,7 +45,14 @@ object AppModule {
     @Provides
     @Singleton
     @Named("asset-upload")
-    fun assetUploadClient(): OkHttpClient = OkHttpClients.builder().build()
+    fun assetUploadClient(): OkHttpClient =
+        OkHttpClients.builder()
+            // 视频直传体积大，默认 30s 写超时会误报失败
+            .connectTimeout(30, java.util.concurrent.TimeUnit.SECONDS)
+            .readTimeout(15, java.util.concurrent.TimeUnit.MINUTES)
+            .writeTimeout(15, java.util.concurrent.TimeUnit.MINUTES)
+            .callTimeout(20, java.util.concurrent.TimeUnit.MINUTES)
+            .build()
 
     @Provides
     @Singleton

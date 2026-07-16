@@ -78,6 +78,7 @@ import com.lover.app.core.design.Stone
 import com.lover.app.core.design.WarmBackground
 import com.lover.app.core.data.AppRepository
 import com.lover.app.core.media.MediaTakenDateReader
+import com.lover.app.core.media.isLocalVideoUri
 import com.lover.app.core.model.AnniversaryType
 import com.lover.app.core.model.LetterType
 import com.lover.app.core.model.MediaAssetPart
@@ -379,7 +380,7 @@ fun MediaComposeScreen(
 
     previewIndex?.let { index ->
         val assets = uris.mapIndexed { i, uri ->
-            val isVideo = context.contentResolver.getType(uri)?.startsWith("video/") == true
+            val isVideo = isLocalVideoUri(context, uri)
             MediaAssetPart(
                 id = "local-$i",
                 type = if (isVideo) MediaType.VIDEO else MediaType.IMAGE,
@@ -580,8 +581,7 @@ fun MediaEditScreen(
                     sortOrder = i,
                 )
                 is MediaDraftCell.Local -> {
-                    val isVideo = context.contentResolver.getType(cell.uri)
-                        ?.startsWith("video/") == true
+                    val isVideo = isLocalVideoUri(context, cell.uri)
                     MediaAssetPart(
                         id = "new-$i",
                         type = if (isVideo) MediaType.VIDEO else MediaType.IMAGE,

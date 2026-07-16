@@ -41,7 +41,7 @@ test('provider factory selects local or qiniu', () => {
   assert.equal(createStorageProvider(qiniuConfig).name, 'qiniu');
 });
 
-test('qiniu upload policy pins exact bucket:key, insert-only key, size, and MIME', async () => {
+test('qiniu upload policy pins bucket:key, insert-only key, and tolerates size/MIME drift', async () => {
   const provider = new QiniuStorageProvider(qiniuConfig);
   const objectKey = `couples/${spaceId}/2026-07/file.jpg`;
   const grant = await provider.createUploadGrant({
@@ -57,11 +57,23 @@ test('qiniu upload policy pins exact bucket:key, insert-only key, size, and MIME
   assert.equal(policy.insertOnly, 1);
   assert.equal(policy.forceSaveKey, true);
   assert.equal(policy.saveKey, objectKey);
-  assert.equal(policy.fsizeMin, 12345);
-  assert.equal(policy.fsizeLimit, 12345);
+  assert.ok(policy.fsizeMin <= 12345);
+  assert.ok(policy.fsizeLimit >= 12345);
   assert.equal(policy.mimeLimit, 'image/jpeg');
   assert.equal('endUser' in policy, false);
   assert.deepEqual(grant.uploadFields, { key: objectKey });
+
+  const videoGrant = await provider.createUploadGrant({
+    assetId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+    objectKey: `couples/${spaceId}/2026-07/clip.mp4`,
+    mimeType: 'video/mp4',
+    sizeBytes: 5_000_000,
+  });
+  const videoPolicy = JSON.parse(
+    Buffer.from(videoGrant.uploadToken.split(':')[2]!, 'base64url').toString('utf8'),
+  );
+  assert.match(videoPolicy.mimeLimit, /video\/3gpp/);
+  assert.ok(videoPolicy.fsizeLimit > 5_000_000);
 });
 
 test('qiniu stat uses guaranteed size and MIME fields without requiring endUser', async () => {
@@ -101,14 +113,20 @@ test('completion validation rejects qiniu size and MIME mismatches', () => {
   const asset = { provider: 'qiniu' as const, expectedSize: 99, mimeType: 'image/jpeg' };
   const valid = { sizeBytes: 99, mimeType: 'image/jpeg' };
   assert.doesNotThrow(() => validateStoredObject(asset, valid));
+  // 小文件也有最小容差（256KB），99 vs 100 应通过
+  assert.doesNotThrow(() => validateStoredObject(asset, { ...valid, sizeBytes: 100 }));
   assert.throws(
-    () => validateStoredObject(asset, { ...valid, sizeBytes: 100 }),
+    () => validateStoredObject(asset, { ...valid, sizeBytes: 99 + 256 * 1024 + 1 }),
     (error: any) => error.code === 'SIZE_MISMATCH',
   );
   assert.throws(
     () => validateStoredObject(asset, { ...valid, mimeType: 'image/png' }),
     (error: any) => error.code === 'MIME_MISMATCH',
   );
+  assert.doesNotThrow(() => validateStoredObject(
+    { provider: 'qiniu', expectedSize: 5_000_000, mimeType: 'video/mp4' },
+    { sizeBytes: 5_000_000, mimeType: 'video/3gpp' },
+  ));
 });
 
 test('local completion retains size validation', () => {

@@ -76,6 +76,15 @@ class AssetUploader @Inject constructor(
         root["error"]?.let { error ->
             runCatching { error.jsonObject["message"]?.jsonPrimitive?.content }.getOrNull()
                 ?: runCatching { error.jsonPrimitive.content }.getOrNull()
+        } ?: root["message"]?.jsonPrimitive?.content
+    }.getOrNull()?.takeIf { it.isNotBlank() }?.let { message ->
+        when {
+            message.contains("size", ignoreCase = true) ||
+                message.contains("fsize", ignoreCase = true) ->
+                "视频大小校验失败，请重试或换一段较短视频"
+            message.contains("mime", ignoreCase = true) ->
+                "不支持该视频格式，请转换为常见 MP4 后再试"
+            else -> message
         }
-    }.getOrNull()
+    }
 }

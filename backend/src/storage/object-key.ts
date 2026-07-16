@@ -32,8 +32,12 @@ function fileExtension(name: string, mime: string) {
     'image/png': ['png'],
     'image/webp': ['webp'],
     'image/heic': ['heic'],
-    'video/mp4': ['mp4'],
-    'video/quicktime': ['mov'],
+    'video/mp4': ['mp4', 'm4v'],
+    'video/quicktime': ['mov', 'qt'],
+    'video/3gpp': ['3gp', '3gpp'],
+    'video/3gpp2': ['3g2', '3gpp2'],
+    'video/webm': ['webm'],
+    'video/x-matroska': ['mkv'],
   };
   const choices = allowed[mime];
   if (!choices) throw new Error('Unsupported MIME type');

@@ -46,8 +46,9 @@ import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
 import com.lover.app.core.design.Blush
-import com.lover.app.core.design.Peach
 import com.lover.app.core.design.Rose
+import com.lover.app.core.media.LocalMediaThumb
+import com.lover.app.core.media.isLocalVideoUri
 import com.lover.app.core.media.listMediaImageRequest
 import com.lover.app.core.model.MediaAssetPart
 import com.lover.app.core.model.MediaType
@@ -120,8 +121,7 @@ internal fun ReorderableMediaDraftGrid(
                         label = "mediaDragScale",
                     )
                     val isVideo = when (cell) {
-                        is MediaDraftCell.Local ->
-                            context.contentResolver.getType(cell.uri)?.startsWith("video/") == true
+                        is MediaDraftCell.Local -> isLocalVideoUri(context, cell.uri)
                         is MediaDraftCell.Remote -> cell.part.type == MediaType.VIDEO
                     }
                     Box(
@@ -145,32 +145,11 @@ internal fun ReorderableMediaDraftGrid(
                     ) {
                         when (cell) {
                             is MediaDraftCell.Local -> {
-                                if (isVideo) {
-                                    Box(
-                                        Modifier.fillMaxSize().background(Peach.copy(alpha = 0.45f)),
-                                        contentAlignment = Alignment.Center,
-                                    ) {
-                                        AsyncImage(
-                                            model = cell.uri,
-                                            contentDescription = null,
-                                            modifier = Modifier.fillMaxSize(),
-                                            contentScale = ContentScale.Crop,
-                                        )
-                                        Icon(
-                                            Icons.Rounded.PlayCircle,
-                                            null,
-                                            tint = Color.White,
-                                            modifier = Modifier.size(28.dp),
-                                        )
-                                    }
-                                } else {
-                                    AsyncImage(
-                                        model = cell.uri,
-                                        contentDescription = null,
-                                        modifier = Modifier.fillMaxSize(),
-                                        contentScale = ContentScale.Crop,
-                                    )
-                                }
+                                LocalMediaThumb(
+                                    uri = cell.uri,
+                                    modifier = Modifier.fillMaxSize(),
+                                    showVideoBadge = isVideo,
+                                )
                             }
                             is MediaDraftCell.Remote -> {
                                 val url = cell.part.previewUrl

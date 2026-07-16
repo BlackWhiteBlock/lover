@@ -32,10 +32,12 @@ class MediaUploadSupportTest {
     fun `media policy distinguishes image and video limits`() {
         val image = MediaUploadPolicy.forMimeType("image/jpeg")
         val video = MediaUploadPolicy.forMimeType("video/mp4")
+        val huaweiVideo = MediaUploadPolicy.forMimeType("video/3gpp")
 
         assertFalse(image.isVideo)
         assertEquals(30L * 1024 * 1024, image.maxBytes)
         assertTrue(video.isVideo)
+        assertTrue(huaweiVideo.isVideo)
         assertEquals(200L * 1024 * 1024, video.maxBytes)
     }
 

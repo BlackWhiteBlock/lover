@@ -23,12 +23,23 @@ class VideoThumbnailExtractor @Inject constructor(
             val durationMs = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)
                 ?.toLongOrNull()
                 ?: 0L
-            retriever.getFrameAtTime(
-                (durationMs / 2) * 1_000,
-                MediaMetadataRetriever.OPTION_CLOSEST_SYNC,
-            ) ?: retriever.frameAtTime
+            val candidates = buildList {
+                if (durationMs > 0L) {
+                    add((durationMs.coerceAtMost(1_000L)) * 1_000)
+                    add((durationMs / 2) * 1_000)
+                    add(0L)
+                } else {
+                    add(0L)
+                    add(1_000_000L)
+                }
+            }
+            candidates.firstNotNullOfOrNull { atUs ->
+                retriever.getFrameAtTime(atUs, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
+            } ?: retriever.frameAtTime
+        } catch (error: RuntimeException) {
+            throw IllegalArgumentException("无法从视频提取封面，请选择其他视频", error)
         } finally {
-            retriever.release()
+            runCatching { retriever.release() }
         } ?: throw IllegalArgumentException("无法从视频提取封面，请选择其他视频")
 
         val scaled = scaleDown(frame, 1280)
