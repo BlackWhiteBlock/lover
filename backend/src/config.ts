@@ -41,8 +41,20 @@ const envSchema = z.object({
 
 export type Config = ReturnType<typeof loadConfig>;
 
+/**
+ * 兼容误写的 STORAGE_DRIVER（历史/其他项目习惯）。
+ * 正式变量名为 STORAGE_PROVIDER；仅当未设置 PROVIDER 时回退到 DRIVER。
+ */
+export function normalizeStorageEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const provider = env.STORAGE_PROVIDER?.trim();
+  const driver = env.STORAGE_DRIVER?.trim();
+  if (provider) return env;
+  if (!driver) return env;
+  return { ...env, STORAGE_PROVIDER: driver };
+}
+
 export function loadConfig(env: NodeJS.ProcessEnv = process.env) {
-  const value = envSchema.parse(env);
+  const value = envSchema.parse(normalizeStorageEnv(env));
   const qiniuMissing: string[] = [];
   if (value.STORAGE_PROVIDER === 'qiniu') {
     if (!value.QINIU_ACCESS_KEY) qiniuMissing.push('QINIU_ACCESS_KEY');

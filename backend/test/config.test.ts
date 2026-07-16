@@ -41,3 +41,24 @@ test('complete production qiniu configuration is accepted and normalized', () =>
   assert.equal(config.storage.qiniu.uploadUrl, 'https://upload.qiniup.com');
   assert.equal(config.storage.qiniu.downloadDomain, 'https://private.example.com');
 });
+
+test('STORAGE_DRIVER is accepted as alias when STORAGE_PROVIDER is unset', () => {
+  const config = loadConfig({
+    NODE_ENV: 'test',
+    STORAGE_DRIVER: 'qiniu',
+    QINIU_ACCESS_KEY: 'qiniu-access',
+    QINIU_SECRET_KEY: 'qiniu-secret',
+    QINIU_BUCKET: 'lover-private',
+    QINIU_DOWNLOAD_DOMAIN: 'https://private.example.com',
+  });
+  assert.equal(config.storage.provider, 'qiniu');
+});
+
+test('STORAGE_PROVIDER wins over STORAGE_DRIVER when both are set', () => {
+  const config = loadConfig({
+    NODE_ENV: 'development',
+    STORAGE_PROVIDER: 'local',
+    STORAGE_DRIVER: 'qiniu',
+  });
+  assert.equal(config.storage.provider, 'local');
+});

@@ -12,7 +12,8 @@
     "test": "node --import tsx --test test/*.test.ts",
     "build": "tsc",
     "start": "node dist/src/server.js",
-    "db:migrate": "tsx scripts/migrate.ts"
+    "db:migrate": "tsx scripts/migrate.ts",
+    "storage:migrate-local-to-qiniu": "tsx scripts/migrate-local-to-qiniu.ts"
   },
   "dependencies": {
     "@alicloud/dysmsapi20170525": "^4.6.0",
