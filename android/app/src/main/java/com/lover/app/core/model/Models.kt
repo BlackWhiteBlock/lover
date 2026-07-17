@@ -16,6 +16,8 @@ data class User(
     val birthday: String? = null,
     val profileCompleted: Boolean = false,
     val personalSpaceId: String? = null,
+    /** 注册时间（ISO）；单身模式「等待天数」据此计算 */
+    val createdAt: String? = null,
 )
 
 @Serializable

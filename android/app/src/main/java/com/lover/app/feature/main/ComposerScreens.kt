@@ -66,16 +66,9 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
-import com.lover.app.core.design.Blush
-import com.lover.app.core.design.DeepRose
+import com.lover.app.core.design.LocalMood
 import com.lover.app.core.design.LoverDateField
-import com.lover.app.core.design.Peach
-import com.lover.app.core.design.Rose
-import com.lover.app.core.design.SoftOutline
-import com.lover.app.core.design.SoftSurface
 import com.lover.app.core.design.SoftTextField
-import com.lover.app.core.design.Stone
-import com.lover.app.core.design.WarmBackground
 import com.lover.app.core.data.AppRepository
 import com.lover.app.core.media.MediaTakenDateReader
 import com.lover.app.core.media.isLocalVideoUri
@@ -103,7 +96,7 @@ fun ComposerHost(
     Box(
         Modifier
             .fillMaxSize()
-            .background(WarmBackground),
+            .background(LocalMood.current.background),
     ) {
         when (editor) {
             Editor.MEDIA -> MediaComposeScreen(
@@ -136,14 +129,15 @@ private fun ComposerScaffold(
     showTopAction: Boolean = true,
     content: @Composable (PaddingValues) -> Unit,
 ) {
+    val mood = LocalMood.current
     Scaffold(
-        containerColor = WarmBackground,
+        containerColor = mood.background,
         topBar = {
             Column(
                 Modifier
                     .fillMaxWidth()
                     .background(
-                        Brush.verticalGradient(listOf(Blush.copy(alpha = 0.85f), WarmBackground)),
+                        Brush.verticalGradient(listOf(mood.blush.copy(alpha = 0.85f), mood.background)),
                     )
                     .statusBarsPadding()
                     .padding(horizontal = 8.dp, vertical = 6.dp),
@@ -153,19 +147,19 @@ private fun ComposerScaffold(
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     IconButton(onClick = onClose) {
-                        Icon(Icons.AutoMirrored.Rounded.ArrowBack, "返回", tint = DeepRose)
+                        Icon(Icons.AutoMirrored.Rounded.ArrowBack, "返回", tint = mood.accent)
                     }
-                    Column(Modifier.weight(1f).padding(horizontal = 4.dp)) {
-                        Text(title, style = MaterialTheme.typography.titleLarge, color = DeepRose)
-                        Text(subtitle, style = MaterialTheme.typography.labelSmall, color = Stone)
+                    Column(modifier = Modifier.weight(1f).padding(horizontal = 4.dp)) {
+                        Text(title, style = MaterialTheme.typography.titleLarge, color = mood.accent)
+                        Text(subtitle, style = MaterialTheme.typography.labelSmall, color = mood.stone)
                     }
                     if (showTopAction) {
                         TextButton(
                             onClick = onAction,
                             enabled = actionEnabled,
                             colors = ButtonDefaults.textButtonColors(
-                                contentColor = Rose,
-                                disabledContentColor = Stone.copy(alpha = 0.4f),
+                                contentColor = mood.soft,
+                                disabledContentColor = mood.stone.copy(alpha = 0.4f),
                             ),
                         ) {
                             Text(actionLabel, fontWeight = FontWeight.SemiBold)
@@ -178,7 +172,7 @@ private fun ComposerScaffold(
         },
         bottomBar = {
             Surface(
-                color = WarmBackground.copy(alpha = 0.96f),
+                color = mood.background.copy(alpha = 0.96f),
                 tonalElevation = 0.dp,
                 shadowElevation = 0.dp,
             ) {
@@ -192,8 +186,8 @@ private fun ComposerScaffold(
                         .height(52.dp),
                     shape = RoundedCornerShape(22.dp),
                     colors = ButtonDefaults.buttonColors(
-                        containerColor = Rose,
-                        disabledContainerColor = SoftOutline,
+                        containerColor = mood.soft,
+                        disabledContainerColor = mood.softOutline,
                     ),
                 ) {
                     Text(actionLabel)
@@ -204,7 +198,7 @@ private fun ComposerScaffold(
         Box(
             Modifier
                 .fillMaxSize()
-                .background(Brush.verticalGradient(listOf(WarmBackground, SoftSurface.copy(alpha = 0.55f)))),
+                .background(Brush.verticalGradient(listOf(mood.background, mood.softSurface.copy(alpha = 0.55f)))),
         ) {
             content(padding)
         }
@@ -217,22 +211,23 @@ private fun SoftEditorChip(
     onClick: () -> Unit,
     label: String,
 ) {
+    val mood = LocalMood.current
     FilterChip(
         selected = selected,
         onClick = onClick,
         label = { Text(label) },
         shape = RoundedCornerShape(18.dp),
         colors = FilterChipDefaults.filterChipColors(
-            selectedContainerColor = Blush,
-            selectedLabelColor = Rose,
+            selectedContainerColor = mood.blush,
+            selectedLabelColor = mood.soft,
             containerColor = Color.White,
-            labelColor = Stone,
+            labelColor = mood.stone,
         ),
         border = FilterChipDefaults.filterChipBorder(
             enabled = true,
             selected = selected,
-            borderColor = SoftOutline,
-            selectedBorderColor = Rose.copy(alpha = 0.35f),
+            borderColor = mood.softOutline,
+            selectedBorderColor = LocalMood.current.soft.copy(alpha = 0.35f),
         ),
     )
 }
@@ -280,8 +275,9 @@ fun MediaComposeScreen(
         if (remaining == 1) pickSingle.launch(Unit) else pickMultiple.launch(Unit)
     }
 
+    val mood = LocalMood.current
     ComposerScaffold(
-        title = "存下这些属于我们的时光",
+        title = if (mood.solo) "存下这一刻的时光" else "存下这些属于我们的时光",
         subtitle = if (uris.isEmpty()) {
             "添加照片或视频"
         } else {
@@ -306,8 +302,8 @@ fun MediaComposeScreen(
                 Surface(
                     onClick = ::launchPick,
                     shape = RoundedCornerShape(28.dp),
-                    color = SoftSurface,
-                    border = BorderStroke(1.dp, SoftOutline),
+                    color = LocalMood.current.softSurface,
+                    border = BorderStroke(1.dp, LocalMood.current.softOutline),
                     modifier = Modifier.fillMaxWidth().height(180.dp),
                 ) {
                     Column(
@@ -316,14 +312,14 @@ fun MediaComposeScreen(
                         horizontalAlignment = Alignment.CenterHorizontally,
                     ) {
                         Box(
-                            Modifier.size(56.dp).background(Blush, CircleShape),
+                            Modifier.size(56.dp).background(LocalMood.current.blush, CircleShape),
                             contentAlignment = Alignment.Center,
                         ) {
-                            Icon(Icons.Rounded.AddPhotoAlternate, null, tint = Rose, modifier = Modifier.size(28.dp))
+                            Icon(Icons.Rounded.AddPhotoAlternate, null, tint = LocalMood.current.soft, modifier = Modifier.size(28.dp))
                         }
                         Spacer(Modifier.height(12.dp))
-                        Text("添加照片或视频", fontWeight = FontWeight.SemiBold, color = DeepRose)
-                        Text("最多 $ComposerMaxMediaPick 项，支持混选", style = MaterialTheme.typography.bodySmall, color = Stone)
+                        Text("添加照片或视频", fontWeight = FontWeight.SemiBold, color = LocalMood.current.accent)
+                        Text("最多 $ComposerMaxMediaPick 项，支持混选", style = MaterialTheme.typography.bodySmall, color = LocalMood.current.stone)
                     }
                 }
             } else {
@@ -343,13 +339,13 @@ fun MediaComposeScreen(
                     Text(
                         "长按拖动可调整顺序",
                         style = MaterialTheme.typography.bodySmall,
-                        color = Stone,
+                        color = LocalMood.current.stone,
                     )
                 }
                 if (remaining > 0) {
                     TextButton(
                         onClick = ::launchPick,
-                        colors = ButtonDefaults.textButtonColors(contentColor = Rose),
+                        colors = ButtonDefaults.textButtonColors(contentColor = LocalMood.current.soft),
                     ) {
                         Icon(Icons.Rounded.AddPhotoAlternate, null, modifier = Modifier.size(18.dp))
                         Spacer(Modifier.width(6.dp))
@@ -508,7 +504,7 @@ fun MediaEditScreen(
                         Text(
                             "长按拖动可调整顺序",
                             style = MaterialTheme.typography.bodySmall,
-                            color = Stone,
+                            color = LocalMood.current.stone,
                         )
                     }
                 }
@@ -516,7 +512,7 @@ fun MediaEditScreen(
             if (isOwner && remaining > 0) {
                 TextButton(
                     onClick = ::openPicker,
-                    colors = ButtonDefaults.textButtonColors(contentColor = Rose),
+                    colors = ButtonDefaults.textButtonColors(contentColor = LocalMood.current.soft),
                 ) {
                     Icon(Icons.Rounded.AddPhotoAlternate, null, modifier = Modifier.size(18.dp))
                     Spacer(Modifier.width(6.dp))
@@ -545,15 +541,15 @@ fun MediaEditScreen(
             } else {
                 Surface(
                     shape = RoundedCornerShape(22.dp),
-                    color = SoftSurface,
+                    color = LocalMood.current.softSurface,
                     modifier = Modifier.fillMaxWidth(),
                 ) {
                     Row(
                         Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 16.dp),
                         horizontalArrangement = Arrangement.SpaceBetween,
                     ) {
-                        Text("记录日期", color = Stone)
-                        Text(date, color = DeepRose, fontWeight = FontWeight.Medium)
+                        Text("记录日期", color = LocalMood.current.stone)
+                        Text(date, color = LocalMood.current.accent, fontWeight = FontWeight.Medium)
                     }
                 }
             }
@@ -605,9 +601,9 @@ fun MediaEditScreen(
         AlertDialog(
             onDismissRequest = { confirmDelete = false },
             shape = RoundedCornerShape(28.dp),
-            containerColor = WarmBackground,
+            containerColor = LocalMood.current.background,
             title = { Text("删除这段时光？") },
-            text = { Text("将删除整条时光及其中的全部照片/视频，确认删除吗？", color = Stone) },
+            text = { Text("将删除整条时光及其中的全部照片/视频，确认删除吗？", color = LocalMood.current.stone) },
             confirmButton = {
                 TextButton(
                     onClick = {
@@ -620,7 +616,9 @@ fun MediaEditScreen(
             dismissButton = {
                 TextButton(
                     onClick = { confirmDelete = false },
-                    colors = ButtonDefaults.textButtonColors(contentColor = Stone),
+                    colors = ButtonDefaults.textButtonColors(
+                        contentColor = LocalMood.current.stone,
+                    ),
                 ) { Text("取消") }
             },
         )
@@ -636,9 +634,10 @@ fun AnniversaryComposeScreen(
     var date by rememberSaveable { mutableStateOf(LocalDate.now().plusMonths(1).toString()) }
     var type by rememberSaveable { mutableStateOf(AnniversaryType.YEARLY) }
 
+    val mood = LocalMood.current
     ComposerScaffold(
         title = "新建纪念日",
-        subtitle = "把重要的日子好好放进我们的日历",
+        subtitle = if (mood.solo) "把重要的日子好好放进日历" else "把重要的日子好好放进我们的日历",
         onClose = onClose,
         actionEnabled = title.isNotBlank(),
         actionLabel = "保存",
@@ -655,7 +654,7 @@ fun AnniversaryComposeScreen(
         ) {
             Surface(
                 shape = RoundedCornerShape(28.dp),
-                color = Blush.copy(alpha = 0.65f),
+                color = mood.blush.copy(alpha = 0.65f),
                 modifier = Modifier.fillMaxWidth(),
             ) {
                 Row(
@@ -667,11 +666,11 @@ fun AnniversaryComposeScreen(
                         Modifier.size(52.dp).background(Color.White.copy(alpha = 0.7f), CircleShape),
                         contentAlignment = Alignment.Center,
                     ) {
-                        Icon(Icons.Rounded.Favorite, null, tint = Rose)
+                        Icon(Icons.Rounded.Favorite, null, tint = mood.soft)
                     }
                     Column {
-                        Text("纪念类型", fontWeight = FontWeight.SemiBold, color = DeepRose)
-                        Text("年度会循环倒数，里程碑指向那天", style = MaterialTheme.typography.bodySmall, color = Stone)
+                        Text("纪念类型", fontWeight = FontWeight.SemiBold, color = mood.accent)
+                        Text("年度会循环倒数，里程碑指向那天", style = MaterialTheme.typography.bodySmall, color = LocalMood.current.stone)
                     }
                 }
             }
@@ -744,7 +743,7 @@ fun LetterComposeScreen(
                 SoftEditorChip(type == LetterType.CAPSULE, { type = LetterType.CAPSULE }, "时间胶囊")
             }
             if (!linked) {
-                Text("未绑定另一半时，只能写时间胶囊", color = Stone, style = MaterialTheme.typography.bodySmall)
+                Text("未绑定另一半时，只能写时间胶囊", color = LocalMood.current.stone, style = MaterialTheme.typography.bodySmall)
             }
             SoftTextField(
                 value = title,
@@ -770,9 +769,11 @@ fun LetterComposeScreen(
                     androidx.compose.material3.Checkbox(
                         checked = unlockOnPartnerBind,
                         onCheckedChange = { unlockOnPartnerBind = it },
-                        colors = androidx.compose.material3.CheckboxDefaults.colors(checkedColor = Rose),
+                        colors = androidx.compose.material3.CheckboxDefaults.colors(
+                            checkedColor = LocalMood.current.soft,
+                        ),
                     )
-                    Text("在绑定另一半以后，自动开启", color = Stone)
+                    Text("在绑定另一半以后，自动开启", color = LocalMood.current.stone)
                 }
                 if (!unlockOnPartnerBind) {
                     LoverDateField(

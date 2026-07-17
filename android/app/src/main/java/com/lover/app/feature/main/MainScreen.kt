@@ -52,8 +52,10 @@ import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -61,16 +63,67 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.DialogProperties
 import coil.compose.AsyncImage
+import com.lover.app.R
 import com.lover.app.core.design.*
 import com.lover.app.core.media.LocalMediaThumb
 import com.lover.app.core.media.PickGalleryImage
 import com.lover.app.core.media.listMediaImageRequest
 import com.lover.app.core.media.signedMediaImageRequest
 import com.lover.app.core.model.*
+import java.time.LocalDate
+import java.time.temporal.ChronoUnit
 
 internal const val MaxMediaPick = 20
 
 enum class Editor { MEDIA, ANNIVERSARY, LETTER }
+
+/** Inclusive calendar days since registration (registration day = 1). */
+internal fun waitingDaysSinceRegistration(createdAt: String?): Int {
+    val raw = createdAt?.trim().orEmpty()
+    if (raw.isBlank()) return 1
+    val datePart = raw.take(10)
+    val start = runCatching { LocalDate.parse(datePart) }.getOrNull() ?: return 1
+    val days = ChronoUnit.DAYS.between(start, LocalDate.now()).toInt()
+    return (days + 1).coerceAtLeast(1)
+}
+
+@Composable
+private fun NavTabIcon(
+    tab: MainTab,
+    label: String,
+    soloMode: Boolean,
+    tint: Color,
+    modifier: Modifier = Modifier,
+) {
+    when {
+        tab == MainTab.ANNIVERSARY && !soloMode -> {
+            Icon(
+                painter = painterResource(R.drawable.ic_nav_anniversary),
+                contentDescription = label,
+                tint = tint,
+                modifier = modifier,
+            )
+        }
+        tab == MainTab.PROFILE && !soloMode -> {
+            Icon(
+                painter = painterResource(R.drawable.ic_nav_us),
+                contentDescription = label,
+                tint = tint,
+                modifier = modifier,
+            )
+        }
+        else -> {
+            val vector: ImageVector = when (tab) {
+                MainTab.HOME -> Icons.Rounded.Favorite
+                MainTab.TIMELINE -> Icons.Rounded.PhotoLibrary
+                MainTab.ANNIVERSARY -> Icons.Rounded.Event
+                MainTab.LETTERS -> Icons.Rounded.Mail
+                MainTab.PROFILE -> Icons.Rounded.Person
+            }
+            Icon(vector, label, modifier = modifier, tint = tint)
+        }
+    }
+}
 
 @Composable
 fun MainScreen(viewModel: MainViewModel) {
@@ -275,7 +328,7 @@ fun MainScreen(viewModel: MainViewModel) {
                 Box(
                     Modifier
                         .fillMaxSize()
-                        .background(WarmBackground),
+                        .background(LocalMood.current.background),
                 ) {
                     MediaEditScreen(
                         item = cached,
@@ -345,24 +398,24 @@ private fun IncomingBindDialog(
             dismissOnClickOutside = false,
         ),
         shape = RoundedCornerShape(28.dp),
-        containerColor = WarmBackground,
+        containerColor = LocalMood.current.background,
         title = { Text("收到绑定邀请") },
         text = {
             Text(
                 "有一个来自「$inviterLabel」的绑定邀请，请及时到「我」里去处理",
-                color = Stone,
+                color = LocalMood.current.stone,
             )
         },
         confirmButton = {
             TextButton(
                 onClick = onGoNow,
-                colors = ButtonDefaults.textButtonColors(contentColor = Rose),
+                colors = ButtonDefaults.textButtonColors(contentColor = LocalMood.current.soft),
             ) { Text("马上去") }
         },
         dismissButton = {
             TextButton(
                 onClick = onLater,
-                colors = ButtonDefaults.textButtonColors(contentColor = Stone),
+                colors = ButtonDefaults.textButtonColors(contentColor = LocalMood.current.stone),
             ) { Text("暂时不处理") }
         },
     )
@@ -376,15 +429,11 @@ private fun LoverNavigation(
 ) {
     val mood = LocalMood.current
     val tabs = listOf(
-        Triple(MainTab.HOME, "空间", Icons.Rounded.Favorite),
-        Triple(MainTab.TIMELINE, "时光", Icons.Rounded.PhotoLibrary),
-        Triple(MainTab.ANNIVERSARY, "纪念", Icons.Rounded.Event),
-        Triple(MainTab.LETTERS, "信封", Icons.Rounded.Mail),
-        Triple(
-            MainTab.PROFILE,
-            if (soloMode) "我" else "我们",
-            if (soloMode) Icons.Rounded.Person else Icons.Rounded.People,
-        ),
+        MainTab.HOME to "空间",
+        MainTab.TIMELINE to "时光",
+        MainTab.ANNIVERSARY to "纪念",
+        MainTab.LETTERS to "信封",
+        MainTab.PROFILE to if (soloMode) "我" else "我们",
     )
     Surface(
         modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
@@ -395,18 +444,25 @@ private fun LoverNavigation(
         border = BorderStroke(1.dp, mood.softOutline.copy(alpha = 0.55f)),
     ) {
         Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 5.dp, vertical = 4.dp)) {
-            tabs.forEach { (tab, label, icon) ->
+            tabs.forEach { (tab, label) ->
                 val scale by animateFloatAsState(
                     targetValue = if (selected == tab) 1.06f else 1f,
                     animationSpec = tween(280, easing = FastOutSlowInEasing),
                     label = "icon",
                 )
+                val iconTint = if (selected == tab) mood.soft else mood.stone
                 NavigationBarItem(
                     selected = selected == tab,
                     onClick = { onSelect(tab) },
                     icon = {
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            Icon(icon, label, Modifier.scale(scale))
+                            NavTabIcon(
+                                tab = tab,
+                                label = label,
+                                soloMode = soloMode,
+                                tint = iconTint,
+                                modifier = Modifier.scale(scale).size(24.dp),
+                            )
                             if (selected == tab) {
                                 Box(
                                     Modifier
@@ -433,13 +489,14 @@ private fun LoverNavigation(
 
 @Composable
 private fun PageHeader(title: String, subtitle: String, action: (@Composable () -> Unit)? = null) {
+    val mood = LocalMood.current
     Row(
         Modifier.fillMaxWidth().padding(horizontal = 22.dp, vertical = 18.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Column(modifier = Modifier.weight(1f)) {
-            Text(title, style = MaterialTheme.typography.headlineMedium)
-            Text(subtitle.uppercase(), style = MaterialTheme.typography.labelSmall, color = Stone)
+            Text(title, style = MaterialTheme.typography.headlineMedium, color = mood.accent.copy(alpha = 0.92f))
+            Text(subtitle.uppercase(), style = MaterialTheme.typography.labelSmall, color = mood.stone)
         }
         action?.invoke()
     }
@@ -453,6 +510,9 @@ private fun HomePage(
 ) {
     val mood = LocalMood.current
     val days = state.lovingDays ?: 0
+    val waitingDays = remember(state.user?.createdAt) {
+        waitingDaysSinceRegistration(state.user?.createdAt)
+    }
     LazyColumn(contentPadding = PaddingValues(bottom = 28.dp)) {
         item {
             HomeTopBar(
@@ -494,7 +554,21 @@ private fun HomePage(
                                 color = mood.accent.copy(alpha = 0.92f),
                                 textAlign = TextAlign.Center,
                             )
-                            Spacer(modifier = Modifier.height(10.dp))
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Row(verticalAlignment = Alignment.Bottom) {
+                                Text(
+                                    "$waitingDays",
+                                    style = MaterialTheme.typography.displayLarge,
+                                    color = mood.accent,
+                                )
+                                Text(
+                                    " 天",
+                                    style = MaterialTheme.typography.titleLarge,
+                                    modifier = Modifier.padding(bottom = 8.dp),
+                                    color = mood.stone,
+                                )
+                            }
+                            Spacer(modifier = Modifier.height(6.dp))
                             Text(
                                 "每一天，都是给未来的礼物",
                                 color = mood.stone,
@@ -566,10 +640,17 @@ private fun TimelinePage(
     pendingUploads: List<PendingMediaUpload>,
     onMedia: (MediaItem) -> Unit,
 ) {
+    val mood = LocalMood.current
     Column(modifier = Modifier.fillMaxSize()) {
-        PageHeader("相爱时光", "Visual Memories")
+        PageHeader(
+            if (mood.solo) "时光" else "相爱时光",
+            if (mood.solo) "Quiet Moments" else "Visual Memories",
+        )
         if (media.isEmpty() && pendingUploads.isEmpty()) {
-            EmptyHint("选择照片或视频，记录共同的故事", Icons.Rounded.PhotoLibrary)
+            EmptyHint(
+                if (mood.solo) "选择照片或视频，记录这一刻" else "选择照片或视频，记录共同的故事",
+                Icons.Rounded.PhotoLibrary,
+            )
         } else {
             TimelineGalleryContent(
                 media = media,
@@ -608,7 +689,7 @@ private fun UploadingMediaCard(pending: PendingMediaUpload) {
         Modifier
             .aspectRatio(.8f)
             .clip(RoundedCornerShape(26.dp))
-            .background(Blush),
+            .background(LocalMood.current.blush),
     ) {
         LocalMediaThumb(
             uri = pending.previewUri,
@@ -657,7 +738,7 @@ private fun UploadingMediaCard(pending: PendingMediaUpload) {
                     .fillMaxWidth()
                     .height(6.dp)
                     .clip(RoundedCornerShape(4.dp)),
-                color = Rose,
+                color = LocalMood.current.soft,
                 trackColor = Color.White.copy(alpha = 0.35f),
             )
             Text(
@@ -706,7 +787,7 @@ private fun MediaImage(item: MediaItem, modifier: Modifier = Modifier) {
     val cover = item.cover
     val thumbUrl = item.thumbnailUrl ?: item.url
     val cacheKey = cover?.assetId?.let { "media-thumb-$it" }
-    Box(modifier.clip(RoundedCornerShape(26.dp)).background(Blush)) {
+    Box(modifier.clip(RoundedCornerShape(26.dp)).background(LocalMood.current.blush)) {
         if (!thumbUrl.isNullOrBlank() && cacheKey != null) {
             AsyncImage(
                 model = listMediaImageRequest(context, thumbUrl, cover!!.assetId),
@@ -752,10 +833,12 @@ private fun MediaImage(item: MediaItem, modifier: Modifier = Modifier) {
 
 @Composable
 private fun AnniversaryPage(anniversaries: List<Anniversary>, onAdd: () -> Unit) {
+    val mood = LocalMood.current
     Column {
-        PageHeader("爱的纪念日", "Eternal Dates") {
-            IconButton(onClick = onAdd) { Icon(Icons.Rounded.AddCircle, "新增", tint = Rose) }
-        }
+        PageHeader(
+            if (mood.solo) "纪念日" else "爱的纪念日",
+            if (mood.solo) "Gentle Dates" else "Eternal Dates",
+        )
         LazyColumn(
             contentPadding = PaddingValues(horizontal = 18.dp, vertical = 4.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp),
@@ -764,24 +847,24 @@ private fun AnniversaryPage(anniversaries: List<Anniversary>, onAdd: () -> Unit)
             items(anniversaries, key = { it.id }) { anniversary ->
                 val countdown = anniversary.countdown
                 Card(
-                    colors = CardDefaults.cardColors(containerColor = SoftSurface),
+                    colors = CardDefaults.cardColors(containerColor = mood.softSurface),
                     shape = RoundedCornerShape(28.dp),
                     elevation = CardDefaults.cardElevation(0.dp),
-                    border = BorderStroke(1.dp, SoftOutline.copy(alpha = 0.7f)),
+                    border = BorderStroke(1.dp, mood.softOutline.copy(alpha = 0.7f)),
                 ) {
                     Row(Modifier.fillMaxWidth().padding(20.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Box(Modifier.size(64.dp).background(Blush, CircleShape), contentAlignment = Alignment.Center) {
-                            Icon(Icons.Rounded.Favorite, null, tint = Rose)
+                        Box(Modifier.size(64.dp).background(mood.blush, CircleShape), contentAlignment = Alignment.Center) {
+                            Icon(Icons.Rounded.Favorite, null, tint = mood.soft)
                         }
                         Column(Modifier.weight(1f).padding(horizontal = 16.dp)) {
                             Text(anniversary.title, style = MaterialTheme.typography.titleLarge)
-                            Text(anniversary.date, color = Stone)
+                            Text(anniversary.date, color = mood.stone)
                             SuggestionChip(
                                 onClick = {},
                                 label = { Text(if (anniversary.type == AnniversaryType.YEARLY) "年度纪念" else "里程碑") },
                                 colors = SuggestionChipDefaults.suggestionChipColors(
-                                    containerColor = Blush,
-                                    labelColor = DeepRose,
+                                    containerColor = mood.blush,
+                                    labelColor = mood.accent,
                                 ),
                                 border = null,
                             )
@@ -790,9 +873,9 @@ private fun AnniversaryPage(anniversaries: List<Anniversary>, onAdd: () -> Unit)
                             Text(
                                 if (countdown?.reached == true) "✓" else countdown?.days?.toString() ?: "—",
                                 style = MaterialTheme.typography.headlineMedium,
-                                color = Rose,
+                                color = mood.soft,
                             )
-                            Text(if (countdown?.reached == true) "已达成" else "天", color = Stone)
+                            Text(if (countdown?.reached == true) "已达成" else "天", color = mood.stone)
                         }
                     }
                 }
@@ -802,8 +885,8 @@ private fun AnniversaryPage(anniversaries: List<Anniversary>, onAdd: () -> Unit)
                     onClick = onAdd,
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(22.dp),
-                    border = BorderStroke(1.dp, Rose.copy(alpha = 0.35f)),
-                    colors = ButtonDefaults.outlinedButtonColors(contentColor = Rose),
+                    border = BorderStroke(1.dp, mood.soft.copy(alpha = 0.35f)),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = mood.soft),
                 ) {
                     Icon(Icons.Rounded.Add, null)
                     Spacer(Modifier.width(6.dp))
@@ -816,10 +899,12 @@ private fun AnniversaryPage(anniversaries: List<Anniversary>, onAdd: () -> Unit)
 
 @Composable
 private fun LettersPage(letters: List<Letter>, onLetter: (Letter) -> Unit, onAdd: () -> Unit) {
+    val mood = LocalMood.current
     Column {
-        PageHeader("爱的信封", "Secret Letters") {
-            IconButton(onClick = onAdd) { Icon(Icons.Rounded.Edit, "写信", tint = Rose) }
-        }
+        PageHeader(
+            if (mood.solo) "为爱信封" else "爱的信封",
+            if (mood.solo) "Letters to Love" else "Secret Letters",
+        )
         LazyColumn(
             contentPadding = PaddingValues(horizontal = 18.dp, vertical = 4.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp),
@@ -830,28 +915,28 @@ private fun LettersPage(letters: List<Letter>, onLetter: (Letter) -> Unit, onAdd
                 Card(
                     modifier = Modifier.fillMaxWidth().clickable { onLetter(letter) },
                     colors = CardDefaults.cardColors(
-                        containerColor = if (unlocked) Color.White.copy(alpha = 0.96f) else Blush.copy(alpha = 0.75f),
+                        containerColor = if (unlocked) Color.White.copy(alpha = 0.96f) else mood.blush.copy(alpha = 0.75f),
                     ),
                     shape = RoundedCornerShape(28.dp),
                     elevation = CardDefaults.cardElevation(0.dp),
-                    border = BorderStroke(1.dp, SoftOutline.copy(alpha = 0.7f)),
+                    border = BorderStroke(1.dp, mood.softOutline.copy(alpha = 0.7f)),
                 ) {
                     Row(Modifier.padding(22.dp), verticalAlignment = Alignment.Top) {
                         Box(
-                            Modifier.size(44.dp).background(if (unlocked) SoftSurface else Color.White.copy(alpha = 0.5f), CircleShape),
+                            Modifier.size(44.dp).background(if (unlocked) LocalMood.current.softSurface else Color.White.copy(alpha = 0.5f), CircleShape),
                             contentAlignment = Alignment.Center,
                         ) {
                             Icon(
                                 if (unlocked) Icons.Rounded.Drafts else Icons.Rounded.Lock,
                                 null,
-                                tint = Rose,
+                                tint = mood.soft,
                                 modifier = Modifier.size(22.dp),
                             )
                         }
                         Column(Modifier.weight(1f).padding(start = 14.dp)) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Text(letter.title, style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
-                                Text(letter.createdAt.take(10), style = MaterialTheme.typography.labelSmall, color = Stone)
+                                Text(letter.createdAt.take(10), style = MaterialTheme.typography.labelSmall, color = mood.stone)
                             }
                             Spacer(Modifier.height(6.dp))
                             Text(
@@ -859,9 +944,9 @@ private fun LettersPage(letters: List<Letter>, onLetter: (Letter) -> Unit, onAdd
                                 else "时间胶囊 · ${letter.unlockAt?.take(10)} 解锁",
                                 maxLines = 2,
                                 overflow = TextOverflow.Ellipsis,
-                                color = Stone,
+                                color = mood.stone,
                             )
-                            Text("来自 ${letter.senderNickname}", style = MaterialTheme.typography.labelSmall, color = Rose)
+                            Text("来自 ${letter.senderNickname}", style = MaterialTheme.typography.labelSmall, color = mood.soft)
                         }
                     }
                 }
@@ -900,9 +985,14 @@ private fun ProfilePage(
 
     LazyColumn(contentPadding = PaddingValues(horizontal = 20.dp, vertical = 12.dp)) {
         item {
-            PageHeader("我们的小宇宙", "Our Private World")
+            val mood = LocalMood.current
+            PageHeader(
+                if (mood.solo) "我的小宇宙" else "我们的小宇宙",
+                if (mood.solo) "My Soft World" else "Our Private World",
+            )
             if (!hasPartner) {
-                val spaceName = state.couple?.name?.takeIf { it.isNotBlank() } ?: "我们的小宇宙"
+                val spaceName = state.couple?.name?.takeIf { it.isNotBlank() }
+                    ?: if (mood.solo) "我的小宇宙" else "我们的小宇宙"
                 val invite = incoming.firstOrNull { it.id.isNotBlank() }
                 if (invite != null) {
                     IncomingBindCard(
@@ -955,10 +1045,10 @@ private fun ProfilePage(
                         onClick = { confirm = "request" },
                         modifier = Modifier.fillMaxWidth(),
                         shape = RoundedCornerShape(22.dp),
-                        border = BorderStroke(1.dp, SoftOutline),
+                        border = BorderStroke(1.dp, LocalMood.current.softOutline),
                     ) { Text("申请解除情侣绑定") }
                 } else if (pending.requestedBy == state.user?.id) {
-                    Text("解绑申请等待伴侣确认", color = Stone)
+                    Text("解绑申请等待伴侣确认", color = LocalMood.current.stone)
                     OutlinedButton(
                         onClick = { confirm = "cancel" },
                         modifier = Modifier.fillMaxWidth(),
@@ -970,7 +1060,7 @@ private fun ProfilePage(
                         onClick = { confirm = "confirm" },
                         modifier = Modifier.fillMaxWidth(),
                         shape = RoundedCornerShape(22.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = Rose),
+                        colors = ButtonDefaults.buttonColors(containerColor = LocalMood.current.soft),
                     ) { Text("确认解除绑定") }
                     TextButton(onClick = { confirm = "cancel" }, modifier = Modifier.fillMaxWidth()) {
                         Text("拒绝并取消申请")
@@ -1006,7 +1096,7 @@ private fun ProfilePage(
             )
         } else {
             PersonalCardEditSheet(
-                initialName = state.couple?.name?.takeIf { it.isNotBlank() } ?: "我们的小宇宙",
+                initialName = state.couple?.name?.takeIf { it.isNotBlank() } ?: if (LocalMood.current.solo) "我的小宇宙" else "我们的小宇宙",
                 currentAvatarUrl = state.user?.avatarUrl,
                 onDismiss = { showEditCard = false },
                 onSave = { name, avatarUri ->
@@ -1021,11 +1111,11 @@ private fun ProfilePage(
         AlertDialog(
             onDismissRequest = { viewModel.dismissTogetherDatePrompt() },
             shape = RoundedCornerShape(28.dp),
-            containerColor = WarmBackground,
+            containerColor = LocalMood.current.background,
             title = { Text("设置在一起的日子？") },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Text("可以稍后在「我们」里再设置", color = Stone)
+                    Text("可以稍后在「我们」里再设置", color = LocalMood.current.stone)
                     LoverDateField(
                         value = togetherDraft,
                         onValueChange = { togetherDraft = it },
@@ -1038,13 +1128,13 @@ private fun ProfilePage(
             confirmButton = {
                 TextButton(
                     onClick = { viewModel.saveTogetherDate(togetherDraft) },
-                    colors = ButtonDefaults.textButtonColors(contentColor = Rose),
+                    colors = ButtonDefaults.textButtonColors(contentColor = LocalMood.current.soft),
                 ) { Text("保存") }
             },
             dismissButton = {
                 TextButton(
                     onClick = { viewModel.dismissTogetherDatePrompt() },
-                    colors = ButtonDefaults.textButtonColors(contentColor = Stone),
+                    colors = ButtonDefaults.textButtonColors(contentColor = LocalMood.current.stone),
                 ) { Text("跳过") }
             },
         )
@@ -1054,7 +1144,7 @@ private fun ProfilePage(
         AlertDialog(
             onDismissRequest = { confirm = null },
             shape = RoundedCornerShape(28.dp),
-            containerColor = WarmBackground,
+            containerColor = LocalMood.current.background,
             title = {
                 Text(
                     when (action) {
@@ -1068,7 +1158,7 @@ private fun ProfilePage(
             text = {
                 if (action == "request") {
                     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                        Text("申请提交后，需要伴侣确认才会正式解绑。", color = Stone)
+                        Text("申请提交后，需要伴侣确认才会正式解绑。", color = LocalMood.current.stone)
                         SoftTextField(
                             value = reason,
                             onValueChange = { reason = it.take(300) },
@@ -1083,7 +1173,7 @@ private fun ProfilePage(
                         if (action == "confirm") "确认后情侣空间将解散，请谨慎操作。"
                         else if (action == "logout") "退出后可再次使用手机号登录。"
                         else "该待处理申请将被取消。",
-                        color = Stone,
+                        color = LocalMood.current.stone,
                     )
                 }
             },
@@ -1098,13 +1188,13 @@ private fun ProfilePage(
                         }
                         confirm = null
                     },
-                    colors = ButtonDefaults.textButtonColors(contentColor = Rose),
+                    colors = ButtonDefaults.textButtonColors(contentColor = LocalMood.current.soft),
                 ) { Text("确认") }
             },
             dismissButton = {
                 TextButton(
                     onClick = { confirm = null },
-                    colors = ButtonDefaults.textButtonColors(contentColor = Stone),
+                    colors = ButtonDefaults.textButtonColors(contentColor = LocalMood.current.stone),
                 ) { Text("取消") }
             },
         )
@@ -1125,7 +1215,7 @@ private fun EmptyCoupleCard(
         bindInviterLabel(it.targetNickname, it.targetPhone)
     }
     Card(
-        colors = CardDefaults.cardColors(containerColor = Blush.copy(alpha = 0.85f)),
+        colors = CardDefaults.cardColors(containerColor = LocalMood.current.blush.copy(alpha = 0.85f)),
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(32.dp),
         elevation = CardDefaults.cardElevation(0.dp),
@@ -1138,7 +1228,7 @@ private fun EmptyCoupleCard(
                 Icon(
                     Icons.Rounded.Edit,
                     contentDescription = "编辑",
-                    tint = DeepRose.copy(alpha = 0.75f),
+                    tint = LocalMood.current.accent.copy(alpha = 0.75f),
                     modifier = Modifier.size(20.dp),
                 )
             }
@@ -1168,13 +1258,13 @@ private fun EmptyCoupleCard(
             if (outgoing != null && outgoingLabel != null) {
                 Text(
                     "已向 $outgoingLabel 发送绑定邀请",
-                    color = Stone,
+                    color = LocalMood.current.stone,
                     style = MaterialTheme.typography.bodyLarge,
                     textAlign = TextAlign.Center,
                 )
                 Text(
                     "状态：等待对方确认",
-                    color = Rose,
+                    color = LocalMood.current.soft,
                     style = MaterialTheme.typography.bodySmall,
                 )
                 if (onCancelOutgoing != null) {
@@ -1183,7 +1273,7 @@ private fun EmptyCoupleCard(
             } else {
                 Text(
                     "现在还没有我们喔，快去绑定另一半吧",
-                    color = Stone,
+                    color = LocalMood.current.stone,
                     style = MaterialTheme.typography.bodyLarge,
                     textAlign = TextAlign.Center,
                 )
@@ -1191,7 +1281,7 @@ private fun EmptyCoupleCard(
                     onClick = onBind,
                     modifier = Modifier.fillMaxWidth().height(48.dp),
                     shape = RoundedCornerShape(20.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = Rose),
+                    colors = ButtonDefaults.buttonColors(containerColor = LocalMood.current.soft),
                 ) { Text("绑定另一半") }
             }
         }
@@ -1212,7 +1302,7 @@ private fun IncomingBindCard(
     onReject: () -> Unit,
 ) {
     Card(
-        colors = CardDefaults.cardColors(containerColor = Blush.copy(alpha = 0.85f)),
+        colors = CardDefaults.cardColors(containerColor = LocalMood.current.blush.copy(alpha = 0.85f)),
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(32.dp),
         elevation = CardDefaults.cardElevation(0.dp),
@@ -1225,7 +1315,7 @@ private fun IncomingBindCard(
                 Icon(
                     Icons.Rounded.Edit,
                     contentDescription = "编辑",
-                    tint = DeepRose.copy(alpha = 0.75f),
+                    tint = LocalMood.current.accent.copy(alpha = 0.75f),
                     modifier = Modifier.size(20.dp),
                 )
             }
@@ -1244,7 +1334,7 @@ private fun IncomingBindCard(
             Text(spaceName, style = MaterialTheme.typography.headlineMedium)
             Text(
                 "${inviterLabel}邀请您绑定",
-                color = Stone,
+                color = LocalMood.current.stone,
                 style = MaterialTheme.typography.bodyLarge,
                 textAlign = TextAlign.Center,
             )
@@ -1253,13 +1343,13 @@ private fun IncomingBindCard(
                     onClick = onReject,
                     modifier = Modifier.weight(1f).height(48.dp),
                     shape = RoundedCornerShape(20.dp),
-                    border = BorderStroke(1.dp, SoftOutline),
+                    border = BorderStroke(1.dp, LocalMood.current.softOutline),
                 ) { Text("拒绝") }
                 Button(
                     onClick = onAccept,
                     modifier = Modifier.weight(1f).height(48.dp),
                     shape = RoundedCornerShape(20.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = Rose),
+                    colors = ButtonDefaults.buttonColors(containerColor = LocalMood.current.soft),
                 ) { Text("同意") }
             }
         }
@@ -1282,7 +1372,7 @@ private fun BoundCoupleCard(
     onEdit: () -> Unit,
 ) {
     Card(
-        colors = CardDefaults.cardColors(containerColor = Blush.copy(alpha = 0.85f)),
+        colors = CardDefaults.cardColors(containerColor = LocalMood.current.blush.copy(alpha = 0.85f)),
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(32.dp),
         elevation = CardDefaults.cardElevation(0.dp),
@@ -1297,7 +1387,7 @@ private fun BoundCoupleCard(
                 Icon(
                     Icons.Rounded.Edit,
                     contentDescription = "编辑",
-                    tint = DeepRose.copy(alpha = 0.75f),
+                    tint = LocalMood.current.accent.copy(alpha = 0.75f),
                     modifier = Modifier.size(20.dp),
                 )
             }
@@ -1319,7 +1409,7 @@ private fun BoundCoupleCard(
                 Text(spaceName, style = MaterialTheme.typography.headlineMedium)
                 Text(
                     togetherDateLabel(togetherDate, lovingDays),
-                    color = Stone,
+                    color = LocalMood.current.stone,
                     textAlign = TextAlign.Center,
                 )
             }
@@ -1385,7 +1475,7 @@ private fun CoupleBondVisual(
                 Spacer(Modifier.height(10.dp))
                 Text(
                     "${displayName(leftNickname)} · ${displayName(rightNickname)}",
-                    color = Stone,
+                    color = LocalMood.current.stone,
                     style = MaterialTheme.typography.bodyMedium,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
@@ -1441,7 +1531,7 @@ private fun CoupleCoverAvatar(coverUrl: String) {
             modifier = Modifier
                 .fillMaxSize()
                 .clip(CircleShape)
-                .background(Rose.copy(alpha = 0.9f)),
+                .background(LocalMood.current.soft.copy(alpha = 0.9f)),
             contentScale = ContentScale.Crop,
         )
     }
@@ -1466,7 +1556,7 @@ private fun PersonAvatarWithName(
         Spacer(Modifier.height(8.dp))
         Text(
             if (placeholderMark) "待绑定" else displayName(nickname),
-            color = Stone,
+            color = LocalMood.current.stone,
             style = MaterialTheme.typography.bodySmall,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
@@ -1504,7 +1594,7 @@ private fun LinkingPulse() {
             Modifier
                 .fillMaxWidth()
                 .height(2.dp)
-                .background(Rose.copy(alpha = 0.22f * glow), RoundedCornerShape(2.dp)),
+                .background(LocalMood.current.soft.copy(alpha = 0.22f * glow), RoundedCornerShape(2.dp)),
         )
         Row(
             Modifier.fillMaxWidth(),
@@ -1518,14 +1608,14 @@ private fun LinkingPulse() {
                     Modifier
                         .size(6.dp)
                         .graphicsLayer { this.alpha = alpha * glow }
-                        .background(Rose, CircleShape),
+                        .background(LocalMood.current.soft, CircleShape),
                 )
             }
         }
         Icon(
             Icons.Rounded.Favorite,
             contentDescription = null,
-            tint = Rose.copy(alpha = 0.55f + 0.35f * glow),
+            tint = LocalMood.current.soft.copy(alpha = 0.55f + 0.35f * glow),
             modifier = Modifier
                 .size(14.dp)
                 .graphicsLayer {
@@ -1556,7 +1646,7 @@ private fun PersonAvatar(
             Modifier
                 .fillMaxSize()
                 .clip(CircleShape)
-                .background(if (placeholderMark) Blush else Rose.copy(alpha = 0.9f)),
+                .background(if (placeholderMark) LocalMood.current.blush else LocalMood.current.soft.copy(alpha = 0.9f)),
             contentAlignment = Alignment.Center,
         ) {
             when {
@@ -1570,7 +1660,7 @@ private fun PersonAvatar(
                     )
                 }
                 placeholderMark -> {
-                    Text("?", color = Rose, style = MaterialTheme.typography.headlineMedium)
+                    Text("?", color = LocalMood.current.soft, style = MaterialTheme.typography.headlineMedium)
                 }
                 else -> {
                     Text(
@@ -1595,6 +1685,7 @@ private fun PersonalCardEditSheet(
     onDismiss: () -> Unit,
     onSave: (name: String, avatarUri: Uri?) -> Unit,
 ) {
+    val defaultSpaceName = if (LocalMood.current.solo) "我的小宇宙" else "我们的小宇宙"
     var name by rememberSaveable { mutableStateOf(initialName) }
     var draftAvatarUri by remember { mutableStateOf<Uri?>(null) }
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
@@ -1605,7 +1696,7 @@ private fun PersonalCardEditSheet(
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
-        containerColor = WarmBackground,
+        containerColor = LocalMood.current.background,
         shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
     ) {
         Column(
@@ -1617,7 +1708,7 @@ private fun PersonalCardEditSheet(
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
             Text("编辑我的空间", style = MaterialTheme.typography.headlineMedium)
-            Text("可以更换头像和空间名称，绑定后双方还会有共同的空间设置", color = Stone)
+            Text("可以更换头像和空间名称，绑定后双方还会有共同的空间设置", color = LocalMood.current.stone)
 
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
@@ -1628,7 +1719,7 @@ private fun PersonalCardEditSheet(
                     modifier = Modifier
                         .size(104.dp)
                         .clip(CircleShape)
-                        .background(Blush)
+                        .background(LocalMood.current.blush)
                         .clickable { pickAvatar.launch(Unit) },
                     contentAlignment = Alignment.Center,
                 ) {
@@ -1654,7 +1745,7 @@ private fun PersonalCardEditSheet(
                             Icon(
                                 Icons.Rounded.AddAPhoto,
                                 contentDescription = null,
-                                tint = Rose,
+                                tint = LocalMood.current.soft,
                                 modifier = Modifier.size(32.dp),
                             )
                         }
@@ -1662,7 +1753,7 @@ private fun PersonalCardEditSheet(
                 }
                 Text(
                     "点击更换头像",
-                    color = Stone,
+                    color = LocalMood.current.stone,
                     style = MaterialTheme.typography.bodySmall,
                     modifier = Modifier.clickable { pickAvatar.launch(Unit) },
                 )
@@ -1672,19 +1763,19 @@ private fun PersonalCardEditSheet(
                 value = name,
                 onValueChange = { name = it.take(40) },
                 label = "空间名称",
-                placeholder = "我们的小宇宙",
+                placeholder = defaultSpaceName,
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth(),
             )
 
             Button(
                 onClick = {
-                    onSave(name.trim().ifBlank { "我们的小宇宙" }, draftAvatarUri)
+                    onSave(name.trim().ifBlank { defaultSpaceName }, draftAvatarUri)
                 },
                 enabled = name.isNotBlank(),
                 modifier = Modifier.fillMaxWidth().height(52.dp),
                 shape = RoundedCornerShape(22.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = Rose),
+                colors = ButtonDefaults.buttonColors(containerColor = LocalMood.current.soft),
             ) { Text("保存") }
         }
     }
@@ -1699,6 +1790,7 @@ private fun CoupleCardEditSheet(
     onDismiss: () -> Unit,
     onSave: (name: String, togetherDate: String?, coverUri: Uri?, clearCover: Boolean) -> Unit,
 ) {
+    val defaultSpaceName = if (LocalMood.current.solo) "我的小宇宙" else "我们的小宇宙"
     var name by rememberSaveable { mutableStateOf(initialName) }
     var togetherDate by rememberSaveable {
         mutableStateOf(initialTogetherDate.orEmpty())
@@ -1723,7 +1815,7 @@ private fun CoupleCardEditSheet(
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
-        containerColor = WarmBackground,
+        containerColor = LocalMood.current.background,
         shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
     ) {
         Column(
@@ -1735,7 +1827,7 @@ private fun CoupleCardEditSheet(
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
             Text("编辑我们", style = MaterialTheme.typography.headlineMedium)
-            Text("情侣头像仅影响你这边的展示；空间名称与在一起的日子会同步给双方", color = Stone)
+            Text("情侣头像仅影响你这边的展示；空间名称与在一起的日子会同步给双方", color = LocalMood.current.stone)
 
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
@@ -1746,7 +1838,7 @@ private fun CoupleCardEditSheet(
                     modifier = Modifier
                         .size(104.dp)
                         .clip(CircleShape)
-                        .background(Blush)
+                        .background(LocalMood.current.blush)
                         .clickable { pickCover.launch(Unit) },
                     contentAlignment = Alignment.Center,
                 ) {
@@ -1772,7 +1864,7 @@ private fun CoupleCardEditSheet(
                             Icon(
                                 Icons.Rounded.AddAPhoto,
                                 contentDescription = null,
-                                tint = Rose,
+                                tint = LocalMood.current.soft,
                                 modifier = Modifier.size(32.dp),
                             )
                         }
@@ -1780,7 +1872,7 @@ private fun CoupleCardEditSheet(
                 }
                 Text(
                     if (hasCover) "点击更换情侣头像" else "设置一张我们一起的照片",
-                    color = Stone,
+                    color = LocalMood.current.stone,
                     style = MaterialTheme.typography.bodySmall,
                 )
                 if (hasCover) {
@@ -1789,7 +1881,7 @@ private fun CoupleCardEditSheet(
                             draftCoverUri = null
                             clearCover = true
                         },
-                        colors = ButtonDefaults.textButtonColors(contentColor = Stone),
+                        colors = ButtonDefaults.textButtonColors(contentColor = LocalMood.current.stone),
                     ) { Text("取消情侣头像") }
                 }
             }
@@ -1798,7 +1890,7 @@ private fun CoupleCardEditSheet(
                 value = name,
                 onValueChange = { name = it.take(40) },
                 label = "空间名称",
-                placeholder = "我们的小宇宙",
+                placeholder = defaultSpaceName,
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth(),
             )
@@ -1818,7 +1910,7 @@ private fun CoupleCardEditSheet(
             if (initialTogetherDate.isNullOrBlank() && !dateTouched) {
                 Text(
                     "尚未设置在一起的日子，选择日期后保存即可同步给双方",
-                    color = Stone,
+                    color = LocalMood.current.stone,
                     style = MaterialTheme.typography.bodySmall,
                 )
             }
@@ -1841,7 +1933,7 @@ private fun CoupleCardEditSheet(
                 enabled = name.isNotBlank(),
                 modifier = Modifier.fillMaxWidth().height(52.dp),
                 shape = RoundedCornerShape(22.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = Rose),
+                colors = ButtonDefaults.buttonColors(containerColor = LocalMood.current.soft),
             ) { Text("保存") }
         }
     }
@@ -1874,7 +1966,7 @@ private fun PhoneBindSheet(
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
-        containerColor = WarmBackground,
+        containerColor = LocalMood.current.background,
         shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
     ) {
         Column(
@@ -1882,7 +1974,7 @@ private fun PhoneBindSheet(
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
             Text("绑定另一半", style = MaterialTheme.typography.headlineMedium)
-            Text("输入对方已注册的手机号，等待对方同意后完成绑定", color = Stone)
+            Text("输入对方已注册的手机号，等待对方同意后完成绑定", color = LocalMood.current.stone)
             SoftTextField(
                 value = phone,
                 onValueChange = { phone = it.filter(Char::isDigit).take(11) },
@@ -1894,10 +1986,10 @@ private fun PhoneBindSheet(
             when {
                 phone.length < 11 -> Unit
                 lookingUp -> {
-                    Text("正在查找账号…", color = Stone, style = MaterialTheme.typography.bodySmall)
+                    Text("正在查找账号…", color = LocalMood.current.stone, style = MaterialTheme.typography.bodySmall)
                 }
                 lookup == null -> {
-                    Text("查找失败，请稍后重试", color = Stone, style = MaterialTheme.typography.bodySmall)
+                    Text("查找失败，请稍后重试", color = LocalMood.current.stone, style = MaterialTheme.typography.bodySmall)
                 }
                 lookup?.found != true -> {
                     Text("没有对应账号", color = MaterialTheme.colorScheme.error)
@@ -1912,7 +2004,7 @@ private fun PhoneBindSheet(
                         Modifier
                             .fillMaxWidth()
                             .clip(RoundedCornerShape(20.dp))
-                            .background(SoftSurface)
+                            .background(LocalMood.current.softSurface)
                             .padding(12.dp),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(12.dp),
@@ -1926,9 +2018,9 @@ private fun PhoneBindSheet(
                             Text(
                                 nickname.ifBlank { "Lover 用户" },
                                 fontWeight = FontWeight.SemiBold,
-                                color = DeepRose,
+                                color = LocalMood.current.accent,
                             )
-                            Text("已找到对方账号", color = Stone, style = MaterialTheme.typography.bodySmall)
+                            Text("已找到对方账号", color = LocalMood.current.stone, style = MaterialTheme.typography.bodySmall)
                         }
                     }
                 }
@@ -1938,7 +2030,7 @@ private fun PhoneBindSheet(
                 enabled = phone.length == 11 && lookup?.found == true && lookup?.self != true,
                 modifier = Modifier.fillMaxWidth().height(52.dp),
                 shape = RoundedCornerShape(22.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = Rose),
+                colors = ButtonDefaults.buttonColors(containerColor = LocalMood.current.soft),
             ) { Text("发送绑定请求") }
         }
     }
@@ -1949,16 +2041,16 @@ private fun SettingRow(icon: androidx.compose.ui.graphics.vector.ImageVector, ti
     Surface(
         modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp),
         shape = RoundedCornerShape(22.dp),
-        color = SoftSurface,
-        border = BorderStroke(1.dp, SoftOutline.copy(alpha = 0.65f)),
+        color = LocalMood.current.softSurface,
+        border = BorderStroke(1.dp, LocalMood.current.softOutline.copy(alpha = 0.65f)),
     ) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
-            Box(Modifier.size(40.dp).background(Blush, CircleShape), contentAlignment = Alignment.Center) {
-                Icon(icon, null, tint = Rose, modifier = Modifier.size(20.dp))
+            Box(Modifier.size(40.dp).background(LocalMood.current.blush, CircleShape), contentAlignment = Alignment.Center) {
+                Icon(icon, null, tint = LocalMood.current.soft, modifier = Modifier.size(20.dp))
             }
             Column(Modifier.weight(1f).padding(horizontal = 14.dp)) {
                 Text(title, fontWeight = FontWeight.SemiBold)
-                Text(detail, style = MaterialTheme.typography.bodySmall, color = Stone)
+                Text(detail, style = MaterialTheme.typography.bodySmall, color = LocalMood.current.stone)
             }
             Icon(Icons.Rounded.ChevronRight, null, tint = Stone.copy(alpha = 0.7f))
         }
@@ -1971,9 +2063,9 @@ private fun EmptyHint(text: String, icon: androidx.compose.ui.graphics.vector.Im
         Modifier.fillMaxWidth().padding(38.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        Icon(icon, null, tint = Rose.copy(alpha = .55f), modifier = Modifier.size(58.dp))
+        Icon(icon, null, tint = LocalMood.current.soft.copy(alpha = .55f), modifier = Modifier.size(58.dp))
         Spacer(Modifier.height(12.dp))
-        Text(text, color = Stone)
+        Text(text, color = LocalMood.current.stone)
     }
 }
 
@@ -1982,13 +2074,13 @@ private fun LetterDetail(letter: Letter, onDismiss: () -> Unit) {
     val unlocked = letter.isUnlocked
     AlertDialog(
         onDismissRequest = onDismiss,
-        icon = { Icon(if (unlocked) Icons.Rounded.Favorite else Icons.Rounded.Lock, null, tint = Rose) },
+        icon = { Icon(if (unlocked) Icons.Rounded.Favorite else Icons.Rounded.Lock, null, tint = LocalMood.current.soft) },
         title = { Text(letter.title) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text(if (unlocked) letter.content.orEmpty() else "这封时间胶囊将在 ${letter.unlockAt?.take(10)} 解锁。")
                 HorizontalDivider()
-                Text("${letter.senderNickname} · ${letter.createdAt.take(10)}", color = Stone)
+                Text("${letter.senderNickname} · ${letter.createdAt.take(10)}", color = LocalMood.current.stone)
             }
         },
         confirmButton = { TextButton(onClick = onDismiss) { Text("收好") } },

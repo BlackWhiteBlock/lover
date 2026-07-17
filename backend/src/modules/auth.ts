@@ -42,10 +42,23 @@ const avatarMime = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/heic
 type MeProfileRow = AuthUser & {
   avatarAssetId: string | null;
   coupleCoverAssetId: string | null;
+  createdAt?: Date | string | null;
 };
 
+function presentCreatedAt(value: Date | string | null | undefined): string | null {
+  if (value == null) return null;
+  if (value instanceof Date) return value.toISOString();
+  const text = String(value).trim();
+  return text || null;
+}
+
 async function presentMeUser(context: AppContext, profile: MeProfileRow, viewerUserId: string) {
-  const { avatarAssetId: _avatarAssetId, coupleCoverAssetId: _coverAssetId, ...rest } = profile;
+  const {
+    avatarAssetId: _avatarAssetId,
+    coupleCoverAssetId: _coverAssetId,
+    createdAt,
+    ...rest
+  } = profile;
   const [avatarUrl, coupleCoverUrl] = await Promise.all([
     presentUserAvatar(context, profile, viewerUserId),
     presentUserAvatar(
@@ -54,7 +67,7 @@ async function presentMeUser(context: AppContext, profile: MeProfileRow, viewerU
       viewerUserId,
     ),
   ]);
-  return { ...rest, avatarUrl, coupleCoverUrl };
+  return { ...rest, avatarUrl, coupleCoverUrl, createdAt: presentCreatedAt(createdAt) };
 }
 
 async function assertPersonalImageAsset(
@@ -149,7 +162,8 @@ export function registerAuth(app: FastifyInstance, context: AppContext) {
         `select id, phone, nickname, avatar_url as "avatarUrl",
                 gender, birthday::text as birthday,
                 profile_completed as "profileCompleted",
-                personal_space_id as "personalSpaceId"
+                personal_space_id as "personalSpaceId",
+                created_at as "createdAt"
          from users where phone = $1`,
         [input.phone],
       );
@@ -160,7 +174,8 @@ export function registerAuth(app: FastifyInstance, context: AppContext) {
            returning id, phone, nickname, avatar_url as "avatarUrl",
                      gender, birthday::text as birthday,
                      profile_completed as "profileCompleted",
-                     personal_space_id as "personalSpaceId"`,
+                     personal_space_id as "personalSpaceId",
+                     created_at as "createdAt"`,
           [input.phone, input.nickname ?? `用户${input.phone.slice(-4)}`],
         );
       }
@@ -179,7 +194,11 @@ export function registerAuth(app: FastifyInstance, context: AppContext) {
          values ($1, $2, $3, now() + make_interval(days => $4))`,
         [sessionId, user.id, tokenHash(refreshToken), config.jwt.refreshTtlDays],
       );
-      return { user, isNewUser, ...tokens(context, user.id, sessionId, refreshToken) };
+      return {
+        user: { ...user, createdAt: presentCreatedAt(user.createdAt as Date | string | null | undefined) },
+        isNewUser,
+        ...tokens(context, user.id, sessionId, refreshToken),
+      };
     });
     return reply.code(result.isNewUser ? 201 : 200).send(result);
   });
@@ -219,7 +238,8 @@ export function registerAuth(app: FastifyInstance, context: AppContext) {
               couple_cover_asset_id as "coupleCoverAssetId",
               gender, birthday::text as birthday,
               profile_completed as "profileCompleted",
-              personal_space_id as "personalSpaceId"
+              personal_space_id as "personalSpaceId",
+              created_at as "createdAt"
        from users where id = $1`,
       [request.user.id],
     );
@@ -264,7 +284,8 @@ export function registerAuth(app: FastifyInstance, context: AppContext) {
                  couple_cover_asset_id as "coupleCoverAssetId",
                  gender, birthday::text as birthday,
                  profile_completed as "profileCompleted",
-                 personal_space_id as "personalSpaceId"`,
+                 personal_space_id as "personalSpaceId",
+                 created_at as "createdAt"`,
       [
         request.user.id,
         input.avatarAssetId ?? null,

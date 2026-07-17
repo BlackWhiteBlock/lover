@@ -8,7 +8,6 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -48,23 +47,21 @@ import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
 
 private val SoftFieldShape = RoundedCornerShape(22.dp)
-private val SoftBorder = Color(0xFFE9DAD6)
-private val SoftFill = Color(0xFFFFF7F5)
 private val displayFormatter = DateTimeFormatter.ofPattern("yyyy年M月d日")
 
 @Composable
 fun softTextFieldColors() = OutlinedTextFieldDefaults.colors(
-    focusedBorderColor = Rose.copy(alpha = 0.55f),
-    unfocusedBorderColor = SoftBorder,
-    disabledBorderColor = SoftBorder.copy(alpha = 0.6f),
+    focusedBorderColor = LocalMood.current.soft.copy(alpha = 0.55f),
+    unfocusedBorderColor = LocalMood.current.softOutline,
+    disabledBorderColor = LocalMood.current.softOutline.copy(alpha = 0.6f),
     focusedContainerColor = Color.White.copy(alpha = 0.96f),
-    unfocusedContainerColor = SoftFill,
-    disabledContainerColor = SoftFill.copy(alpha = 0.85f),
-    cursorColor = Rose,
-    focusedLabelColor = DeepRose,
-    unfocusedLabelColor = Stone,
-    focusedTrailingIconColor = Rose,
-    unfocusedTrailingIconColor = Stone,
+    unfocusedContainerColor = LocalMood.current.softSurface,
+    disabledContainerColor = LocalMood.current.softSurface.copy(alpha = 0.85f),
+    cursorColor = LocalMood.current.soft,
+    focusedLabelColor = LocalMood.current.accent,
+    unfocusedLabelColor = LocalMood.current.stone,
+    focusedTrailingIconColor = LocalMood.current.soft,
+    unfocusedTrailingIconColor = LocalMood.current.stone,
 )
 
 @Composable
@@ -82,12 +79,13 @@ fun SoftTextField(
     trailingIcon: @Composable (() -> Unit)? = null,
     leadingIcon: @Composable (() -> Unit)? = null,
 ) {
+    val mood = LocalMood.current
     OutlinedTextField(
         value = value,
         onValueChange = onValueChange,
         modifier = modifier,
         label = label?.let { { Text(it) } },
-        placeholder = placeholder?.let { { Text(it, color = Stone.copy(alpha = 0.7f)) } },
+        placeholder = placeholder?.let { { Text(it, color = mood.stone.copy(alpha = 0.7f)) } },
         singleLine = singleLine && minLines == 1,
         minLines = minLines,
         readOnly = readOnly,
@@ -111,6 +109,7 @@ fun LoverDateField(
     maxDate: LocalDate? = null,
     supportingText: String? = null,
 ) {
+    val mood = LocalMood.current
     var showSheet by remember { mutableStateOf(false) }
     val parsed = remember(value) { runCatching { LocalDate.parse(value) }.getOrNull() }
     val display = parsed?.format(displayFormatter) ?: value.ifBlank { "请选择日期" }
@@ -123,7 +122,7 @@ fun LoverDateField(
                 label = label,
                 readOnly = true,
                 trailingIcon = {
-                    Icon(Icons.Rounded.CalendarMonth, contentDescription = null, tint = Rose)
+                    Icon(Icons.Rounded.CalendarMonth, contentDescription = null, tint = mood.soft)
                 },
                 modifier = Modifier.fillMaxWidth(),
             )
@@ -142,7 +141,7 @@ fun LoverDateField(
             Text(
                 supportingText,
                 style = MaterialTheme.typography.labelSmall,
-                color = Stone,
+                color = mood.stone,
                 modifier = Modifier.padding(start = 8.dp, top = 4.dp),
             )
         }
@@ -173,6 +172,7 @@ fun LoverDatePickerSheet(
     onDismiss: () -> Unit,
     onConfirm: (LocalDate) -> Unit,
 ) {
+    val mood = LocalMood.current
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val selectable = remember(minDate, maxDate) {
         object : SelectableDates {
@@ -192,7 +192,7 @@ fun LoverDatePickerSheet(
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
-        containerColor = WarmBackground,
+        containerColor = mood.background,
         shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
         dragHandle = {
             Box(
@@ -201,7 +201,7 @@ fun LoverDatePickerSheet(
                     .height(4.dp)
                     .fillMaxWidth(0.12f)
                     .clip(RoundedCornerShape(2.dp))
-                    .background(SoftBorder),
+                    .background(mood.softOutline),
             )
         },
     ) {
@@ -215,7 +215,7 @@ fun LoverDatePickerSheet(
             Text(
                 title,
                 style = MaterialTheme.typography.titleLarge,
-                color = DeepRose,
+                color = mood.accent,
                 fontWeight = FontWeight.Medium,
                 modifier = Modifier.padding(bottom = 8.dp),
             )
@@ -225,11 +225,11 @@ fun LoverDatePickerSheet(
                 headline = null,
                 showModeToggle = false,
                 colors = DatePickerDefaults.colors(
-                    containerColor = WarmBackground,
-                    selectedDayContainerColor = Rose,
+                    containerColor = mood.background,
+                    selectedDayContainerColor = mood.soft,
                     selectedDayContentColor = Color.White,
-                    todayDateBorderColor = Rose,
-                    selectedYearContainerColor = Rose,
+                    todayDateBorderColor = mood.soft,
+                    selectedYearContainerColor = mood.soft,
                     dayContentColor = Color(0xFF332927),
                 ),
             )
@@ -241,14 +241,14 @@ fun LoverDatePickerSheet(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 TextButton(onClick = onDismiss) {
-                    Text("取消", color = Stone)
+                    Text("取消", color = mood.stone)
                 }
                 Button(
                     onClick = {
                         val millis = state.selectedDateMillis ?: return@Button
                         onConfirm(millis.toUtcLocalDate())
                     },
-                    colors = ButtonDefaults.buttonColors(containerColor = Rose),
+                    colors = ButtonDefaults.buttonColors(containerColor = mood.soft),
                     shape = RoundedCornerShape(18.dp),
                     contentPadding = PaddingValues(horizontal = 22.dp, vertical = 10.dp),
                 ) {

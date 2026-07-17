@@ -45,8 +45,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
-import com.lover.app.core.design.Blush
-import com.lover.app.core.design.Rose
+import com.lover.app.core.design.LocalMood
 import com.lover.app.core.media.LocalMediaThumb
 import com.lover.app.core.media.isLocalVideoUri
 import com.lover.app.core.media.listMediaImageRequest
@@ -133,7 +132,7 @@ internal fun ReorderableMediaDraftGrid(
                                 alpha = if (draggingKey != null && !isDragging) 0.72f else 1f
                             }
                             .clip(RoundedCornerShape(16.dp))
-                            .background(Blush)
+                            .background(LocalMood.current.blush)
                             .then(
                                 if (canReorder) {
                                     Modifier.longPressDraggableHandle()
@@ -196,7 +195,7 @@ internal fun ReorderableMediaDraftGrid(
                             modifier = Modifier
                                 .align(Alignment.BottomStart)
                                 .padding(6.dp)
-                                .background(Rose.copy(alpha = 0.9f), RoundedCornerShape(6.dp))
+                                .background(LocalMood.current.soft.copy(alpha = 0.9f), RoundedCornerShape(6.dp))
                                 .padding(horizontal = 5.dp, vertical = 1.dp),
                         )
                     }

@@ -11,6 +11,8 @@ export interface AuthUser {
   birthday?: string | null;
   profileCompleted?: boolean;
   personalSpaceId?: string | null;
+  /** ISO timestamp — account registration time */
+  createdAt?: string | null;
 }
 
 export interface AccessClaims {

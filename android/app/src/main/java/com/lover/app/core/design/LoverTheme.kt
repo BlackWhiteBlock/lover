@@ -116,7 +116,8 @@ val SoleilMood = MoodPalette(
     background = Parchment,
     softOutline = SoleilOutline,
     softSurface = SoleilSurface,
-    appName = "Soleil.",
+    // Brand name stays Lover.; Soleil is the unlinked mood (palette / tagline).
+    appName = "lover.",
     tagline = "One heart · One day · One step",
     appNameColor = SoleilAppNameColor,
     logoTint = DustPurple.copy(alpha = 0.55f),

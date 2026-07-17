@@ -21,7 +21,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.lover.app.R
 
-/** App name wordmark — "lover." or "Soleil." depending on mood. */
+/** App name wordmark — always "lover."; color follows mood. */
 @Composable
 fun LoverAppName(
     modifier: Modifier = Modifier,
@@ -30,16 +30,16 @@ fun LoverAppName(
 ) {
     val mood = LocalMood.current
     Text(
-        text = mood.appName,
+        text = "lover.",
         modifier = modifier,
-        style = if (mood.solo) soleilAppNameStyle(fontSize) else loverAppNameStyle(fontSize),
+        style = loverAppNameStyle(fontSize).copy(color = mood.appNameColor),
         textAlign = textAlign,
     )
 }
 
 /**
  * Brand mark rendered from the SVG-derived vector (`lover_logo`).
- * In Soleil mood, tinted dusty purple.
+ * In solo mood, tinted dusty purple.
  */
 @Composable
 fun LoverLogo(

@@ -61,10 +61,8 @@ import androidx.media3.common.MediaItem as PlayerMediaItem
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.PlayerView
 import coil.compose.AsyncImage
-import com.lover.app.core.design.Blush
-import com.lover.app.core.design.Rose
 import com.lover.app.core.design.Stone
-import com.lover.app.core.design.WarmBackground
+import com.lover.app.core.design.LocalMood
 import com.lover.app.core.media.listMediaImageRequest
 import com.lover.app.core.model.CoupleMember
 import com.lover.app.core.model.MediaAssetPart
@@ -74,7 +72,6 @@ import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 import java.util.Locale
 
-private val CreamWhite = WarmBackground
 private val SoftRoseBorder = Color(0xFFFFF1F2)
 private val SoftRoseFill = Color(0xFFFFF1F2)
 private val LightRoseLine = Color(0xFFFECDD3)
@@ -109,7 +106,7 @@ fun MediaDetailScreen(
     Box(
         Modifier
             .fillMaxSize()
-            .background(CreamWhite),
+            .background(LocalMood.current.background),
     ) {
         Column(
             Modifier
@@ -131,7 +128,7 @@ fun MediaDetailScreen(
                         modifier = Modifier.fillMaxSize(),
                     )
                 } else {
-                    Box(Modifier.fillMaxSize().background(Blush))
+                    Box(Modifier.fillMaxSize().background(LocalMood.current.blush))
                 }
                 // 顶部保护 + 底部压暗
                 Box(
@@ -154,7 +151,7 @@ fun MediaDetailScreen(
                             Brush.verticalGradient(
                                 0f to Color.Transparent,
                                 0.55f to Color.Transparent,
-                                1f to CreamWhite,
+                                1f to LocalMood.current.background,
                             ),
                         ),
                 )
@@ -379,7 +376,7 @@ fun MediaDetailScreen(
                     Icon(
                         Icons.Rounded.Favorite,
                         contentDescription = null,
-                        tint = Rose.copy(alpha = 0.35f),
+                        tint = LocalMood.current.soft.copy(alpha = 0.35f),
                         modifier = Modifier.size(16.dp),
                     )
                     Text(
@@ -432,7 +429,7 @@ private fun MemoryMediaTile(
     val url = asset.previewUrl
     Box(
         modifier
-            .background(Blush)
+            .background(LocalMood.current.blush)
             .clickable(onClick = onClick),
     ) {
         if (url.isNotBlank()) {

@@ -41,9 +41,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
-import com.lover.app.core.design.Blush
-import com.lover.app.core.design.Rose
-import com.lover.app.core.design.Stone
+import com.lover.app.core.design.LocalMood
 import com.lover.app.core.media.listMediaImageRequest
 import com.lover.app.core.model.MediaAssetPart
 import com.lover.app.core.model.MediaItem
@@ -222,7 +220,7 @@ private fun FeaturedTimelineCard(
             .fillMaxWidth()
             .height(300.dp)
             .clip(RoundedCornerShape(40.dp))
-            .background(Blush)
+            .background(LocalMood.current.blush)
             .clickable(onClick = onClick),
     ) {
         Box(
@@ -300,7 +298,7 @@ private fun FeaturedTimelineCard(
                     if (extra != null) {
                         MediaThumb(part = extra, alpha = 0.45f)
                     } else {
-                        Box(Modifier.fillMaxSize().background(Blush))
+                        Box(Modifier.fillMaxSize().background(LocalMood.current.blush))
                     }
                     Box(
                         Modifier
@@ -323,7 +321,7 @@ private fun FeaturedTimelineCard(
             ) {
                 Text(
                     item.mediaDate,
-                    color = Stone.copy(alpha = 0.75f),
+                    color = LocalMood.current.stone.copy(alpha = 0.75f),
                     style = MaterialTheme.typography.labelSmall,
                     fontSize = 9.sp,
                     maxLines = 2,
@@ -332,7 +330,7 @@ private fun FeaturedTimelineCard(
                 if (item.assetCount > 1) {
                     Text(
                         text = "${item.assetCount} \u5f20",
-                        color = Stone.copy(alpha = 0.45f),
+                        color = LocalMood.current.stone.copy(alpha = 0.45f),
                         style = MaterialTheme.typography.labelSmall,
                         fontSize = 9.sp,
                     )
@@ -353,7 +351,7 @@ private fun CardSingle(
             .fillMaxWidth()
             .height(height)
             .clip(RoundedCornerShape(28.dp))
-            .background(Blush)
+            .background(LocalMood.current.blush)
             .clickable(onClick = onClick),
     ) {
         MediaThumb(part = item.cover, contentDescription = item.caption)
@@ -445,7 +443,7 @@ private fun CardStrip(
                         .weight(1f)
                         .fillMaxHeight()
                         .clip(RoundedCornerShape(12.dp))
-                        .background(Rose.copy(alpha = 0.12f)),
+                        .background(LocalMood.current.soft.copy(alpha = 0.12f)),
                     contentAlignment = Alignment.Center,
                 ) {
                     if (part != null) {
@@ -455,7 +453,7 @@ private fun CardStrip(
                         Icon(
                             Icons.Rounded.Image,
                             contentDescription = null,
-                            tint = Rose.copy(alpha = 0.35f),
+                            tint = LocalMood.current.soft.copy(alpha = 0.35f),
                             modifier = Modifier.size(16.dp),
                         )
                     }
@@ -470,14 +468,14 @@ private fun CardStrip(
             ) {
                 Text(
                     item.caption.ifBlank { "\u672a\u547d\u540d\u65f6\u5149" },
-                    color = Stone,
+                    color = LocalMood.current.stone,
                     style = MaterialTheme.typography.labelMedium,
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
                 )
                 Text(
                     item.mediaDate,
-                    color = Stone.copy(alpha = 0.45f),
+                    color = LocalMood.current.stone.copy(alpha = 0.45f),
                     style = MaterialTheme.typography.labelSmall,
                     fontSize = 9.sp,
                 )
@@ -508,7 +506,7 @@ private fun CardDuo(
                 .fillMaxWidth()
                 .weight(3f)
                 .clip(RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp))
-                .background(Blush),
+                .background(LocalMood.current.blush),
         ) {
             MediaThumb(part = top, contentDescription = item.caption)
             Box(
@@ -537,7 +535,7 @@ private fun CardDuo(
                 .fillMaxWidth()
                 .weight(2f)
                 .clip(RoundedCornerShape(bottomStart = 28.dp, bottomEnd = 28.dp))
-                .background(Blush),
+                .background(LocalMood.current.blush),
         ) {
             MediaThumb(part = bottom)
             Box(
@@ -584,7 +582,7 @@ private fun MediaThumb(
                 .alpha(alpha),
         )
     } else {
-        Box(modifier = Modifier.fillMaxSize().background(Blush))
+        Box(modifier = Modifier.fillMaxSize().background(LocalMood.current.blush))
     }
 }
 
