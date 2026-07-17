@@ -1,42 +1,60 @@
 ---
-description: Compose Modifier 命名与传参约定，避免 modifier/Modifier 混用
+description: Compose Modifier naming: import/type use Modifier (M), param use modifier (m)
 globs: android/**/*.kt
-alwaysApply: false
+alwaysApply: true
 ---
 
-# Compose `modifier` 约定
+# Compose modifier / Modifier rules (mandatory)
 
-Kotlin 大小写敏感。`Modifier`（参数名 / 局部变量）与 `Modifier`（Compose 类型/伴生对象）绝不能混用。
+Kotlin is case-sensitive. Never mix these three:
 
-## 命名参数必须用小写 `modifier`
+| Role | Correct spelling |
+|------|------------------|
+| import type | `import androidx.compose.ui.Modifier` (**capital M**) |
+| parameter / local var | `modifier` (**lowercase m**) |
+| type / companion factory | `Modifier` (**capital M**) |
+
+## 1. import MUST be capital-M Modifier (most common mistake)
 
 ```kotlin
-// ❌ BAD — 参数名误写成大写 Modifier（会导致 Box 等 content 重载匹配失败）
+// BAD — package does not exist; compile fails
+import androidx.compose.ui.modifier
+
+// GOOD — capital M
+import androidx.compose.ui.Modifier
+```
+
+When creating any new Compose file, verify this import first. Do not carry the lowercase parameter name `modifier` into the import path.
+
+## 2. Named argument must be lowercase modifier
+
+```kotlin
+// BAD — uppercase named arg breaks Box content overload match
 Box(Modifier = Modifier.fillMaxWidth()) { ... }
 
-// ✅ GOOD — 参数名小写 modifier，右侧类型/工厂大写 Modifier
+// GOOD — lowercase arg name, uppercase type/factory
 Box(modifier = Modifier.fillMaxWidth()) { ... }
 ```
 
-## 传入值时写全 `modifier = Modifier.…`
+## 3. Prefer explicit `modifier = Modifier.…`
 
 ```kotlin
-// ❌ BAD — 当前 Composable 没有 modifier 参数时，裸写 modifier.xxx 会 Unresolved
-// ❌ BAD — 或误写成 Modifier.weight 却漏了 modifier =（难读、易再错）
-Column(Modifier.weight(1f)) { ... }
+// BAD
+Column(modifier.weight(1f)) { ... }
 
-// ✅ GOOD — 默认写法：显式命名参数 + Modifier 工厂
+// GOOD
 Column(modifier = Modifier.weight(1f)) { ... }
 
-// ✅ GOOD — 仅当函数声明了 modifier: Modifier 时，才链式用小写变量
+// GOOD — chain lowercase only when the param exists
 @Composable
 fun Foo(modifier: Modifier = Modifier) {
     Column(modifier = modifier.fillMaxWidth()) { ... }
 }
 ```
 
-## 自检（改完 Compose 布局必做）
+## Checklist after editing Compose UI
 
-1. 命名参数只能是小写：`modifier =`
-2. 新建 Modifier 链用大写：`Modifier.…`
-3. 小写 `modifier.xxx` 仅当本函数参数列表里已有 `modifier: Modifier`
+1. Import is exactly: `import androidx.compose.ui.Modifier` (capital M)
+2. Named args use lowercase: `modifier =`
+3. New chains use capital: `Modifier.…`
+4. Lowercase `modifier.xxx` only if the function declares `modifier: Modifier`

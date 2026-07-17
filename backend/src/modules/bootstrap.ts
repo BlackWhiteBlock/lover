@@ -38,7 +38,7 @@ export function registerBootstrap(app: FastifyInstance, context: AppContext, aut
           [request.user.id],
         ),
       listRecentMedia(context, spaceIds, 8),
-      loadTodayQuote(context, today),
+      loadTodayQuote(context, today, link ? 'couple' : 'solo'),
     ]);
     const memberCards = await Promise.all(
       members.rows.map(async (member) => {

@@ -42,11 +42,14 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         setContent {
-            LoverTheme {
-                Surface(Modifier.fillMaxSize()) {
-                    val mainViewModel: MainViewModel = hiltViewModel()
-                    val state by mainViewModel.data.collectAsStateWithLifecycle()
-                    val restoreComplete by mainViewModel.restoreComplete.collectAsStateWithLifecycle()
+            val mainViewModel: MainViewModel = hiltViewModel()
+            val state by mainViewModel.data.collectAsStateWithLifecycle()
+            val restoreComplete by mainViewModel.restoreComplete.collectAsStateWithLifecycle()
+            // Unlinked (personal) journey uses Soleil diary mood until a partner binds.
+            val soloMode = state.accessToken != null && !state.linked
+
+            LoverTheme(soloMode = soloMode) {
+                Surface(modifier = Modifier.fillMaxSize()) {
                     var splashDone by rememberSaveable { mutableStateOf(false) }
 
                     LaunchedEffect(state.accessToken) {
@@ -55,12 +58,12 @@ class MainActivity : ComponentActivity() {
                         }
                     }
 
-                    Box(Modifier.fillMaxSize()) {
+                    Box(modifier = Modifier.fillMaxSize()) {
                         when {
                             // 含重新登录：sessionReady=false 时继续转圈，等绑定数据写完再进主界面
                             !state.sessionLoaded ||
                                 (state.accessToken != null && (!restoreComplete || !state.sessionReady)) -> {
-                                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                                     CircularProgressIndicator()
                                 }
                             }

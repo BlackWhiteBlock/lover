@@ -99,12 +99,17 @@ fun MainScreen(viewModel: MainViewModel) {
         tab != MainTab.PROFILE &&
         incomingBind.id !in postponedBindIds
 
-    Box(Modifier.fillMaxSize()) {
+    val mood = LocalMood.current
+    Box(modifier = Modifier.fillMaxSize()) {
         Scaffold(
-            containerColor = WarmBackground,
+            containerColor = mood.background,
             bottomBar = {
                 if (!overlayOpen) {
-                    LoverNavigation(selected = tab, onSelect = viewModel::selectTab)
+                    LoverNavigation(
+                        selected = tab,
+                        onSelect = viewModel::selectTab,
+                        soloMode = !state.linked,
+                    )
                 }
             },
             floatingActionButton = {
@@ -118,7 +123,7 @@ fun MainScreen(viewModel: MainViewModel) {
                     if (target != null) {
                         FloatingActionButton(
                             onClick = { editor = target },
-                            containerColor = Rose,
+                            containerColor = mood.soft,
                             shape = RoundedCornerShape(22.dp),
                             elevation = FloatingActionButtonDefaults.elevation(4.dp, 6.dp),
                         ) { Icon(Icons.Rounded.Add, "新增", tint = Color.White) }
@@ -154,11 +159,6 @@ fun MainScreen(viewModel: MainViewModel) {
                             state,
                             onMedia = { item ->
                                 viewModel.openMediaDetail(item) { mediaDetail = it }
-                            },
-                            onCapture = { editor = Editor.MEDIA },
-                            onWrite = {
-                                viewModel.selectTab(MainTab.LETTERS)
-                                editor = Editor.LETTER
                             },
                             onViewAllTimeline = { viewModel.selectTab(MainTab.TIMELINE) },
                         )
@@ -349,7 +349,7 @@ private fun IncomingBindDialog(
         title = { Text("收到绑定邀请") },
         text = {
             Text(
-                "有一个来自「$inviterLabel」的绑定邀请，请及时到「我们」里去处理",
+                "有一个来自「$inviterLabel」的绑定邀请，请及时到「我」里去处理",
                 color = Stone,
             )
         },
@@ -372,23 +372,29 @@ private fun IncomingBindDialog(
 private fun LoverNavigation(
     selected: MainTab,
     onSelect: (MainTab) -> Unit,
+    soloMode: Boolean,
 ) {
+    val mood = LocalMood.current
     val tabs = listOf(
         Triple(MainTab.HOME, "空间", Icons.Rounded.Favorite),
         Triple(MainTab.TIMELINE, "时光", Icons.Rounded.PhotoLibrary),
         Triple(MainTab.ANNIVERSARY, "纪念", Icons.Rounded.Event),
         Triple(MainTab.LETTERS, "信封", Icons.Rounded.Mail),
-        Triple(MainTab.PROFILE, "我们", Icons.Rounded.People),
+        Triple(
+            MainTab.PROFILE,
+            if (soloMode) "我" else "我们",
+            if (soloMode) Icons.Rounded.Person else Icons.Rounded.People,
+        ),
     )
     Surface(
         modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
         shape = RoundedCornerShape(36.dp),
         shadowElevation = 8.dp,
         tonalElevation = 0.dp,
-        color = Color.White.copy(alpha = .96f),
-        border = BorderStroke(1.dp, SoftOutline.copy(alpha = 0.55f)),
+        color = (if (soloMode) mood.softSurface else Color.White).copy(alpha = .96f),
+        border = BorderStroke(1.dp, mood.softOutline.copy(alpha = 0.55f)),
     ) {
-        Row(Modifier.fillMaxWidth().padding(horizontal = 5.dp, vertical = 4.dp)) {
+        Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 5.dp, vertical = 4.dp)) {
             tabs.forEach { (tab, label, icon) ->
                 val scale by animateFloatAsState(
                     targetValue = if (selected == tab) 1.06f else 1f,
@@ -406,18 +412,18 @@ private fun LoverNavigation(
                                     Modifier
                                         .padding(top = 3.dp)
                                         .size(width = 12.dp, height = 3.dp)
-                                        .background(Rose, RoundedCornerShape(2.dp)),
+                                        .background(mood.soft, RoundedCornerShape(2.dp)),
                                 )
                             }
                         }
                     },
                     label = { Text(label) },
                     colors = NavigationBarItemDefaults.colors(
-                        selectedIconColor = Rose,
-                        selectedTextColor = Rose,
+                        selectedIconColor = mood.soft,
+                        selectedTextColor = mood.soft,
                         indicatorColor = Color.Transparent,
-                        unselectedIconColor = Stone,
-                        unselectedTextColor = Stone,
+                        unselectedIconColor = mood.stone,
+                        unselectedTextColor = mood.stone,
                     ),
                 )
             }
@@ -443,16 +449,14 @@ private fun PageHeader(title: String, subtitle: String, action: (@Composable () 
 private fun HomePage(
     state: AppState,
     onMedia: (MediaItem) -> Unit,
-    onCapture: () -> Unit,
-    onWrite: () -> Unit,
     onViewAllTimeline: () -> Unit,
 ) {
+    val mood = LocalMood.current
     val days = state.lovingDays ?: 0
     LazyColumn(contentPadding = PaddingValues(bottom = 28.dp)) {
         item {
-            LoverBrandRow(
-                modifier = Modifier.padding(horizontal = 22.dp, vertical = 18.dp),
-                logoSize = 44.dp,
+            HomeTopBar(
+                modifier = Modifier.padding(horizontal = 22.dp, vertical = 16.dp),
             )
         }
         item {
@@ -466,19 +470,55 @@ private fun HomePage(
                     Modifier
                         .fillMaxWidth()
                         .background(
-                            Brush.linearGradient(listOf(Blush, Peach.copy(alpha = .7f))),
+                            Brush.linearGradient(
+                                listOf(mood.blush, mood.peach.copy(alpha = .7f)),
+                            ),
                             RoundedCornerShape(34.dp),
                         )
                         .padding(30.dp),
                 ) {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {
-                        Text("Loving Journey", style = MaterialTheme.typography.labelMedium, color = DeepRose)
-                        Spacer(Modifier.height(8.dp))
-                        Row(verticalAlignment = Alignment.Bottom) {
-                            Text("$days", style = MaterialTheme.typography.displayLarge)
-                            Text(" 天", style = MaterialTheme.typography.titleLarge, modifier = Modifier.padding(bottom = 8.dp), color = Stone)
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        if (mood.solo) {
+                            Text(
+                                "WAITING",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = mood.accent,
+                            )
+                            Spacer(modifier = Modifier.height(10.dp))
+                            Text(
+                                "等待你的出现",
+                                style = MaterialTheme.typography.headlineMedium,
+                                color = mood.accent.copy(alpha = 0.92f),
+                                textAlign = TextAlign.Center,
+                            )
+                            Spacer(modifier = Modifier.height(10.dp))
+                            Text(
+                                "每一天，都是给未来的礼物",
+                                color = mood.stone,
+                                style = MaterialTheme.typography.bodyMedium,
+                                textAlign = TextAlign.Center,
+                            )
+                        } else {
+                            Text(
+                                "Loving Journey",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = mood.accent,
+                            )
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Row(verticalAlignment = Alignment.Bottom) {
+                                Text("$days", style = MaterialTheme.typography.displayLarge)
+                                Text(
+                                    " 天",
+                                    style = MaterialTheme.typography.titleLarge,
+                                    modifier = Modifier.padding(bottom = 8.dp),
+                                    color = mood.stone,
+                                )
+                            }
+                            Text("每一天，都算数", color = mood.stone)
                         }
-                        Text("每一天，都算数", color = Stone)
                     }
                     LoverLogoPhoto(
                         modifier = Modifier
@@ -492,27 +532,19 @@ private fun HomePage(
             }
         }
         item {
-            Row(
-                Modifier.padding(20.dp).fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-            ) {
-                QuickAction("写情书", "WRITE LOVE", Icons.Rounded.Edit, Modifier.weight(1f), onWrite)
-                QuickAction("存瞬间", "CAPTURE NOW", Icons.Rounded.CameraAlt, Modifier.weight(1f), onCapture)
-            }
-        }
-        item {
+            Spacer(modifier = Modifier.height(8.dp))
             DailyQuoteCard(
                 quote = state.dailyQuote,
                 modifier = Modifier.padding(horizontal = 20.dp),
             )
         }
         item {
-            Spacer(Modifier.height(8.dp))
+            Spacer(modifier = Modifier.height(8.dp))
             if (state.media.isEmpty()) {
                 Text(
                     "近期掠影",
                     style = MaterialTheme.typography.titleMedium,
-                    color = DeepRose.copy(alpha = 0.55f),
+                    color = mood.accent.copy(alpha = 0.55f),
                     modifier = Modifier.padding(horizontal = 22.dp),
                 )
                 EmptyHint("还没有影像，存下第一个瞬间吧", Icons.Rounded.PhotoCamera)
@@ -524,35 +556,6 @@ private fun HomePage(
                     modifier = Modifier.padding(horizontal = 20.dp),
                 )
             }
-        }
-    }
-}
-
-@Composable
-private fun QuickAction(
-    title: String,
-    subtitle: String,
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
-    modifier: Modifier,
-    onClick: () -> Unit,
-) {
-    Card(
-        modifier.clickable(onClick = onClick),
-        colors = CardDefaults.cardColors(containerColor = Color.White.copy(alpha = 0.92f)),
-        shape = RoundedCornerShape(28.dp),
-        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
-        border = BorderStroke(1.dp, SoftOutline.copy(alpha = 0.65f)),
-    ) {
-        Column(Modifier.padding(20.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-            Box(
-                Modifier.size(48.dp).background(Blush, CircleShape),
-                contentAlignment = Alignment.Center,
-            ) {
-                Icon(icon, null, tint = Rose)
-            }
-            Spacer(Modifier.height(14.dp))
-            Text(title, fontWeight = FontWeight.SemiBold)
-            Text(subtitle, style = MaterialTheme.typography.labelSmall, color = Stone)
         }
     }
 }
