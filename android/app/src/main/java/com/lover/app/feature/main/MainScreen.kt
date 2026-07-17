@@ -63,6 +63,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.DialogProperties
 import coil.compose.AsyncImage
+import com.lover.app.BuildConfig
 import com.lover.app.R
 import com.lover.app.core.design.*
 import com.lover.app.core.media.LocalMediaThumb
@@ -1110,7 +1111,7 @@ private fun ProfilePage(
         item { Spacer(Modifier.height(20.dp)); Text("空间设置", style = MaterialTheme.typography.titleLarge) }
         item { SettingRow(Icons.Rounded.Palette, "空间装扮", "暖玫瑰 · 默认主题") }
         item { SettingRow(Icons.Rounded.Lock, "隐私控制", "仅情侣双方可见") }
-        item { SettingRow(Icons.Rounded.Info, "关于 Lover", "版本 1.0.0") }
+        item { SettingRow(Icons.Rounded.Info, "关于 Lover", "版本 ${BuildConfig.VERSION_NAME}") }
         item {
             Spacer(Modifier.height(20.dp))
             if (hasPartner) {

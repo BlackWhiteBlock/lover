@@ -351,21 +351,31 @@ async function sendSms(context: AppContext, phone: string, code: string) {
     console.info(`[SMS dev] ${phone}: ${code}`);
     return;
   }
-  // Loaded only in production SMS mode, keeping local development dependency-free from cloud credentials.
-  const Dysmsapi = require('@alicloud/dysmsapi20170525').default as new (config: $OpenApiUtil.Config) => SmsClient;
+  // Loaded only in production SMS mode; must pass a real SendSmsRequest (plain object has no .validate).
+  const DysmsapiMod = require('@alicloud/dysmsapi20170525') as {
+    default?: new (config: $OpenApiUtil.Config) => SmsClient;
+    SendSmsRequest: new (opts: {
+      phoneNumbers?: string;
+      signName?: string;
+      templateCode?: string;
+      templateParam?: string;
+    }) => SendSmsRequest;
+  };
+  const Client = DysmsapiMod.default ?? (DysmsapiMod as unknown as new (config: $OpenApiUtil.Config) => SmsClient);
   const { $OpenApiUtil } = require('@alicloud/openapi-core') as typeof import('@alicloud/openapi-core');
-  const client = new Dysmsapi(
+  const client = new Client(
     new $OpenApiUtil.Config({
       accessKeyId: context.config.sms.aliyun.accessKeyId,
       accessKeySecret: context.config.sms.aliyun.accessKeySecret,
       endpoint: 'dysmsapi.aliyuncs.com',
     }),
   );
-  const response = await client.sendSms({
+  const request = new DysmsapiMod.SendSmsRequest({
     phoneNumbers: phone,
     signName: context.config.sms.aliyun.signName,
     templateCode: context.config.sms.aliyun.templateCode,
     templateParam: JSON.stringify({ code }),
-  } as SendSmsRequest);
+  });
+  const response = await client.sendSms(request);
   if (response.body?.code !== 'OK') throw new Error(response.body?.message ?? '短信发送失败');
 }
