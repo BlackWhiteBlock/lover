@@ -165,6 +165,7 @@ data class AppState(
     val loverSpaceId: String? = null,
     val profileCompleted: Boolean = false,
     val linked: Boolean = false,
+    val coupleLinkId: String? = null,
     val couple: CoupleSpace? = null,
     /** 与 CoupleSpace 同步；单独存放避免嵌套反序列化丢失 */
     val pendingIncomingBinds: List<IncomingBindRequest> = emptyList(),
@@ -181,6 +182,8 @@ data class AppState(
      * 避免 saveTokens 后立刻进主界面、绑定状态还是空的。
      */
     val sessionReady: Boolean = false,
+    /** 已播过「单身→恋爱」主题转场的 coupleLinkId（每段关系只播一次） */
+    val coupleThemeRevealShownLinkId: String? = null,
     @Transient val sessionLoaded: Boolean = false,
 )
 

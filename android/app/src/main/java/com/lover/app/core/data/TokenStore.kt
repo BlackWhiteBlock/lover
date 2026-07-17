@@ -39,6 +39,7 @@ class TokenStore @Inject constructor(
         .map { preferences ->
             preferences[stateKey]
                 ?.let { runCatching { json.decodeFromString<AppState>(it) }.getOrNull() }
+                ?.withoutEphemeralSignedUrls()
                 ?: AppState()
         }
         .map {
@@ -67,10 +68,21 @@ class TokenStore @Inject constructor(
             // 反序列化失败时用内存态，避免把已写入的绑定邀请冲成空 AppState
             val current = persisted ?: memoryState
             val next = transform(current).copy(loading = false)
+            // 内存保留签名 URL（本次会话复用）；落盘去掉，避免冷启动复用过期/旧域名（如 http://*.clouddn.com）
             memoryState = next.copy(sessionLoaded = true)
-            preferences[stateKey] = json.encodeToString(next)
+            preferences[stateKey] = json.encodeToString(next.withoutEphemeralSignedUrls())
         }
     }
+
+    private fun AppState.withoutEphemeralSignedUrls(): AppState = copy(
+        media = media.map { item ->
+            item.copy(
+                assets = item.assets.map { part ->
+                    part.copy(url = "", thumbnailUrl = null)
+                },
+            )
+        },
+    )
 
     suspend fun saveTokens(accessToken: String, refreshToken: String) {
         tokensWrittenInProcess = true

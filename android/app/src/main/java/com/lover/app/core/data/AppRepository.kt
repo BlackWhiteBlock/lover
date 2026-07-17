@@ -2,6 +2,7 @@ package com.lover.app.core.data
 
 import android.net.Uri
 import com.lover.app.core.media.ContentMediaResolver
+import com.lover.app.core.media.MediaLoadDiagnostics
 import com.lover.app.core.media.ResolvedMedia
 import com.lover.app.core.media.VideoThumbnailExtractor
 import com.lover.app.core.model.*
@@ -157,8 +158,21 @@ class AppRepository @Inject constructor(
 
     suspend fun acceptBind(id: String): AcceptBindResponse {
         val result = call { api.acceptBind(id) }
+        tokenStore.update {
+            it.copy(
+                linked = true,
+                coupleLinkId = result.coupleLinkId,
+                loverSpaceId = result.loverSpaceId,
+                needsTogetherDate = result.needsTogetherDate,
+            )
+        }
         refreshAll()
         return result
+    }
+
+    suspend fun markCoupleThemeRevealShown(linkId: String) {
+        if (linkId.isBlank()) return
+        tokenStore.update { it.copy(coupleThemeRevealShownLinkId = linkId) }
     }
 
     suspend fun rejectBind(id: String) {
@@ -302,6 +316,9 @@ class AppRepository @Inject constructor(
                     ?: couple?.loverSpaceId
                     ?: it.loverSpaceId,
                 linked = me?.linked == true || bootstrap?.linked == true || couple?.linked == true,
+                coupleLinkId = bootstrap?.coupleLinkId
+                    ?: couple?.coupleLinkId
+                    ?: it.coupleLinkId,
                 couple = couple,
                 pendingIncomingBinds = incoming,
                 pendingOutgoingBind = outgoing,
@@ -358,7 +375,7 @@ class AppRepository @Inject constructor(
 
     private fun canReuseSignedThumbs(item: MediaItem, prev: MediaItem): Boolean {
         if (mediaAssetFingerprint(item.assets) != mediaAssetFingerprint(prev.assets)) return false
-        return prev.assets.any { !it.thumbnailUrl.isNullOrBlank() }
+        return prev.assets.any { isReusableSignedUrl(it.thumbnailUrl) || isReusableSignedUrl(it.url) }
     }
 
     private fun mergeSignedThumbs(item: MediaItem, prev: MediaItem): MediaItem {
@@ -366,13 +383,42 @@ class AppRepository @Inject constructor(
         val prevByAssetId = prev.assets.associateBy { it.assetId }
         val merged = item.assets.map { part ->
             val cached = prevByPartId[part.id] ?: prevByAssetId[part.assetId]
-            if (cached != null && !cached.thumbnailUrl.isNullOrBlank()) {
-                part.copy(url = cached.url, thumbnailUrl = cached.thumbnailUrl)
+            val thumb = cached?.thumbnailUrl?.takeIf { isReusableSignedUrl(it) }
+            val original = cached?.url?.takeIf { isReusableSignedUrl(it) }.orEmpty()
+            if (thumb != null || original.isNotBlank()) {
+                part.copy(url = original, thumbnailUrl = thumb)
             } else {
                 part
             }
         }
         return item.copy(assets = merged)
+    }
+
+    /**
+     * 签名 URL 会落盘；域名切换后若继续复用旧的 http://*.clouddn.com，
+     * Release（禁明文）会整页白图，而服务端 diagnose 已是 https 自定义域。
+     */
+    private fun isReusableSignedUrl(url: String?): Boolean {
+        if (url.isNullOrBlank()) return false
+        if (!url.startsWith("https://", ignoreCase = true)) {
+            MediaLoadDiagnostics.note(
+                "sign",
+                "drop stale cleartext url host=${runCatching { java.net.URI(url).host }.getOrNull()}",
+                showDialog = false,
+            )
+            return false
+        }
+        if (url.contains("clouddn.com", ignoreCase = true) ||
+            url.contains("qiniucdn.com", ignoreCase = true)
+        ) {
+            MediaLoadDiagnostics.note(
+                "sign",
+                "drop stale qiniu test-domain url",
+                showDialog = false,
+            )
+            return false
+        }
+        return true
     }
 
     /** 列表/掠影：只签缩略图，避免刷屏拉原图；thumb 失败时回退原图，避免迁移后整页空白 */
@@ -384,12 +430,26 @@ class AppRepository @Inject constructor(
                 else -> {
                     runCatching {
                         call { api.signAsset(part.assetId, SignAssetRequest("thumb")) }.url
-                    }.getOrElse {
+                    }.getOrElse { thumbError ->
+                        MediaLoadDiagnostics.onSignFailed(part.assetId, "thumb", thumbError)
                         call { api.signAsset(part.assetId, SignAssetRequest("original")) }.url
                     }
                 }
             }
+        }.onFailure { error ->
+            MediaLoadDiagnostics.onSignFailed(part.assetId, "list", error)
         }.getOrNull()
+        if (thumbUrl.isNullOrBlank()) {
+            MediaLoadDiagnostics.onSignEmpty(part.assetId)
+        } else {
+            MediaLoadDiagnostics.note(
+                "sign",
+                "asset=${part.assetId} ok scheme=${thumbUrl.substringBefore("://", "?")} host=${
+                    runCatching { java.net.URI(thumbUrl).host }.getOrNull() ?: "?"
+                }",
+                showDialog = false,
+            )
+        }
         return part.copy(url = "", thumbnailUrl = thumbUrl)
     }
 
@@ -400,7 +460,10 @@ class AppRepository @Inject constructor(
                 if (part.url.isNotBlank()) return@async part
                 val url = runCatching {
                     call { api.signAsset(part.assetId, SignAssetRequest("original")) }.url
+                }.onFailure { error ->
+                    MediaLoadDiagnostics.onSignFailed(part.assetId, "original", error)
                 }.getOrDefault("")
+                if (url.isBlank()) MediaLoadDiagnostics.onSignEmpty(part.assetId)
                 part.copy(url = url)
             }
         }.awaitAll()

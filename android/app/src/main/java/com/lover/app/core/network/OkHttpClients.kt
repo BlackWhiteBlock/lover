@@ -11,10 +11,13 @@ import okhttp3.Protocol
 import okhttp3.TlsVersion
 
 /**
- * Shared OkHttp defaults for talking to nginx / Baota reverse proxies.
+ * Shared OkHttp defaults for talking to nginx / Baota reverse proxies / Qiniu CDN.
  *
  * Prefer IPv4; force HTTP/1.1; use browser-like UA; prefer TLS 1.2 on device
  * networks that reset non-browser TLS 1.3 handshakes before they reach nginx.
+ *
+ * API and Coil must share these transport defaults. Release forbids cleartext;
+ * Coil previously used the platform stack and could fail while Retrofit still worked.
  */
 object OkHttpClients {
     private val ipv4PreferredDns = object : Dns {
@@ -25,7 +28,11 @@ object OkHttpClients {
         }
     }
 
-    private val browserLikeHeaders = Interceptor { chain ->
+    private val tls12 = ConnectionSpec.Builder(ConnectionSpec.MODERN_TLS)
+        .tlsVersions(TlsVersion.TLS_1_2)
+        .build()
+
+    private fun browserLikeHeaders(accept: String) = Interceptor { chain ->
         chain.proceed(
             chain.request().newBuilder()
                 .header(
@@ -33,16 +40,12 @@ object OkHttpClients {
                     "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 " +
                         "(KHTML, like Gecko) Chrome/122.0.0.0 Mobile Safari/537.36 LoverApp/1.0",
                 )
-                .header("Accept", "application/json, text/plain, */*")
+                .header("Accept", accept)
                 .build(),
         )
     }
 
-    private val tls12 = ConnectionSpec.Builder(ConnectionSpec.MODERN_TLS)
-        .tlsVersions(TlsVersion.TLS_1_2)
-        .build()
-
-    fun builder(): OkHttpClient.Builder =
+    private fun baseBuilder(accept: String): OkHttpClient.Builder =
         OkHttpClient.Builder()
             .dns(ipv4PreferredDns)
             .protocols(listOf(Protocol.HTTP_1_1))
@@ -50,5 +53,13 @@ object OkHttpClients {
             .connectTimeout(20, TimeUnit.SECONDS)
             .readTimeout(30, TimeUnit.SECONDS)
             .writeTimeout(30, TimeUnit.SECONDS)
-            .addInterceptor(browserLikeHeaders)
+            .addInterceptor(browserLikeHeaders(accept))
+
+    /** Retrofit / JSON APIs. */
+    fun builder(): OkHttpClient.Builder =
+        baseBuilder("application/json, text/plain, */*")
+
+    /** Coil / media downloads — do not send Accept: application/json. */
+    fun mediaBuilder(): OkHttpClient.Builder =
+        baseBuilder("image/avif,image/webp,image/apng,image/*,*/*;q=0.8")
 }

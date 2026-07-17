@@ -126,14 +126,21 @@ private fun NavTabIcon(
 }
 
 @Composable
-fun MainScreen(viewModel: MainViewModel) {
+fun MainScreen(
+    viewModel: MainViewModel,
+    deferTogetherDatePrompt: Boolean = false,
+) {
     val state by viewModel.data.collectAsState()
     val tab by viewModel.selectedTab.collectAsState()
     val pendingUploads by viewModel.pendingMediaUploads.collectAsState()
+    val promptTogether by viewModel.promptTogetherDate.collectAsState()
     var editor by remember { mutableStateOf<Editor?>(null) }
     var mediaDetail by remember { mutableStateOf<MediaItem?>(null) }
     var mediaEdit by remember { mutableStateOf<MediaItem?>(null) }
     var letterDetail by remember { mutableStateOf<Letter?>(null) }
+    var togetherDraft by rememberSaveable {
+        mutableStateOf(java.time.LocalDate.now().minusYears(1).toString())
+    }
     // 按用户区分；不持久化，避免换号/重新登录后弹窗被永久抑制
     var postponedBindIds by remember(state.user?.id) { mutableStateOf(listOf<String>()) }
     val composing = editor != null
@@ -214,6 +221,7 @@ fun MainScreen(viewModel: MainViewModel) {
                                 viewModel.openMediaDetail(item) { mediaDetail = it }
                             },
                             onViewAllTimeline = { viewModel.selectTab(MainTab.TIMELINE) },
+                            onGoSetTogetherDate = { viewModel.selectTab(MainTab.PROFILE) },
                         )
                         MainTab.TIMELINE -> TimelinePage(
                             media = state.media,
@@ -376,6 +384,39 @@ fun MainScreen(viewModel: MainViewModel) {
                 },
             )
         }
+
+        if (promptTogether && !deferTogetherDatePrompt) {
+            AlertDialog(
+                onDismissRequest = { viewModel.dismissTogetherDatePrompt() },
+                shape = RoundedCornerShape(28.dp),
+                containerColor = mood.background,
+                title = { Text("设置在一起的日子？") },
+                text = {
+                    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Text("可以稍后在「我们」里再设置", color = mood.stone)
+                        LoverDateField(
+                            value = togetherDraft,
+                            onValueChange = { togetherDraft = it },
+                            label = "在一起的那天",
+                            maxDate = java.time.LocalDate.now(),
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    }
+                },
+                confirmButton = {
+                    TextButton(
+                        onClick = { viewModel.saveTogetherDate(togetherDraft) },
+                        colors = ButtonDefaults.textButtonColors(contentColor = mood.soft),
+                    ) { Text("保存") }
+                },
+                dismissButton = {
+                    TextButton(
+                        onClick = { viewModel.dismissTogetherDatePrompt() },
+                        colors = ButtonDefaults.textButtonColors(contentColor = mood.stone),
+                    ) { Text("跳过") }
+                },
+            )
+        }
     }
 }
 
@@ -507,9 +548,15 @@ private fun HomePage(
     state: AppState,
     onMedia: (MediaItem) -> Unit,
     onViewAllTimeline: () -> Unit,
+    onGoSetTogetherDate: () -> Unit,
 ) {
     val mood = LocalMood.current
-    val days = state.lovingDays ?: 0
+    val days = state.lovingDays
+    val togetherUnset = !mood.solo && (
+        state.needsTogetherDate ||
+            state.couple?.togetherDate.isNullOrBlank() ||
+            days == null
+        )
     val waitingDays = remember(state.user?.createdAt) {
         waitingDaysSinceRegistration(state.user?.createdAt)
     }
@@ -521,7 +568,16 @@ private fun HomePage(
         }
         item {
             Card(
-                modifier = Modifier.padding(horizontal = 20.dp).fillMaxWidth(),
+                modifier = Modifier
+                    .padding(horizontal = 20.dp)
+                    .fillMaxWidth()
+                    .then(
+                        if (togetherUnset) {
+                            Modifier.clickable(onClick = onGoSetTogetherDate)
+                        } else {
+                            Modifier
+                        },
+                    ),
                 colors = CardDefaults.cardColors(containerColor = Color.Transparent),
                 shape = RoundedCornerShape(34.dp),
                 elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
@@ -571,6 +627,26 @@ private fun HomePage(
                             Spacer(modifier = Modifier.height(6.dp))
                             Text(
                                 "每一天，都是给未来的礼物",
+                                color = mood.stone,
+                                style = MaterialTheme.typography.bodyMedium,
+                                textAlign = TextAlign.Center,
+                            )
+                        } else if (togetherUnset) {
+                            Text(
+                                "Loving Journey",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = mood.accent,
+                            )
+                            Spacer(modifier = Modifier.height(12.dp))
+                            Text(
+                                "还未设置在一起的时间",
+                                style = MaterialTheme.typography.headlineMedium,
+                                color = mood.accent.copy(alpha = 0.92f),
+                                textAlign = TextAlign.Center,
+                            )
+                            Spacer(modifier = Modifier.height(10.dp))
+                            Text(
+                                "请到「我们」中设置",
                                 color = mood.stone,
                                 style = MaterialTheme.typography.bodyMedium,
                                 textAlign = TextAlign.Center,
@@ -968,8 +1044,6 @@ private fun ProfilePage(
     var reason by rememberSaveable { mutableStateOf("") }
     var showBindSheet by rememberSaveable { mutableStateOf(false) }
     var showEditCard by rememberSaveable { mutableStateOf(false) }
-    var togetherDraft by rememberSaveable { mutableStateOf(java.time.LocalDate.now().minusYears(1).toString()) }
-    val promptTogether by viewModel.promptTogetherDate.collectAsState()
     val partner = state.couple?.members?.firstOrNull { it.id != state.user?.id }
     val hasPartner = state.linked && partner != null
     val pending = state.couple?.pendingUnbinding
@@ -1038,6 +1112,19 @@ private fun ProfilePage(
         item { SettingRow(Icons.Rounded.Lock, "隐私控制", "仅情侣双方可见") }
         item { SettingRow(Icons.Rounded.Info, "关于 Lover", "版本 1.0.0") }
         item {
+            val context = LocalContext.current
+            OutlinedButton(
+                onClick = { com.lover.app.core.media.MediaLoadDiagnostics.showPanel() },
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(22.dp),
+                border = BorderStroke(1.dp, LocalMood.current.softOutline),
+            ) { Text("媒体诊断（查看图片失败原因）") }
+            TextButton(
+                onClick = { com.lover.app.core.media.MediaLoadDiagnostics.copySnapshot(context) },
+                modifier = Modifier.fillMaxWidth(),
+            ) { Text("复制媒体诊断日志") }
+        }
+        item {
             Spacer(Modifier.height(20.dp))
             if (hasPartner) {
                 if (pending == null) {
@@ -1105,39 +1192,6 @@ private fun ProfilePage(
                 },
             )
         }
-    }
-
-    if (promptTogether) {
-        AlertDialog(
-            onDismissRequest = { viewModel.dismissTogetherDatePrompt() },
-            shape = RoundedCornerShape(28.dp),
-            containerColor = LocalMood.current.background,
-            title = { Text("设置在一起的日子？") },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Text("可以稍后在「我们」里再设置", color = LocalMood.current.stone)
-                    LoverDateField(
-                        value = togetherDraft,
-                        onValueChange = { togetherDraft = it },
-                        label = "在一起的那天",
-                        maxDate = java.time.LocalDate.now(),
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                }
-            },
-            confirmButton = {
-                TextButton(
-                    onClick = { viewModel.saveTogetherDate(togetherDraft) },
-                    colors = ButtonDefaults.textButtonColors(contentColor = LocalMood.current.soft),
-                ) { Text("保存") }
-            },
-            dismissButton = {
-                TextButton(
-                    onClick = { viewModel.dismissTogetherDatePrompt() },
-                    colors = ButtonDefaults.textButtonColors(contentColor = LocalMood.current.stone),
-                ) { Text("跳过") }
-            },
-        )
     }
 
     confirm?.let { action ->

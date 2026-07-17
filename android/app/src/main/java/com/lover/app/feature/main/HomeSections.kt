@@ -315,123 +315,124 @@ internal fun RecentGlimpseBento(
         }
         Spacer(modifier = Modifier.height(14.dp))
 
+        val count = rotated.size
+        val sideCount = (count - 1).coerceIn(0, 2)
+        val midSlots = (3 until minOf(6, count)).toList()
+        val bottomSlots = (6 until count).toList()
+
+        // Top: featured (+ up to 2 side thumbs when available)
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(230.dp),
+                .height(if (sideCount > 0) 230.dp else 210.dp),
             horizontalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             GlimpseAnimatedSlot(
-                item = rotated.getOrNull(0),
+                item = rotated[0],
                 slide = GlimpseSlide.Featured,
-                onClick = { rotated.getOrNull(0)?.let(onMedia) },
+                onClick = { onMedia(rotated[0]) },
                 modifier = Modifier
-                    .weight(2f)
+                    .weight(if (sideCount > 0) 2f else 1f)
                     .fillMaxHeight()
                     .clip(RoundedCornerShape(32.dp)),
                 titleStyleLarge = true,
                 showDate = true,
                 overlay = {
-                    Row(
-                        modifier = Modifier
-                            .align(Alignment.TopEnd)
-                            .padding(12.dp),
-                        horizontalArrangement = Arrangement.spacedBy(4.dp),
-                    ) {
-                        snapshots.indices.forEach { index ->
-                            val selected = index == featuredIdx
-                            Box(
-                                modifier = Modifier
-                                    .height(5.dp)
-                                    .width(if (selected) 14.dp else 5.dp)
-                                    .clip(CircleShape)
-                                    .background(
-                                        if (selected) Color.White.copy(alpha = 0.9f)
-                                        else Color.White.copy(alpha = 0.4f),
-                                    )
-                                    .clickable(
-                                        interactionSource = remember { MutableInteractionSource() },
-                                        indication = null,
-                                    ) { jumpTo(index) },
-                            )
+                    if (snapshots.size > 1) {
+                        Row(
+                            modifier = Modifier
+                                .align(Alignment.TopEnd)
+                                .padding(12.dp),
+                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                        ) {
+                            snapshots.indices.forEach { index ->
+                                val selected = index == featuredIdx
+                                Box(
+                                    modifier = Modifier
+                                        .height(5.dp)
+                                        .width(if (selected) 14.dp else 5.dp)
+                                        .clip(CircleShape)
+                                        .background(
+                                            if (selected) Color.White.copy(alpha = 0.9f)
+                                            else Color.White.copy(alpha = 0.4f),
+                                        )
+                                        .clickable(
+                                            interactionSource = remember { MutableInteractionSource() },
+                                            indication = null,
+                                        ) { jumpTo(index) },
+                                )
+                            }
                         }
                     }
                 },
             )
-            Column(
+            if (sideCount > 0) {
+                Column(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxHeight(),
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    repeat(sideCount) { i ->
+                        val slot = i + 1
+                        GlimpseAnimatedSlot(
+                            item = rotated[slot],
+                            slide = GlimpseSlide.Vertical,
+                            onClick = { onMedia(rotated[slot]) },
+                            modifier = Modifier
+                                .weight(1f)
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(24.dp)),
+                        )
+                    }
+                }
+            }
+        }
+
+        // Middle row: indices 3–5
+        if (midSlots.isNotEmpty()) {
+            Spacer(modifier = Modifier.height(10.dp))
+            Row(
                 modifier = Modifier
-                    .weight(1f)
-                    .fillMaxHeight(),
-                verticalArrangement = Arrangement.spacedBy(10.dp),
+                    .fillMaxWidth()
+                    .height(110.dp),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
             ) {
-                GlimpseAnimatedSlot(
-                    item = rotated.getOrNull(1),
-                    slide = GlimpseSlide.Vertical,
-                    onClick = { rotated.getOrNull(1)?.let(onMedia) },
-                    modifier = Modifier
-                        .weight(1f)
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(24.dp)),
-                )
-                GlimpseAnimatedSlot(
-                    item = rotated.getOrNull(2),
-                    slide = GlimpseSlide.Vertical,
-                    onClick = { rotated.getOrNull(2)?.let(onMedia) },
-                    modifier = Modifier
-                        .weight(1f)
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(24.dp)),
-                )
+                midSlots.forEach { slot ->
+                    GlimpseAnimatedSlot(
+                        item = rotated[slot],
+                        slide = GlimpseSlide.Horizontal,
+                        onClick = { onMedia(rotated[slot]) },
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxHeight()
+                            .clip(RoundedCornerShape(24.dp)),
+                    )
+                }
             }
         }
 
-        Spacer(modifier = Modifier.height(10.dp))
-
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(110.dp),
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
-        ) {
-            listOf(3, 4, 5).forEach { slot ->
-                GlimpseAnimatedSlot(
-                    item = rotated.getOrNull(slot),
-                    slide = GlimpseSlide.Horizontal,
-                    onClick = { rotated.getOrNull(slot)?.let(onMedia) },
-                    modifier = Modifier
-                        .weight(1f)
-                        .fillMaxHeight()
-                        .clip(RoundedCornerShape(24.dp)),
-                )
+        // Bottom row: indices 6–7
+        if (bottomSlots.isNotEmpty()) {
+            Spacer(modifier = Modifier.height(10.dp))
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(100.dp),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                bottomSlots.forEach { slot ->
+                    GlimpseAnimatedSlot(
+                        item = rotated[slot],
+                        slide = GlimpseSlide.Horizontal,
+                        onClick = { onMedia(rotated[slot]) },
+                        modifier = Modifier
+                            .weight(if (slot == 7) 2f else 1f)
+                            .fillMaxHeight()
+                            .clip(RoundedCornerShape(24.dp)),
+                    )
+                }
             }
-        }
-
-        Spacer(modifier = Modifier.height(10.dp))
-
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(100.dp),
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
-        ) {
-            GlimpseAnimatedSlot(
-                item = rotated.getOrNull(6),
-                slide = GlimpseSlide.Horizontal,
-                onClick = { rotated.getOrNull(6)?.let(onMedia) },
-                modifier = Modifier
-                    .weight(1f)
-                    .fillMaxHeight()
-                    .clip(RoundedCornerShape(24.dp)),
-            )
-            GlimpseAnimatedSlot(
-                item = rotated.getOrNull(7),
-                slide = GlimpseSlide.Horizontal,
-                onClick = { rotated.getOrNull(7)?.let(onMedia) },
-                modifier = Modifier
-                    .weight(2f)
-                    .fillMaxHeight()
-                    .clip(RoundedCornerShape(24.dp)),
-            )
         }
     }
 }

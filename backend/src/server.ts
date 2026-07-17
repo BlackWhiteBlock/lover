@@ -10,6 +10,8 @@ try {
     {
       storageProvider: config.storage.provider,
       qiniuBucket: config.storage.provider === 'qiniu' ? config.storage.qiniu.bucket : undefined,
+      qiniuDownloadDomain:
+        config.storage.provider === 'qiniu' ? config.storage.qiniu.downloadDomain : undefined,
     },
     'storage backend ready',
   );

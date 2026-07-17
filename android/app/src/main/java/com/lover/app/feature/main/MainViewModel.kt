@@ -10,9 +10,16 @@ import com.lover.app.core.notice.NoticeStore
 import dagger.hilt.android.lifecycle.HiltViewModel
 import java.time.LocalDate
 import javax.inject.Inject
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
 enum class MainTab { HOME, TIMELINE, ANNIVERSARY, LETTERS, PROFILE }
@@ -51,6 +58,10 @@ class MainViewModel @Inject constructor(
     val promptTogetherDate = _promptTogetherDate.asStateFlow()
     private val _pendingMediaUploads = MutableStateFlow<List<PendingMediaUpload>>(emptyList())
     val pendingMediaUploads = _pendingMediaUploads.asStateFlow()
+    private val _coupleRevealEvent = MutableSharedFlow<String>(extraBufferCapacity = 1)
+    val coupleRevealEvent = _coupleRevealEvent.asSharedFlow()
+
+    private var bindPollJob: Job? = null
 
     init {
         // 登出后 Tab 立刻回到 HOME，避免再次登录时先闪「我们」再切「空间」
@@ -75,6 +86,56 @@ class MainViewModel @Inject constructor(
             }
             _restoreComplete.value = true
         }
+        // linked: false → true 时触发恋爱主题转场；冷启动已绑定则静默记为已播过
+        viewModelScope.launch {
+            var previousLinked: Boolean? = null
+            repository.state.collect { state ->
+                if (state.accessToken == null) {
+                    previousLinked = null
+                    return@collect
+                }
+                val linkId = state.coupleLinkId
+                    ?: state.couple?.coupleLinkId?.takeIf { it.isNotBlank() }
+                val prev = previousLinked
+                previousLinked = state.linked
+                when {
+                    prev == null && state.linked && !linkId.isNullOrBlank() &&
+                        state.coupleThemeRevealShownLinkId != linkId -> {
+                        repository.markCoupleThemeRevealShown(linkId)
+                    }
+                    prev == false && state.linked && !linkId.isNullOrBlank() &&
+                        state.coupleThemeRevealShownLinkId != linkId -> {
+                        _coupleRevealEvent.tryEmit(linkId)
+                    }
+                }
+            }
+        }
+        // 发起人：有未完成的出站绑定时轮询，以便对方确认后立刻进入恋爱转场
+        viewModelScope.launch {
+            repository.state
+                .map { it.pendingOutgoingBind?.id to it.linked }
+                .distinctUntilChanged()
+                .collect { (outgoingId, linked) ->
+                    bindPollJob?.cancel()
+                    if (outgoingId != null && !linked) {
+                        bindPollJob = viewModelScope.launch {
+                            while (isActive) {
+                                delay(4_000)
+                                runCatching { repository.refreshAll() }
+                            }
+                        }
+                    }
+                }
+        }
+    }
+
+    fun refreshSessionQuietly() = viewModelScope.launch {
+        if (repository.state.value.accessToken == null) return@launch
+        runCatching { repository.refreshAll() }
+    }
+
+    fun markCoupleThemeRevealShown(linkId: String) = viewModelScope.launch {
+        repository.markCoupleThemeRevealShown(linkId)
     }
 
     fun selectTab(tab: MainTab) {
