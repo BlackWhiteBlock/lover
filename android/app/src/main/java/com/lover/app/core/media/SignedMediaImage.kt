@@ -32,11 +32,6 @@ fun signedMediaImageRequest(
         .memoryCacheKey(key)
         .diskCacheKey(key)
         .crossfade(crossfade)
-        .listener(
-            onError = { request, result ->
-                MediaLoadDiagnostics.onCoilError(request, result)
-            },
-        )
         .build()
 }
 

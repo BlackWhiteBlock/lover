@@ -12,11 +12,14 @@ import javax.inject.Singleton
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.catch
-import kotlinx.coroutines.flow.map
-import kotlinx.coroutines.flow.onEach
-import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 
@@ -29,48 +32,66 @@ class TokenStore @Inject constructor(
 ) {
     private val stateKey = stringPreferencesKey("app_state_v2")
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val mutex = Mutex()
     @Volatile private var currentAccessToken: String? = null
     @Volatile private var currentRefreshToken: String? = null
     @Volatile private var tokensWrittenInProcess = false
-    @Volatile private var memoryState: AppState = AppState()
 
-    val state = context.sessionDataStore.data
-        .catch { emit(emptyPreferences()) }
-        .map { preferences ->
-            preferences[stateKey]
+    private val _state = MutableStateFlow(AppState())
+    val state: StateFlow<AppState> = _state.asStateFlow()
+
+    init {
+        scope.launch {
+            val disk = context.sessionDataStore.data
+                .catch { emit(emptyPreferences()) }
+                .first()
+            val loaded = disk[stateKey]
                 ?.let { runCatching { json.decodeFromString<AppState>(it) }.getOrNull() }
                 ?.withoutEphemeralSignedUrls()
                 ?: AppState()
-        }
-        .map {
-            it.copy(sessionLoaded = true)
-        }
-        .onEach {
-            memoryState = it
+            val ready = loaded.copy(sessionLoaded = true)
             if (!tokensWrittenInProcess) {
-                currentAccessToken = it.accessToken
-                currentRefreshToken = it.refreshToken
+                currentAccessToken = ready.accessToken
+                currentRefreshToken = ready.refreshToken
+            }
+            // 仅冷启动灌入一次；之后 UI 以内存态为准，避免落盘去签名后把缩略图冲掉
+            if (!_state.value.sessionLoaded) {
+                _state.value = ready
             }
         }
-        .stateIn(scope, SharingStarted.Eagerly, AppState())
+    }
 
     val snapshot: AppState
-        get() = memoryState.copy(
-            accessToken = if (tokensWrittenInProcess) currentAccessToken else currentAccessToken ?: memoryState.accessToken,
-            refreshToken = if (tokensWrittenInProcess) currentRefreshToken else currentRefreshToken ?: memoryState.refreshToken,
-            sessionLoaded = true,
-        )
+        get() {
+            val memory = _state.value
+            return memory.copy(
+                accessToken = if (tokensWrittenInProcess) {
+                    currentAccessToken
+                } else {
+                    currentAccessToken ?: memory.accessToken
+                },
+                refreshToken = if (tokensWrittenInProcess) {
+                    currentRefreshToken
+                } else {
+                    currentRefreshToken ?: memory.refreshToken
+                },
+                sessionLoaded = true,
+            )
+        }
 
     suspend fun update(transform: (AppState) -> AppState) {
-        context.sessionDataStore.edit { preferences ->
-            val persisted = preferences[stateKey]
-                ?.let { runCatching { json.decodeFromString<AppState>(it) }.getOrNull() }
-            // 反序列化失败时用内存态，避免把已写入的绑定邀请冲成空 AppState
-            val current = persisted ?: memoryState
-            val next = transform(current).copy(loading = false)
-            // 内存保留签名 URL（本次会话复用）；落盘去掉，避免冷启动复用过期/旧域名（如 http://*.clouddn.com）
-            memoryState = next.copy(sessionLoaded = true)
-            preferences[stateKey] = json.encodeToString(next.withoutEphemeralSignedUrls())
+        mutex.withLock {
+            val current = _state.value.let { if (it.sessionLoaded) it else snapshot }
+            val next = transform(current).copy(loading = false, sessionLoaded = true)
+            _state.value = next
+            if (!tokensWrittenInProcess) {
+                currentAccessToken = next.accessToken
+                currentRefreshToken = next.refreshToken
+            }
+            context.sessionDataStore.edit { preferences ->
+                // 落盘去掉签名 URL，避免冷启动复用旧域名；内存 / UI 仍保留本次签名
+                preferences[stateKey] = json.encodeToString(next.withoutEphemeralSignedUrls())
+            }
         }
     }
 
@@ -99,13 +120,14 @@ class TokenStore @Inject constructor(
     }
 
     suspend fun clearSession() {
-        tokensWrittenInProcess = true
-        currentAccessToken = null
-        currentRefreshToken = null
-        memoryState = AppState(sessionLoaded = true)
-        // 写成空状态（不只 remove），保证 StateFlow 立即发布 accessToken=null，UI 回登录页
-        context.sessionDataStore.edit { preferences ->
-            preferences[stateKey] = json.encodeToString(AppState())
+        mutex.withLock {
+            tokensWrittenInProcess = true
+            currentAccessToken = null
+            currentRefreshToken = null
+            _state.value = AppState(sessionLoaded = true)
+            context.sessionDataStore.edit { preferences ->
+                preferences[stateKey] = json.encodeToString(AppState())
+            }
         }
     }
 }

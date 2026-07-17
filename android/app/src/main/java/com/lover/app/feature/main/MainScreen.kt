@@ -1112,19 +1112,6 @@ private fun ProfilePage(
         item { SettingRow(Icons.Rounded.Lock, "隐私控制", "仅情侣双方可见") }
         item { SettingRow(Icons.Rounded.Info, "关于 Lover", "版本 1.0.0") }
         item {
-            val context = LocalContext.current
-            OutlinedButton(
-                onClick = { com.lover.app.core.media.MediaLoadDiagnostics.showPanel() },
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(22.dp),
-                border = BorderStroke(1.dp, LocalMood.current.softOutline),
-            ) { Text("媒体诊断（查看图片失败原因）") }
-            TextButton(
-                onClick = { com.lover.app.core.media.MediaLoadDiagnostics.copySnapshot(context) },
-                modifier = Modifier.fillMaxWidth(),
-            ) { Text("复制媒体诊断日志") }
-        }
-        item {
             Spacer(Modifier.height(20.dp))
             if (hasPartner) {
                 if (pending == null) {

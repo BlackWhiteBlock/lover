@@ -22,10 +22,8 @@ class AuthViewModel @Inject constructor(
         viewModelScope.launch {
             _message.value = null
             runCatching { repository.sendSms(phone) }
-                .onSuccess { response ->
-                    val tip = response.devCode?.let { "开发验证码：$it" }
-                        ?: "验证码已发送"
-                    noticeStore.info(tip)
+                .onSuccess {
+                    noticeStore.info("验证码已发送")
                 }
                 .onFailure { _message.value = it.message }
         }

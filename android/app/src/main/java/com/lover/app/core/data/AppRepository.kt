@@ -2,7 +2,6 @@ package com.lover.app.core.data
 
 import android.net.Uri
 import com.lover.app.core.media.ContentMediaResolver
-import com.lover.app.core.media.MediaLoadDiagnostics
 import com.lover.app.core.media.ResolvedMedia
 import com.lover.app.core.media.VideoThumbnailExtractor
 import com.lover.app.core.model.*
@@ -383,8 +382,8 @@ class AppRepository @Inject constructor(
         val prevByAssetId = prev.assets.associateBy { it.assetId }
         val merged = item.assets.map { part ->
             val cached = prevByPartId[part.id] ?: prevByAssetId[part.assetId]
-            val thumb = cached?.thumbnailUrl?.takeIf { isReusableSignedUrl(it) }
-            val original = cached?.url?.takeIf { isReusableSignedUrl(it) }.orEmpty()
+            val thumb = cached?.thumbnailUrl?.takeIf(::isReusableSignedUrl)
+            val original = cached?.url?.takeIf(::isReusableSignedUrl).orEmpty()
             if (thumb != null || original.isNotBlank()) {
                 part.copy(url = original, thumbnailUrl = thumb)
             } else {
@@ -394,31 +393,12 @@ class AppRepository @Inject constructor(
         return item.copy(assets = merged)
     }
 
-    /**
-     * 签名 URL 会落盘；域名切换后若继续复用旧的 http://*.clouddn.com，
-     * Release（禁明文）会整页白图，而服务端 diagnose 已是 https 自定义域。
-     */
+    // Do not reuse cleartext or Qiniu test-domain signed URLs after CDN domain switch.
     private fun isReusableSignedUrl(url: String?): Boolean {
         if (url.isNullOrBlank()) return false
-        if (!url.startsWith("https://", ignoreCase = true)) {
-            MediaLoadDiagnostics.note(
-                "sign",
-                "drop stale cleartext url host=${runCatching { java.net.URI(url).host }.getOrNull()}",
-                showDialog = false,
-            )
-            return false
-        }
-        if (url.contains("clouddn.com", ignoreCase = true) ||
-            url.contains("qiniucdn.com", ignoreCase = true)
-        ) {
-            MediaLoadDiagnostics.note(
-                "sign",
-                "drop stale qiniu test-domain url",
-                showDialog = false,
-            )
-            return false
-        }
-        return true
+        if (!url.startsWith("https://", ignoreCase = true)) return false
+        val lower = url.lowercase()
+        return "clouddn.com" !in lower && "qiniucdn.com" !in lower
     }
 
     /** 列表/掠影：只签缩略图，避免刷屏拉原图；thumb 失败时回退原图，避免迁移后整页空白 */
@@ -430,26 +410,12 @@ class AppRepository @Inject constructor(
                 else -> {
                     runCatching {
                         call { api.signAsset(part.assetId, SignAssetRequest("thumb")) }.url
-                    }.getOrElse { thumbError ->
-                        MediaLoadDiagnostics.onSignFailed(part.assetId, "thumb", thumbError)
+                    }.getOrElse {
                         call { api.signAsset(part.assetId, SignAssetRequest("original")) }.url
                     }
                 }
             }
-        }.onFailure { error ->
-            MediaLoadDiagnostics.onSignFailed(part.assetId, "list", error)
         }.getOrNull()
-        if (thumbUrl.isNullOrBlank()) {
-            MediaLoadDiagnostics.onSignEmpty(part.assetId)
-        } else {
-            MediaLoadDiagnostics.note(
-                "sign",
-                "asset=${part.assetId} ok scheme=${thumbUrl.substringBefore("://", "?")} host=${
-                    runCatching { java.net.URI(thumbUrl).host }.getOrNull() ?: "?"
-                }",
-                showDialog = false,
-            )
-        }
         return part.copy(url = "", thumbnailUrl = thumbUrl)
     }
 
@@ -460,10 +426,7 @@ class AppRepository @Inject constructor(
                 if (part.url.isNotBlank()) return@async part
                 val url = runCatching {
                     call { api.signAsset(part.assetId, SignAssetRequest("original")) }.url
-                }.onFailure { error ->
-                    MediaLoadDiagnostics.onSignFailed(part.assetId, "original", error)
                 }.getOrDefault("")
-                if (url.isBlank()) MediaLoadDiagnostics.onSignEmpty(part.assetId)
                 part.copy(url = url)
             }
         }.awaitAll()

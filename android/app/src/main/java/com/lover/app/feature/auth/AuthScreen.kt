@@ -34,7 +34,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
-import com.lover.app.BuildConfig
 import com.lover.app.core.design.Blush
 import com.lover.app.core.design.LoverWordmark
 import com.lover.app.core.design.Peach
@@ -116,18 +115,6 @@ fun AuthScreen(viewModel: AuthViewModel) {
                         shape = RoundedCornerShape(22.dp),
                         colors = ButtonDefaults.buttonColors(containerColor = Rose),
                     ) { Text("登录 / 注册") }
-                    Text(
-                        "请先获取验证码；开发后端会返回测试验证码",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = Stone,
-                    )
-                    if (BuildConfig.DEBUG) {
-                        Text(
-                            "API: ${BuildConfig.API_BASE_URL}",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = Stone,
-                        )
-                    }
                 }
             }
         }
