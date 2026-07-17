@@ -97,6 +97,7 @@ export const openApiDocument = {
     '/api/me': secured('当前用户 / 更新头像或情侣合照', ['get', 'patch']),
     '/api/users/lookup': secured('按手机号预览用户（绑定前）'),
     '/api/bootstrap': secured('首页 bootstrap'),
+    '/api/daily-quote': secured('今日寄语（按日历日轮换）'),
     '/api/couple-space': secured('情侣空间详情/更新', ['get', 'patch']),
     '/api/couple-invites': secured('创建邀请（返回 code + inviteUrl；新建空间须带 togetherDate）', ['post']),
     '/api/couple-invites/accept': secured('接受邀请', ['post']),

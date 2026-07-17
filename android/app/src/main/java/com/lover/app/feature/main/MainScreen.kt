@@ -160,6 +160,7 @@ fun MainScreen(viewModel: MainViewModel) {
                                 viewModel.selectTab(MainTab.LETTERS)
                                 editor = Editor.LETTER
                             },
+                            onViewAllTimeline = { viewModel.selectTab(MainTab.TIMELINE) },
                         )
                         MainTab.TIMELINE -> TimelinePage(
                             media = state.media,
@@ -444,6 +445,7 @@ private fun HomePage(
     onMedia: (MediaItem) -> Unit,
     onCapture: () -> Unit,
     onWrite: () -> Unit,
+    onViewAllTimeline: () -> Unit,
 ) {
     val days = state.lovingDays ?: 0
     LazyColumn(contentPadding = PaddingValues(bottom = 28.dp)) {
@@ -499,20 +501,28 @@ private fun HomePage(
             }
         }
         item {
-            Text("近期掠影", style = MaterialTheme.typography.titleLarge, modifier = Modifier.padding(horizontal = 22.dp))
-            Text("RECENT MOMENTS", style = MaterialTheme.typography.labelSmall, color = Stone, modifier = Modifier.padding(horizontal = 22.dp))
-            Spacer(Modifier.height(12.dp))
+            DailyQuoteCard(
+                quote = state.dailyQuote,
+                modifier = Modifier.padding(horizontal = 20.dp),
+            )
+        }
+        item {
+            Spacer(Modifier.height(8.dp))
             if (state.media.isEmpty()) {
+                Text(
+                    "近期掠影",
+                    style = MaterialTheme.typography.titleMedium,
+                    color = DeepRose.copy(alpha = 0.55f),
+                    modifier = Modifier.padding(horizontal = 22.dp),
+                )
                 EmptyHint("还没有影像，存下第一个瞬间吧", Icons.Rounded.PhotoCamera)
             } else {
-                LazyRow(
-                    contentPadding = PaddingValues(horizontal = 20.dp),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
-                ) {
-                    items(state.media.take(6), key = { it.id }) {
-                        MediaImage(it, Modifier.size(150.dp, 185.dp).clickable { onMedia(it) })
-                    }
-                }
+                RecentGlimpseBento(
+                    media = state.media,
+                    onMedia = onMedia,
+                    onViewAll = onViewAllTimeline,
+                    modifier = Modifier.padding(horizontal = 20.dp),
+                )
             }
         }
     }

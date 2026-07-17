@@ -169,6 +169,7 @@ data class AppState(
     val pendingOutgoingBind: OutgoingBindRequest? = null,
     val lovingDays: Int? = null,
     val needsTogetherDate: Boolean = false,
+    val dailyQuote: DailyQuote? = null,
     val media: List<MediaItem> = emptyList(),
     val anniversaries: List<Anniversary> = emptyList(),
     val letters: List<Letter> = emptyList(),
@@ -262,7 +263,8 @@ data class AppState(
 @Serializable data class BootstrapResponse(
     val space: CoupleSpace,
     val lovingJourney: LovingJourney,
-    val recentMedia: List<MediaItem>,
+    val recentMedia: List<MediaItem> = emptyList(),
+    val dailyQuote: DailyQuote? = null,
     val linked: Boolean = false,
     val coupleLinkId: String? = null,
 )
@@ -270,6 +272,11 @@ data class AppState(
     val togetherDate: String? = null,
     val days: Int? = null,
     val needsTogetherDate: Boolean,
+)
+@Serializable data class DailyQuote(
+    val text: String,
+    val author: String? = null,
+    val date: String? = null,
 )
 @Serializable data class ItemPage<T>(val items: List<T>, val nextCursor: String? = null)
 @Serializable data class TokenAssetRequest(

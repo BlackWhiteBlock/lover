@@ -61,10 +61,11 @@ private data class TimelineCardPlan(
 )
 
 /**
- * Pick card shape by media count; prefer Duo when video present;
- * then avoid repeating the previous shape for left/right rhythm.
+ * Pick card shape strictly by media count first.
+ * Rhythm only switches among variants that the item can actually support ?
+ * never force Duo/Strip onto a single-asset memory.
  */
-internal fun planTimelineCards(items: List<MediaItem>): List<TimelineCardPlan> {
+private fun planTimelineCards(items: List<MediaItem>): List<TimelineCardPlan> {
     var previous: TimelineCardVariant? = null
     var previousHeight = 0
     return items.mapIndexed { index, item ->
@@ -81,38 +82,40 @@ internal fun planTimelineCards(items: List<MediaItem>): List<TimelineCardPlan> {
     }
 }
 
+private fun mediaCount(item: MediaItem): Int =
+    item.assets.size.coerceAtLeast(if (item.cover != null) 1 else 0)
+
+/** Variants this item is allowed to use based on asset count. */
+private fun eligibleVariants(item: MediaItem): List<TimelineCardVariant> {
+    val count = mediaCount(item)
+    return when {
+        count <= 1 -> listOf(TimelineCardVariant.SINGLE)
+        count <= 3 -> listOf(TimelineCardVariant.DUO, TimelineCardVariant.SINGLE)
+        else -> listOf(
+            TimelineCardVariant.STRIP,
+            TimelineCardVariant.DUO,
+            TimelineCardVariant.SINGLE,
+        )
+    }
+}
+
 private fun preferredVariant(item: MediaItem): TimelineCardVariant {
-    val count = item.assets.size.coerceAtLeast(if (item.cover != null) 1 else 0)
+    val count = mediaCount(item)
     val hasVideo = item.assets.any { it.type == MediaType.VIDEO }
     return when {
-        hasVideo && count >= 2 -> TimelineCardVariant.DUO
+        count <= 1 -> TimelineCardVariant.SINGLE
+        hasVideo -> TimelineCardVariant.DUO
         count >= 4 -> TimelineCardVariant.STRIP
-        count >= 2 -> TimelineCardVariant.DUO
-        else -> TimelineCardVariant.SINGLE
+        else -> TimelineCardVariant.DUO
     }
 }
 
 private fun resolveVariant(item: MediaItem, previous: TimelineCardVariant?): TimelineCardVariant {
-    val preferred = preferredVariant(item)
+    val eligible = eligibleVariants(item)
+    val preferred = preferredVariant(item).takeIf { it in eligible } ?: eligible.first()
     if (previous == null || preferred != previous) return preferred
-    val count = item.assets.size
-    val alternatives = when {
-        count >= 4 -> listOf(
-            TimelineCardVariant.STRIP,
-            TimelineCardVariant.DUO,
-            TimelineCardVariant.SINGLE,
-        )
-        count >= 2 -> listOf(
-            TimelineCardVariant.DUO,
-            TimelineCardVariant.SINGLE,
-            TimelineCardVariant.STRIP,
-        )
-        else -> listOf(
-            TimelineCardVariant.SINGLE,
-            TimelineCardVariant.DUO,
-        )
-    }
-    return alternatives.firstOrNull { it != previous } ?: preferred
+    // Only alternate when another eligible shape exists; single-asset stays Single.
+    return eligible.firstOrNull { it != previous } ?: preferred
 }
 
 @Composable

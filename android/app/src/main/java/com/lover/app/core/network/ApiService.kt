@@ -65,6 +65,9 @@ interface ApiService {
     @GET("api/bootstrap")
     suspend fun bootstrap(): BootstrapResponse
 
+    @GET("api/daily-quote")
+    suspend fun dailyQuote(): DailyQuote
+
     @POST("api/media-assets/token")
     suspend fun assetToken(@Body request: TokenAssetRequest): TokenAssetResponse
 

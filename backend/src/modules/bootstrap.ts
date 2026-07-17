@@ -4,6 +4,7 @@ import { formatCalendarDate, lovingDays } from '../domain.js';
 import { getActiveCoupleLink, personalSpaceId, readableSpaceIds } from './spaces.js';
 import { listRecentMedia } from './media.js';
 import { presentUserAvatar } from './userAvatar.js';
+import { loadTodayQuote } from './quotes.js';
 
 export function registerBootstrap(app: FastifyInstance, context: AppContext, auth: AuthHandler) {
   app.get('/api/bootstrap', { preHandler: auth }, async (request) => {
@@ -11,8 +12,9 @@ export function registerBootstrap(app: FastifyInstance, context: AppContext, aut
     const link = await getActiveCoupleLink(context, request.user.id);
     const spaceIds = await readableSpaceIds(context, request.user.id);
     const displaySpaceId = link?.loverSpaceId ?? personalId;
+    const today = formatCalendarDate(new Date());
 
-    const [space, members, recentMedia] = await Promise.all([
+    const [space, members, recentMedia, dailyQuote] = await Promise.all([
       context.db.query<{ id: string; name: string; createdAt: Date; kind: string }>(
         `select id, name, created_at as "createdAt", kind
          from couple_spaces where id = $1 and status = 'active'`,
@@ -35,7 +37,8 @@ export function registerBootstrap(app: FastifyInstance, context: AppContext, aut
            from users u where u.id = $1`,
           [request.user.id],
         ),
-      listRecentMedia(context, spaceIds, 6),
+      listRecentMedia(context, spaceIds, 8),
+      loadTodayQuote(context, today),
     ]);
     const memberCards = await Promise.all(
       members.rows.map(async (member) => {
@@ -46,7 +49,6 @@ export function registerBootstrap(app: FastifyInstance, context: AppContext, aut
     );
     const row = space.rows[0]!;
     const togetherDate = link?.togetherDate ?? null;
-    const today = formatCalendarDate(new Date());
     return {
       space: { ...row, togetherDate, members: memberCards },
       lovingJourney: {
@@ -55,6 +57,7 @@ export function registerBootstrap(app: FastifyInstance, context: AppContext, aut
         needsTogetherDate: Boolean(link) && !togetherDate,
       },
       recentMedia,
+      dailyQuote,
       linked: Boolean(link),
       coupleLinkId: link?.id ?? null,
     };

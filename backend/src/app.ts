@@ -16,6 +16,7 @@ import { registerMedia } from './modules/media.js';
 import { registerAnniversaries } from './modules/anniversaries.js';
 import { registerLetters } from './modules/letters.js';
 import { registerBootstrap } from './modules/bootstrap.js';
+import { registerQuotes } from './modules/quotes.js';
 
 export async function buildApp(config: Config, database?: Database) {
   const db = database ?? createDatabase(config);
@@ -87,6 +88,7 @@ export async function buildApp(config: Config, database?: Database) {
   registerMedia(app, context, auth);
   registerAnniversaries(app, context, auth);
   registerLetters(app, context, auth);
+  registerQuotes(app, context, auth);
   registerBootstrap(app, context, auth);
 
   app.addHook('onClose', async () => {
