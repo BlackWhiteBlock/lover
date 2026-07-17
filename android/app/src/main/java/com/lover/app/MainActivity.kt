@@ -87,7 +87,7 @@ class MainActivity : ComponentActivity() {
 
                     LaunchedEffect(state.accessToken) {
                         if (state.accessToken == null) {
-                            noticeStore.clear()
+                            noticeStore.clearAll()
                             revealVisible = false
                             revealLinkId = null
                         }

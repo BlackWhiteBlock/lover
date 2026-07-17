@@ -650,6 +650,27 @@ class AppRepository @Inject constructor(
         return token.assetId
     }
 
+    suspend fun fetchUnreadPartnerActivity(): List<PartnerActivityEvent> {
+        if (!tokenStore.snapshot.linked) return emptyList()
+        return runCatching {
+            call { api.partnerActivity(unreadOnly = true, limit = 20) }.items
+        }.getOrDefault(emptyList())
+    }
+
+    suspend fun markPartnerActivityRead(ids: List<String>? = null, all: Boolean = false) {
+        if (ids.isNullOrEmpty() && !all) return
+        runCatching {
+            call {
+                api.markActivityRead(
+                    MarkActivityReadRequest(
+                        ids = ids?.takeIf { it.isNotEmpty() },
+                        all = all.takeIf { it },
+                    ),
+                )
+            }
+        }
+    }
+
     private suspend fun <T> call(block: suspend () -> T): T =
         try {
             block()

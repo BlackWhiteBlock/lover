@@ -2,7 +2,7 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="android.permission.INTERNET" />
 
-    <!-- Android 11+ 包可见性：否则 resolveActivity 失败，会回退到 Photo Picker（华为上常像文件选择器） -->
+    <!-- Android 11+ 包可见性：相册 / 选图 Intent；鸿蒙需声明更多华为相册包 -->
     <queries>
         <intent>
             <action android:name="android.intent.action.PICK" />
@@ -14,6 +14,10 @@
         </intent>
         <intent>
             <action android:name="android.intent.action.PICK" />
+            <data android:mimeType="video/*" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.PICK" />
             <data android:mimeType="*/*" />
         </intent>
         <intent>
@@ -22,10 +26,23 @@
         </intent>
         <intent>
             <action android:name="android.intent.action.GET_CONTENT" />
+            <data android:mimeType="video/*" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.GET_CONTENT" />
             <data android:mimeType="*/*" />
         </intent>
+        <intent>
+            <action android:name="android.intent.action.OPEN_DOCUMENT" />
+            <data android:mimeType="image/*" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.CHOOSER" />
+        </intent>
         <package android:name="com.huawei.photos" />
+        <package android:name="com.huawei.hmos.photos" />
         <package android:name="com.huawei.gallery" />
+        <package android:name="com.ohos.photos" />
         <package android:name="com.hihonor.photos" />
         <package android:name="com.android.gallery3d" />
         <package android:name="com.google.android.apps.photos" />

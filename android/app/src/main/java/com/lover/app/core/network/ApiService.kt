@@ -139,6 +139,15 @@ interface ApiService {
 
     @POST("api/couple-space/unbinding/{id}/cancel")
     suspend fun cancelUnbinding(@Path("id") id: String): OkResponse
+
+    @GET("api/activity")
+    suspend fun partnerActivity(
+        @Query("unreadOnly") unreadOnly: Boolean = true,
+        @Query("limit") limit: Int = 20,
+    ): PartnerActivityPage
+
+    @POST("api/activity/read")
+    suspend fun markActivityRead(@Body request: MarkActivityReadRequest): MarkActivityReadResponse
 }
 
 interface RefreshApi {

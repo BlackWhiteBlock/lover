@@ -7,8 +7,9 @@ plugins {
     id("com.google.dagger.hilt.android")
 }
 
-import java.util.Properties
+import java.io.File
 import java.io.FileInputStream
+import java.util.Properties
 
 val loverApiBaseUrl = providers.gradleProperty("LOVER_API_BASE_URL")
     .orElse(providers.environmentVariable("LOVER_API_BASE_URL"))
@@ -91,6 +92,39 @@ android {
         buildConfig = true
     }
     packaging.resources.excludes += "/META-INF/{AL2.0,LGPL2.1}"
+}
+
+// Release APK：额外产出 lover_install_release_V{versionName}.apk
+// - Gradle：android/app/build/outputs/apk/release/
+// - Android Studio「生成已签名 APK」：常再拷到 android/app/release/
+fun Project.publishNamedReleaseApk() {
+    val version = android.defaultConfig.versionName.orEmpty().ifBlank { "0" }
+    val targetName = "lover_install_release_V$version.apk"
+    val gradleOut = layout.buildDirectory.dir("outputs/apk/release").get().asFile
+    val studioOut = layout.projectDirectory.dir("release").asFile
+    val source = sequenceOf(gradleOut, studioOut)
+        .filter { it.isDirectory }
+        .flatMap { dir -> dir.listFiles()?.asSequence().orEmpty() }
+        .filter { it.isFile && it.extension.equals("apk", ignoreCase = true) && it.name != targetName }
+        .firstOrNull()
+        ?: return
+    listOf(gradleOut, studioOut).forEach { dir ->
+        dir.mkdirs()
+        val target = File(dir, targetName)
+        source.copyTo(target, overwrite = true)
+        logger.lifecycle("Release APK → ${target.absolutePath}")
+    }
+}
+
+afterEvaluate {
+    tasks.matching {
+        val n = it.name
+        n == "assembleRelease" ||
+            n == "packageRelease" ||
+            (n.startsWith("package") && n.contains("Release", ignoreCase = true))
+    }.configureEach {
+        doLast { publishNamedReleaseApk() }
+    }
 }
 
 dependencies {

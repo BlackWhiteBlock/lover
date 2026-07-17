@@ -44,7 +44,7 @@ import kotlinx.coroutines.delay
 fun LoverNoticeHost(
     noticeStore: NoticeStore,
     modifier: Modifier = Modifier,
-    autoDismissMs: Long = 2800,
+    autoDismissMs: Long = 3600,
 ) {
     val notice by noticeStore.notice.collectAsStateWithLifecycle()
     LoverTopNotice(

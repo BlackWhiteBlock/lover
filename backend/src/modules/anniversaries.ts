@@ -3,7 +3,8 @@ import { z } from 'zod';
 import type { AppContext, AuthHandler } from '../types.js';
 import { anniversaryCountdown, formatCalendarDate, parseCalendarDate } from '../domain.js';
 import { badRequest, notFound } from '../errors.js';
-import { readableSpaceIds, writeSpaceId } from './spaces.js';
+import { emitPartnerActivity } from './activity.js';
+import { getActiveCoupleLink, readableSpaceIds, writeSpaceId } from './spaces.js';
 
 const calendarDate = z.string().refine((value) => {
   try { parseCalendarDate(value); return true; } catch { return false; }
@@ -59,7 +60,21 @@ export function registerAnniversaries(app: FastifyInstance, context: AppContext,
         target.coupleLinkId,
       ],
     );
-    return reply.code(201).send(withCountdown(result.rows[0]!));
+    const row = result.rows[0]!;
+    const link = await getActiveCoupleLink(context, request.user.id);
+    if (link) {
+      await emitPartnerActivity(context, {
+        actorId: request.user.id,
+        actorNickname: request.user.nickname,
+        type: 'anniversary_created',
+        entityType: 'anniversary',
+        entityId: row.id as string,
+        title: `${request.user.nickname} 添加了纪念日「${input.title}」`,
+        payload: { title: input.title, date: input.date, anniversaryType: input.type },
+        link,
+      });
+    }
+    return reply.code(201).send(withCountdown(row));
   });
 
   app.patch('/api/anniversaries/:id', { preHandler: auth }, async (request) => {

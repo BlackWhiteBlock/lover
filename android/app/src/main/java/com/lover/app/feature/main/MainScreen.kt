@@ -1017,8 +1017,11 @@ private fun LettersPage(letters: List<Letter>, onLetter: (Letter) -> Unit, onAdd
                             }
                             Spacer(Modifier.height(6.dp))
                             Text(
-                                if (unlocked) letter.summary ?: letter.content.orEmpty()
-                                else "时间胶囊 · ${letter.unlockAt?.take(10)} 解锁",
+                                if (unlocked) {
+                                    letter.summary ?: letter.content.orEmpty()
+                                } else {
+                                    letterCapsuleLockHint(letter)
+                                },
                                 maxLines = 2,
                                 overflow = TextOverflow.Ellipsis,
                                 color = mood.stone,
@@ -2111,6 +2114,18 @@ private fun EmptyHint(text: String, icon: androidx.compose.ui.graphics.vector.Im
     }
 }
 
+private fun letterCapsuleLockHint(letter: Letter): String = when {
+    letter.unlockOnPartnerBind -> "时间胶囊 · 绑定另一半后解锁"
+    !letter.unlockAt.isNullOrBlank() -> "时间胶囊 · ${letter.unlockAt.take(10)} 解锁"
+    else -> "时间胶囊 · 尚未解锁"
+}
+
+private fun letterCapsuleLockDetail(letter: Letter): String = when {
+    letter.unlockOnPartnerBind -> "这封时间胶囊将在绑定另一半以后自动开启。"
+    !letter.unlockAt.isNullOrBlank() -> "这封时间胶囊将在 ${letter.unlockAt.take(10)} 解锁。"
+    else -> "这封时间胶囊尚未解锁。"
+}
+
 @Composable
 private fun LetterDetail(letter: Letter, onDismiss: () -> Unit) {
     val unlocked = letter.isUnlocked
@@ -2120,7 +2135,10 @@ private fun LetterDetail(letter: Letter, onDismiss: () -> Unit) {
         title = { Text(letter.title) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text(if (unlocked) letter.content.orEmpty() else "这封时间胶囊将在 ${letter.unlockAt?.take(10)} 解锁。")
+                Text(
+                    if (unlocked) letter.content.orEmpty()
+                    else letterCapsuleLockDetail(letter),
+                )
                 HorizontalDivider()
                 Text("${letter.senderNickname} · ${letter.createdAt.take(10)}", color = LocalMood.current.stone)
             }

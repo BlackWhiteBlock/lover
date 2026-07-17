@@ -3,6 +3,7 @@ import { z } from 'zod';
 import type { AppContext, AuthHandler } from '../types.js';
 import { isLetterUnlocked } from '../domain.js';
 import { badRequest, forbidden, notFound } from '../errors.js';
+import { emitPartnerActivity } from './activity.js';
 import { getActiveCoupleLink } from './spaces.js';
 import { readableSpaceIds, writeSpaceId } from './spaces.js';
 
@@ -108,7 +109,22 @@ export function registerLetters(app: FastifyInstance, context: AppContext, auth:
         request.user.nickname,
       ],
     );
-    return reply.code(201).send(serializeLetter(result.rows[0]!));
+    const row = result.rows[0]!;
+    if (linked) {
+      await emitPartnerActivity(context, {
+        actorId: request.user.id,
+        actorNickname: request.user.nickname,
+        type: input.type === 'instant' ? 'letter_instant' : 'letter_capsule',
+        entityType: 'letter',
+        entityId: row.id,
+        title: input.type === 'instant'
+          ? '你收到了一封情书'
+          : `${request.user.nickname} 创建了一个时间胶囊`,
+        payload: { letterType: input.type, letterTitle: input.title },
+        link: linked,
+      });
+    }
+    return reply.code(201).send(serializeLetter(row));
   });
 
   app.put('/api/letters/:id', { preHandler: auth }, async (request) => {

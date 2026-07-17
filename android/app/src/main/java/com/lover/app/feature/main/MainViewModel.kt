@@ -78,11 +78,12 @@ class MainViewModel @Inject constructor(
                 runCatching { repository.restoreSession() }
                     .onFailure { error ->
                         if (error.isUnauthorized() || repository.state.value.accessToken == null) {
-                            noticeStore.clear()
+                            noticeStore.clearAll()
                         } else {
                             noticeStore.error(error.message ?: "刷新失败，已显示缓存")
                         }
                     }
+                pullPartnerActivityNotices()
             }
             _restoreComplete.value = true
         }
@@ -132,6 +133,18 @@ class MainViewModel @Inject constructor(
     fun refreshSessionQuietly() = viewModelScope.launch {
         if (repository.state.value.accessToken == null) return@launch
         runCatching { repository.refreshAll() }
+        pullPartnerActivityNotices()
+    }
+
+    private suspend fun pullPartnerActivityNotices() {
+        if (!repository.state.value.linked) return
+        val items = repository.fetchUnreadPartnerActivity()
+        if (items.isEmpty()) return
+        val ids = items.map { it.id }
+        repository.markPartnerActivityRead(ids = ids)
+        items.take(8).forEach { event ->
+            noticeStore.info(event.title)
+        }
     }
 
     fun markCoupleThemeRevealShown(linkId: String) = viewModelScope.launch {

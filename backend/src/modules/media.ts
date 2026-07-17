@@ -2,7 +2,8 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import type { AppContext, AuthHandler } from '../types.js';
 import { badRequest, forbidden, notFound } from '../errors.js';
-import { readableSpaceIds, writeSpaceId } from './spaces.js';
+import { emitPartnerActivity } from './activity.js';
+import { getActiveCoupleLink, readableSpaceIds, writeSpaceId } from './spaces.js';
 
 const MAX_MEDIA_ASSETS = 20;
 
@@ -153,6 +154,19 @@ export function registerMedia(app: FastifyInstance, context: AppContext, auth: A
       return row;
     });
     const hydrated = await hydrateMediaItems(context, [mediaItem]);
+    const link = await getActiveCoupleLink(context, request.user.id);
+    if (link) {
+      await emitPartnerActivity(context, {
+        actorId: request.user.id,
+        actorNickname: request.user.nickname,
+        type: 'media_created',
+        entityType: 'media',
+        entityId: mediaItem.id,
+        title: `${request.user.nickname} 存下了一段时光`,
+        payload: { caption: input.caption, mediaDate: input.mediaDate },
+        link,
+      });
+    }
     return reply.code(201).send(hydrated[0]);
   });
 

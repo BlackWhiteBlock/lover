@@ -363,3 +363,33 @@ data class AppState(
 @Serializable data class CreateUnbindingRequest(val reason: String? = null)
 @Serializable data class ApiErrorEnvelope(val error: ApiErrorBody)
 @Serializable data class ApiErrorBody(val code: String, val message: String)
+
+@Serializable
+data class PartnerActivityEvent(
+    val id: String,
+    val type: String,
+    val entityType: String,
+    val entityId: String,
+    val title: String,
+    val actorNickname: String = "",
+    val createdAt: String = "",
+    val readAt: String? = null,
+)
+
+@Serializable
+data class PartnerActivityPage(
+    val items: List<PartnerActivityEvent> = emptyList(),
+    val unreadCount: Int = 0,
+)
+
+@Serializable
+data class MarkActivityReadRequest(
+    val ids: List<String>? = null,
+    val all: Boolean? = null,
+)
+
+@Serializable
+data class MarkActivityReadResponse(
+    val ok: Boolean = true,
+    val marked: Int = 0,
+)

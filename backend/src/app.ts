@@ -10,6 +10,7 @@ import { createDatabase, type Database } from './db.js';
 import { AppError, errorHandler } from './errors.js';
 import { openApiDocument } from './openapi.js';
 import { createAuthHandler, registerAuth } from './modules/auth.js';
+import { registerActivity } from './modules/activity.js';
 import { registerCouples } from './modules/couples.js';
 import { registerAssets } from './modules/assets.js';
 import { registerMedia } from './modules/media.js';
@@ -90,6 +91,7 @@ export async function buildApp(config: Config, database?: Database) {
   registerLetters(app, context, auth);
   registerQuotes(app, context, auth);
   registerBootstrap(app, context, auth);
+  registerActivity(app, context, auth);
 
   app.addHook('onClose', async () => {
     if (!database) await db.close();

@@ -46,6 +46,7 @@ fun AuthScreen(viewModel: AuthViewModel) {
     var phone by rememberSaveable { mutableStateOf("") }
     var code by rememberSaveable { mutableStateOf("") }
     val message by viewModel.message.collectAsState()
+    val cooldown by viewModel.cooldownSeconds.collectAsState()
 
     Box(
         modifier = Modifier
@@ -53,7 +54,7 @@ fun AuthScreen(viewModel: AuthViewModel) {
             .background(Brush.verticalGradient(listOf(Blush, MaterialTheme.colorScheme.background))),
     ) {
         Box(
-            Modifier
+            modifier = Modifier
                 .offset(x = 230.dp, y = (-40).dp)
                 .size(210.dp)
                 .background(Peach.copy(alpha = .45f), CircleShape),
@@ -66,14 +67,17 @@ fun AuthScreen(viewModel: AuthViewModel) {
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             LoverWordmark(logoSize = 72.dp, usePhoto = true)
-            Spacer(Modifier.height(36.dp))
+            Spacer(modifier = Modifier.height(36.dp))
             Card(
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface.copy(alpha = .94f)),
                 elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
                 shape = RoundedCornerShape(32.dp),
                 modifier = Modifier.fillMaxWidth(),
             ) {
-                Column(Modifier.padding(26.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                Column(
+                    modifier = Modifier.padding(26.dp),
+                    verticalArrangement = Arrangement.spacedBy(16.dp),
+                ) {
                     Text("欢迎回来", style = MaterialTheme.typography.headlineMedium)
                     Text("用手机号进入两个人的专属世界", color = Stone)
                     SoftTextField(
@@ -96,10 +100,16 @@ fun AuthScreen(viewModel: AuthViewModel) {
                         )
                         FilledTonalButton(
                             onClick = { viewModel.sendCode(phone) },
+                            enabled = phone.length == 11 && cooldown == 0,
                             modifier = Modifier.padding(top = 8.dp).height(56.dp),
                             shape = RoundedCornerShape(20.dp),
-                            colors = ButtonDefaults.filledTonalButtonColors(containerColor = Blush, contentColor = Rose),
-                        ) { Text("获取") }
+                            colors = ButtonDefaults.filledTonalButtonColors(
+                                containerColor = Blush,
+                                contentColor = Rose,
+                            ),
+                        ) {
+                            Text(if (cooldown > 0) "${cooldown}s" else "获取")
+                        }
                     }
                     message?.let {
                         Text(

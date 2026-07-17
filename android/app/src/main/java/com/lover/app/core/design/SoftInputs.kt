@@ -1,5 +1,6 @@
 package com.lover.app.core.design
 
+import android.widget.NumberPicker
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -17,21 +18,19 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.CalendarMonth
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.DatePicker
-import androidx.compose.material3.DatePickerDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
-import androidx.compose.material3.SelectableDates
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.rememberDatePickerState
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -41,10 +40,11 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import java.time.Instant
+import androidx.compose.ui.viewinterop.AndroidView
 import java.time.LocalDate
-import java.time.ZoneOffset
+import java.time.YearMonth
 import java.time.format.DateTimeFormatter
+import kotlin.math.min
 
 private val SoftFieldShape = RoundedCornerShape(22.dp)
 private val displayFormatter = DateTimeFormatter.ofPattern("yyyy年M月d日")
@@ -127,7 +127,7 @@ fun LoverDateField(
                 modifier = Modifier.fillMaxWidth(),
             )
             Box(
-                Modifier
+                modifier = Modifier
                     .matchParentSize()
                     .clip(SoftFieldShape)
                     .clickable(
@@ -174,20 +174,37 @@ fun LoverDatePickerSheet(
 ) {
     val mood = LocalMood.current
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    val selectable = remember(minDate, maxDate) {
-        object : SelectableDates {
-            override fun isSelectableDate(utcTimeMillis: Long): Boolean {
-                val date = utcTimeMillis.toUtcLocalDate()
-                if (minDate != null && date.isBefore(minDate)) return false
-                if (maxDate != null && date.isAfter(maxDate)) return false
-                return true
-            }
-        }
+    val lower = minDate ?: LocalDate.of(1970, 1, 1)
+    val upper = maxDate ?: LocalDate.of(2100, 12, 31)
+    val start = initialDate.coerceIn(lower, upper)
+
+    var year by remember { mutableIntStateOf(start.year) }
+    var month by remember { mutableIntStateOf(start.monthValue) }
+    var day by remember { mutableIntStateOf(start.dayOfMonth) }
+
+    val yearRange = lower.year..upper.year
+    val monthRange = remember(year, lower, upper) {
+        val minM = if (year == lower.year) lower.monthValue else 1
+        val maxM = if (year == upper.year) upper.monthValue else 12
+        minM..maxM
     }
-    val state = rememberDatePickerState(
-        initialSelectedDateMillis = initialDate.toUtcEpochMillis(),
-        selectableDates = selectable,
-    )
+    val dayRange = remember(year, month, lower, upper) {
+        val dim = YearMonth.of(year, month).lengthOfMonth()
+        val minD = if (year == lower.year && month == lower.monthValue) lower.dayOfMonth else 1
+        val maxD = if (year == upper.year && month == upper.monthValue) {
+            min(upper.dayOfMonth, dim)
+        } else {
+            dim
+        }
+        minD..maxD
+    }
+
+    LaunchedEffect(monthRange) {
+        if (month !in monthRange) month = month.coerceIn(monthRange)
+    }
+    LaunchedEffect(dayRange) {
+        if (day !in dayRange) day = day.coerceIn(dayRange)
+    }
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -196,7 +213,7 @@ fun LoverDatePickerSheet(
         shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
         dragHandle = {
             Box(
-                Modifier
+                modifier = Modifier
                     .padding(top = 12.dp, bottom = 4.dp)
                     .height(4.dp)
                     .fillMaxWidth(0.12f)
@@ -206,9 +223,9 @@ fun LoverDatePickerSheet(
         },
     ) {
         Column(
-            Modifier
+            modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 12.dp)
+                .padding(horizontal = 20.dp)
                 .padding(bottom = 28.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
@@ -217,26 +234,47 @@ fun LoverDatePickerSheet(
                 style = MaterialTheme.typography.titleLarge,
                 color = mood.accent,
                 fontWeight = FontWeight.Medium,
-                modifier = Modifier.padding(bottom = 8.dp),
+                modifier = Modifier.padding(bottom = 4.dp),
             )
-            DatePicker(
-                state = state,
-                title = null,
-                headline = null,
-                showModeToggle = false,
-                colors = DatePickerDefaults.colors(
-                    containerColor = mood.background,
-                    selectedDayContainerColor = mood.soft,
-                    selectedDayContentColor = Color.White,
-                    todayDateBorderColor = mood.soft,
-                    selectedYearContainerColor = mood.soft,
-                    dayContentColor = Color(0xFF332927),
-                ),
+            Text(
+                "上下滑动选择年月日",
+                style = MaterialTheme.typography.labelMedium,
+                color = mood.stone,
+                modifier = Modifier.padding(bottom = 12.dp),
             )
             Row(
-                Modifier
+                modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 16.dp),
+                    .padding(vertical = 8.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                WheelNumberPicker(
+                    value = year,
+                    range = yearRange,
+                    onValueChange = { year = it },
+                    formatter = { "$it 年" },
+                    modifier = Modifier.weight(1.2f),
+                )
+                WheelNumberPicker(
+                    value = month,
+                    range = monthRange,
+                    onValueChange = { month = it },
+                    formatter = { "$it 月" },
+                    modifier = Modifier.weight(1f),
+                )
+                WheelNumberPicker(
+                    value = day,
+                    range = dayRange,
+                    onValueChange = { day = it },
+                    formatter = { "$it 日" },
+                    modifier = Modifier.weight(1f),
+                )
+            }
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 12.dp),
                 horizontalArrangement = Arrangement.spacedBy(12.dp, Alignment.End),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
@@ -245,8 +283,8 @@ fun LoverDatePickerSheet(
                 }
                 Button(
                     onClick = {
-                        val millis = state.selectedDateMillis ?: return@Button
-                        onConfirm(millis.toUtcLocalDate())
+                        val picked = LocalDate.of(year, month, day).coerceIn(lower, upper)
+                        onConfirm(picked)
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = mood.soft),
                     shape = RoundedCornerShape(18.dp),
@@ -259,8 +297,41 @@ fun LoverDatePickerSheet(
     }
 }
 
-private fun LocalDate.toUtcEpochMillis(): Long =
-    atStartOfDay(ZoneOffset.UTC).toInstant().toEpochMilli()
-
-private fun Long.toUtcLocalDate(): LocalDate =
-    Instant.ofEpochMilli(this).atZone(ZoneOffset.UTC).toLocalDate()
+@Composable
+private fun WheelNumberPicker(
+    value: Int,
+    range: IntRange,
+    onValueChange: (Int) -> Unit,
+    formatter: (Int) -> String,
+    modifier: Modifier = Modifier,
+) {
+    val safeRange = if (range.first <= range.last) range else range.last..range.first
+    val safeValue = value.coerceIn(safeRange)
+    AndroidView(
+        factory = { context ->
+            NumberPicker(context).apply {
+                wrapSelectorWheel = true
+                descendantFocusability = NumberPicker.FOCUS_BLOCK_DESCENDANTS
+            }
+        },
+        update = { picker ->
+            val minV = safeRange.first
+            val maxV = safeRange.last
+            val labels = Array(maxV - minV + 1) { i -> formatter(minV + i) }
+            picker.setOnValueChangedListener(null)
+            picker.displayedValues = null
+            if (picker.maxValue < minV) {
+                picker.minValue = minV
+                picker.maxValue = maxV
+            } else {
+                picker.maxValue = maxOf(picker.maxValue, maxV)
+                picker.minValue = minV
+                picker.maxValue = maxV
+            }
+            picker.displayedValues = labels
+            picker.value = safeValue
+            picker.setOnValueChangedListener { _, _, newVal -> onValueChange(newVal) }
+        },
+        modifier = modifier.height(160.dp),
+    )
+}
