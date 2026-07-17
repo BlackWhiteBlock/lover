@@ -708,7 +708,7 @@ fun LetterComposeScreen(
         mutableStateOf(if (linked) LetterType.INSTANT else LetterType.CAPSULE)
     }
     var unlockDate by rememberSaveable { mutableStateOf(LocalDate.now().plusMonths(1).toString()) }
-    var unlockOnPartnerBind by rememberSaveable { mutableStateOf(!linked) }
+    var unlockOnPartnerBind by rememberSaveable { mutableStateOf(false) }
 
     ComposerScaffold(
         title = "写给 TA",

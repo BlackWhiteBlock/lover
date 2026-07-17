@@ -553,122 +553,16 @@ private fun TimelinePage(
     pendingUploads: List<PendingMediaUpload>,
     onMedia: (MediaItem) -> Unit,
 ) {
-    Column {
+    Column(modifier = Modifier.fillMaxSize()) {
         PageHeader("相爱时光", "Visual Memories")
         if (media.isEmpty() && pendingUploads.isEmpty()) {
             EmptyHint("选择照片或视频，记录共同的故事", Icons.Rounded.PhotoLibrary)
         } else {
-            LazyVerticalGrid(
-                columns = GridCells.Fixed(2),
-                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 4.dp),
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp),
-            ) {
-                items(
-                    pendingUploads,
-                    key = { "pending-${it.id}" },
-                    span = { GridItemSpan(1) },
-                ) { pending ->
-                    UploadingMediaCard(pending)
-                }
-                if (media.isNotEmpty()) {
-                    val featured = media.first()
-                    item(
-                        key = "featured-${featured.id}",
-                        span = { GridItemSpan(maxLineSpan) },
-                    ) {
-                        FeaturedMediaCard(
-                            item = featured,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .aspectRatio(4f / 3f)
-                                .clickable { onMedia(featured) },
-                        )
-                    }
-                    items(
-                        media.drop(1),
-                        key = { it.id },
-                        span = { GridItemSpan(1) },
-                    ) {
-                        MediaImage(it, Modifier.aspectRatio(1f).clickable { onMedia(it) })
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun FeaturedMediaCard(
-    item: MediaItem,
-    modifier: Modifier = Modifier,
-) {
-    val context = LocalContext.current
-    val cover = item.cover
-    val thumbUrl = item.thumbnailUrl ?: item.url
-    Box(
-        modifier
-            .clip(RoundedCornerShape(28.dp))
-            .background(Blush),
-    ) {
-        if (!thumbUrl.isNullOrBlank() && cover != null) {
-            AsyncImage(
-                model = listMediaImageRequest(context, thumbUrl, cover.assetId),
-                contentDescription = item.caption,
-                contentScale = ContentScale.Crop,
-                modifier = Modifier.fillMaxSize(),
-            )
-        }
-        Box(
-            Modifier
-                .fillMaxSize()
-                .background(
-                    Brush.verticalGradient(
-                        0f to Color.Transparent,
-                        0.45f to Color.Transparent,
-                        1f to Color.Black.copy(alpha = 0.55f),
-                    ),
-                ),
-        )
-        Column(
-            Modifier
-                .align(Alignment.BottomStart)
-                .fillMaxWidth()
-                .padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(4.dp),
-        ) {
-            Text(
-                "精选",
-                color = Color.White.copy(alpha = 0.85f),
-                style = MaterialTheme.typography.labelSmall,
-                letterSpacing = 2.sp,
-            )
-            Text(
-                item.caption.ifBlank { item.mediaDate },
-                color = Color.White,
-                style = MaterialTheme.typography.titleLarge,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
-            )
-        }
-        if (item.assetCount > 1) {
-            Text(
-                "${item.assetCount}",
-                color = Color.White,
-                style = MaterialTheme.typography.labelMedium,
-                modifier = Modifier
-                    .align(Alignment.TopEnd)
-                    .padding(12.dp)
-                    .background(Color.Black.copy(alpha = 0.45f), RoundedCornerShape(10.dp))
-                    .padding(horizontal = 8.dp, vertical = 3.dp),
-            )
-        }
-        if (item.type == MediaType.VIDEO && item.assetCount <= 1) {
-            Icon(
-                Icons.Rounded.PlayCircle,
-                "视频",
-                tint = Color.White,
-                modifier = Modifier.align(Alignment.Center).size(52.dp),
+            TimelineGalleryContent(
+                media = media,
+                pendingUploads = pendingUploads,
+                onMedia = onMedia,
+                uploadingCard = { pending -> UploadingMediaCard(pending) },
             )
         }
     }

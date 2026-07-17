@@ -71,7 +71,8 @@ alter table letters
   add column if not exists couple_link_id uuid references couple_links(id) on delete set null,
   add column if not exists unlock_on_partner_bind boolean not null default false;
 
--- Capsule may omit unlock_at when unlock_on_partner_bind is true (enforced in app layer).
+-- Capsule may omit unlock_at when unlock_on_partner_bind is true.
+-- Constraint update lives in 008_letters_unlock_on_bind_check.sql.
 
 -- Backfill existing single-space users as profile-complete personal spaces.
 update users u

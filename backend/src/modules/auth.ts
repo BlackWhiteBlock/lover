@@ -165,6 +165,13 @@ export function registerAuth(app: FastifyInstance, context: AppContext) {
         );
       }
       const user = userResult.rows[0]!;
+      // 单端登录：新登录立即作废该用户其它未过期会话，旧设备下次请求会 401。
+      await client.query(
+        `update auth_sessions
+         set revoked_at = now()
+         where user_id = $1 and revoked_at is null`,
+        [user.id],
+      );
       const sessionId = randomUUID();
       const refreshToken = signRefresh(context, user.id, sessionId);
       await client.query(
