@@ -12,16 +12,10 @@ import androidx.activity.result.contract.ActivityResultContract
 import androidx.activity.result.contract.ActivityResultContracts.PickMultipleVisualMedia
 import androidx.activity.result.contract.ActivityResultContracts.PickVisualMedia
 
-/**
- * 相册选取（含华为 / 鸿蒙适配）。
- *
- * 鸿蒙上常见坑：
- * - ACTION_PICK + Images URI 再 setType("*/*") / EXTRA_MIME_TYPES → 「暂无可用打开方式」
- * - 强行 setPackage 到不支持该 Intent 的相册包 → 同样无打开方式
- * - ACTION_GET_CONTENT + CATEGORY_OPENABLE → 退化成「文件」选择器
- *
- * 策略：图片优先干净的 ACTION_PICK；图文混选优先系统 Photo Picker，再降级。
- */
+// 相册选取（含华为 / 鸿蒙适配）。
+// 鸿蒙坑：Images URI 上再设通配 MIME / EXTRA_MIME_TYPES → 「暂无可用打开方式」；
+// 强行 setPackage、以及 GET_CONTENT+OPENABLE 易退化成文件选择器。
+// 策略：图片用干净 ACTION_PICK；图片+视频优先系统 Photo Picker。
 private val GALLERY_PACKAGES = listOf(
     "com.huawei.photos",
     "com.huawei.hmos.photos",
@@ -119,10 +113,7 @@ private fun resolveGalleryImageIntent(context: Context): Intent {
     )
 }
 
-/**
- * 图片或视频。
- * 鸿蒙对「Images URI + */* + MIME_TYPES」支持很差，优先系统 Photo Picker。
- */
+// 图片或视频。鸿蒙对 Images URI + 通配 MIME 支持很差，优先系统 Photo Picker。
 private fun resolveGalleryImageOrVideoIntent(context: Context): Intent {
     val huaweiLike = isHuaweiOrHarmony()
 
