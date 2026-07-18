@@ -297,11 +297,27 @@ class MainViewModel @Inject constructor(
         repository.deleteMedia(id)
     }
 
+    fun loadMoreMedia() = viewModelScope.launch {
+        runCatching { repository.loadMoreMedia() }
+    }
+
     fun addAnniversary(title: String, date: String, type: AnniversaryType) = launchAction("已保存") {
         requireSpace()
         require(title.isNotBlank()) { "请填写纪念日名称" }
         LocalDate.parse(date)
         repository.addAnniversary(title, date, type)
+    }
+
+    fun updateAnniversary(id: String, title: String, date: String, type: AnniversaryType) = launchAction("已保存") {
+        requireSpace()
+        require(title.isNotBlank()) { "请填写纪念日名称" }
+        LocalDate.parse(date)
+        repository.updateAnniversary(id, title, date, type)
+    }
+
+    fun deleteAnniversary(id: String) = launchAction("已删除") {
+        requireSpace()
+        repository.deleteAnniversary(id)
     }
 
     fun addLetter(
@@ -322,6 +338,14 @@ class MainViewModel @Inject constructor(
         )
         repository.addLetter(title, content, type, unlockDate, unlockOnPartnerBind)
     }
+
+    fun deleteLetter(id: String) = launchAction("已删除") {
+        requireSpace()
+        repository.deleteLetter(id)
+    }
+
+    suspend fun signAssetUrl(assetId: String): String =
+        repository.signAssetOriginalUrl(assetId)
 
     fun refresh() = viewModelScope.launch {
         runCatching { repository.restoreSession() }

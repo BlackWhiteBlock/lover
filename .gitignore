@@ -20,3 +20,6 @@ android/keystore.properties
 .DS_Store
 *** End Patch
 .github/workflows/backend-deploy.yml.before
+
+#qoder
+.qoder/

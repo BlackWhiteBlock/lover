@@ -12,10 +12,14 @@ import androidx.activity.result.contract.ActivityResultContract
 import androidx.activity.result.contract.ActivityResultContracts.PickMultipleVisualMedia
 import androidx.activity.result.contract.ActivityResultContracts.PickVisualMedia
 
-// 相册选取（含华为 / 鸿蒙适配）。
-// 鸿蒙坑：Images URI 上再设通配 MIME / EXTRA_MIME_TYPES → 「暂无可用打开方式」；
-// 强行 setPackage、以及 GET_CONTENT+OPENABLE 易退化成文件选择器。
-// 策略：图片用干净 ACTION_PICK；图片+视频优先系统 Photo Picker。
+// Gallery pick (Android APK, including Huawei / HarmonyOS compatibility layer).
+//
+// IMPORTANT: ohos PhotoViewPicker is HarmonyOS-native only and cannot be called
+// from this Android module. On Harmony we must stay on Android intents.
+//
+// Do NOT use Intent.createChooser / GET_CONTENT / PickVisualMedia-when-unavailable
+// on Huawei/Harmony: those paths open the file manager.
+
 private val GALLERY_PACKAGES = listOf(
     "com.huawei.photos",
     "com.huawei.hmos.photos",
@@ -36,10 +40,11 @@ private fun isHuaweiOrHarmony(): Boolean {
     val brand = Build.BRAND.orEmpty()
     val manufacturer = Build.MANUFACTURER.orEmpty()
     val product = Build.PRODUCT.orEmpty()
-    if (listOf(brand, manufacturer, product).any {
-            it.contains("huawei", ignoreCase = true) ||
-                it.contains("honor", ignoreCase = true) ||
-                it.contains("harmony", ignoreCase = true)
+    val markers = listOf(brand, manufacturer, product)
+    if (markers.any { name ->
+            name.contains("huawei", ignoreCase = true) ||
+                name.contains("honor", ignoreCase = true) ||
+                name.contains("harmony", ignoreCase = true)
         }
     ) {
         return true
@@ -50,49 +55,47 @@ private fun isHuaweiOrHarmony(): Boolean {
         "hw_sc.build.platform.version",
         "ro.huawei.build.version.security_patch",
     )
-    return props.any { key ->
-        runCatching {
-            val clazz = Class.forName("android.os.SystemProperties")
-            val get = clazz.getMethod("get", String::class.java, String::class.java)
-            val value = get.invoke(null, key, "") as? String
-            !value.isNullOrBlank()
-        }.getOrDefault(false)
+    return props.any { key -> systemPropertyNonBlank(key) }
+}
+
+private fun systemPropertyNonBlank(key: String): Boolean {
+    return try {
+        val clazz = Class.forName("android.os.SystemProperties")
+        val get = clazz.getMethod("get", String::class.java, String::class.java)
+        val value = get.invoke(null, key, "") as? String
+        value != null && value.isNotBlank()
+    } catch (error: Throwable) {
+        false
     }
 }
 
 private fun Intent.isResolvable(context: Context): Boolean {
     val pm = context.packageManager
-    val flags = PackageManager.MATCH_DEFAULT_ONLY
     return try {
-        resolveActivity(pm) != null || pm.queryIntentActivities(this, flags).isNotEmpty()
-    } catch (_: Throwable) {
+        resolveActivity(pm) != null ||
+            pm.queryIntentActivities(this, PackageManager.MATCH_DEFAULT_ONLY).isNotEmpty()
+    } catch (error: Throwable) {
         false
     }
 }
 
-/** 仅图片：干净 ACTION_PICK，不要再 setType / EXTRA_MIME_TYPES。 */
-private fun pickImagesOnlyIntent(packageName: String? = null): Intent =
-    Intent(Intent.ACTION_PICK, MediaStore.Images.Media.EXTERNAL_CONTENT_URI).apply {
+/** Clean image pick. Never setType / EXTRA_MIME_TYPES on Images URI. */
+private fun pickImagesOnlyIntent(packageName: String? = null): Intent {
+    return Intent(Intent.ACTION_PICK, MediaStore.Images.Media.EXTERNAL_CONTENT_URI).apply {
         if (packageName != null) setPackage(packageName)
     }
+}
 
-private fun wrapChooser(intent: Intent, title: String = "选择照片"): Intent =
-    Intent.createChooser(intent, title)
-
-private fun resolveGalleryImageIntent(context: Context): Intent {
-    // 1) 系统默认图片库 PICK（鸿蒙/华为上最稳，避免文件管理器）
-    val systemPick = pickImagesOnlyIntent()
-    if (systemPick.isResolvable(context)) {
-        return wrapChooser(systemPick)
+private fun pickImagesWithTypeIntent(packageName: String? = null): Intent {
+    return Intent(Intent.ACTION_PICK).apply {
+        setDataAndType(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, "image/*")
+        if (packageName != null) setPackage(packageName)
     }
+}
 
-    // 2) 指定厂商相册包（仍保持干净 Images URI，不改 type）
-    for (pkg in GALLERY_PACKAGES) {
-        val targeted = pickImagesOnlyIntent(pkg)
-        if (targeted.isResolvable(context)) return targeted
-    }
-
-    // 3) Photo Picker（比 GET_CONTENT 更接近相册；鸿蒙 6 通常可用）
+/** Direct gallery intents for Huawei/Harmony — no chooser, no file manager. */
+private fun resolveHarmonyImageIntent(context: Context): Intent {
+    // Real system photo picker only (when AndroidX reports available).
     if (PickVisualMedia.isPhotoPickerAvailable(context)) {
         return PickVisualMedia().createIntent(
             context,
@@ -100,12 +103,80 @@ private fun resolveGalleryImageIntent(context: Context): Intent {
         )
     }
 
-    // 4) 最后 GET_CONTENT（可能像文件选择，但总比打不开好）
+    for (pkg in GALLERY_PACKAGES) {
+        val withType = pickImagesWithTypeIntent(pkg)
+        if (withType.isResolvable(context)) return withType
+        val clean = pickImagesOnlyIntent(pkg)
+        if (clean.isResolvable(context)) return clean
+    }
+
+    val systemTyped = pickImagesWithTypeIntent()
+    if (systemTyped.isResolvable(context)) return systemTyped
+
+    val systemClean = pickImagesOnlyIntent()
+    if (systemClean.isResolvable(context)) return systemClean
+
+    // Last resort still avoid GET_CONTENT: launch Photo Picker contract intent
+    // only if somehow resolvable; otherwise clean PICK.
+    return systemClean
+}
+
+private fun resolveHarmonyImageAndVideoIntent(context: Context, maxItems: Int): Intent {
+    if (PickVisualMedia.isPhotoPickerAvailable(context)) {
+        return if (maxItems > 1) {
+            PickMultipleVisualMedia(maxItems).createIntent(
+                context,
+                PickVisualMediaRequest(PickVisualMedia.ImageAndVideo),
+            )
+        } else {
+            PickVisualMedia().createIntent(
+                context,
+                PickVisualMediaRequest(PickVisualMedia.ImageAndVideo),
+            )
+        }
+    }
+
+    // No system photo picker: open gallery for images (still album UI).
+    // Mixing video via GET_CONTENT would open file manager on Harmony — avoid it.
+    for (pkg in GALLERY_PACKAGES) {
+        val imagePick = pickImagesWithTypeIntent(pkg).apply {
+            if (maxItems > 1) putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true)
+        }
+        if (imagePick.isResolvable(context)) return imagePick
+        val clean = pickImagesOnlyIntent(pkg).apply {
+            if (maxItems > 1) putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true)
+        }
+        if (clean.isResolvable(context)) return clean
+    }
+
+    return pickImagesWithTypeIntent().apply {
+        if (maxItems > 1) putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true)
+    }
+}
+
+private fun resolveStockImageIntent(context: Context): Intent {
+    if (PickVisualMedia.isPhotoPickerAvailable(context)) {
+        return PickVisualMedia().createIntent(
+            context,
+            PickVisualMediaRequest(PickVisualMedia.ImageOnly),
+        )
+    }
+
+    val systemPick = pickImagesOnlyIntent()
+    if (systemPick.isResolvable(context)) return systemPick
+
+    for (pkg in GALLERY_PACKAGES) {
+        val targeted = pickImagesOnlyIntent(pkg)
+        if (targeted.isResolvable(context)) return targeted
+    }
+
     val getContent = Intent(Intent.ACTION_GET_CONTENT).apply {
         type = "image/*"
         addCategory(Intent.CATEGORY_OPENABLE)
     }
-    if (getContent.isResolvable(context)) return wrapChooser(getContent, "选择图片")
+    if (getContent.isResolvable(context)) {
+        return Intent.createChooser(getContent, "选择图片")
+    }
 
     return PickVisualMedia().createIntent(
         context,
@@ -113,20 +184,14 @@ private fun resolveGalleryImageIntent(context: Context): Intent {
     )
 }
 
-// 图片或视频。鸿蒙对 Images URI + 通配 MIME 支持很差，优先系统 Photo Picker。
-private fun resolveGalleryImageOrVideoIntent(context: Context): Intent {
-    val huaweiLike = isHuaweiOrHarmony()
-
-    if (huaweiLike || PickVisualMedia.isPhotoPickerAvailable(context)) {
-        if (PickVisualMedia.isPhotoPickerAvailable(context)) {
-            return PickVisualMedia().createIntent(
-                context,
-                PickVisualMediaRequest(PickVisualMedia.ImageAndVideo),
-            )
-        }
+private fun resolveStockImageOrVideoIntent(context: Context): Intent {
+    if (PickVisualMedia.isPhotoPickerAvailable(context)) {
+        return PickVisualMedia().createIntent(
+            context,
+            PickVisualMediaRequest(PickVisualMedia.ImageAndVideo),
+        )
     }
 
-    // 非鸿蒙：可尝试 Files 库 PICK
     val filesPick = Intent(
         Intent.ACTION_PICK,
         MediaStore.Files.getContentUri("external"),
@@ -134,15 +199,8 @@ private fun resolveGalleryImageOrVideoIntent(context: Context): Intent {
         type = "*/*"
         putExtra(Intent.EXTRA_MIME_TYPES, arrayOf("image/*", "video/*"))
     }
-    if (!huaweiLike && filesPick.isResolvable(context)) {
-        return wrapChooser(filesPick, "选择照片或视频")
-    }
-
-    // 干净图片 PICK（至少能选图；视频可走下面的 GET_CONTENT / Picker）
-    val imagePick = pickImagesOnlyIntent()
-    if (imagePick.isResolvable(context)) {
-        // 若仅能选图，仍给用户可用路径；混选失败时比「无打开方式」好
-        if (!huaweiLike) return wrapChooser(imagePick, "选择照片或视频")
+    if (filesPick.isResolvable(context)) {
+        return Intent.createChooser(filesPick, "选择照片或视频")
     }
 
     val getContent = Intent(Intent.ACTION_GET_CONTENT).apply {
@@ -151,7 +209,7 @@ private fun resolveGalleryImageOrVideoIntent(context: Context): Intent {
         addCategory(Intent.CATEGORY_OPENABLE)
     }
     if (getContent.isResolvable(context)) {
-        return wrapChooser(getContent, "选择照片或视频")
+        return Intent.createChooser(getContent, "选择照片或视频")
     }
 
     return PickVisualMedia().createIntent(
@@ -160,15 +218,12 @@ private fun resolveGalleryImageOrVideoIntent(context: Context): Intent {
     )
 }
 
-private fun resolveGalleryImageAndVideoMultipleIntent(context: Context, maxItems: Int): Intent {
+private fun resolveStockImageAndVideoMultipleIntent(context: Context, maxItems: Int): Intent {
     val fallback = PickMultipleVisualMedia(maxItems)
     val request = PickVisualMediaRequest(PickVisualMedia.ImageAndVideo)
 
-    // 鸿蒙 / 有系统 Photo Picker：多选混媒体最稳
-    if (isHuaweiOrHarmony() || PickVisualMedia.isPhotoPickerAvailable(context)) {
-        if (PickVisualMedia.isPhotoPickerAvailable(context)) {
-            return fallback.createIntent(context, request)
-        }
+    if (PickVisualMedia.isPhotoPickerAvailable(context)) {
+        return fallback.createIntent(context, request)
     }
 
     val getContent = Intent(Intent.ACTION_GET_CONTENT).apply {
@@ -178,18 +233,34 @@ private fun resolveGalleryImageAndVideoMultipleIntent(context: Context, maxItems
         addCategory(Intent.CATEGORY_OPENABLE)
     }
     if (getContent.isResolvable(context)) {
-        return wrapChooser(getContent, "选择照片或视频")
-    }
-
-    // 单图 PICK + 允许多选（部分机型会忽略多选，但仍可打开相册）
-    val imagePick = pickImagesOnlyIntent().apply {
-        putExtra(Intent.EXTRA_ALLOW_MULTIPLE, maxItems > 1)
-    }
-    if (imagePick.isResolvable(context)) {
-        return wrapChooser(imagePick, "选择照片或视频")
+        return Intent.createChooser(getContent, "选择照片或视频")
     }
 
     return fallback.createIntent(context, request)
+}
+
+private fun resolveGalleryImageIntent(context: Context): Intent {
+    return if (isHuaweiOrHarmony()) {
+        resolveHarmonyImageIntent(context)
+    } else {
+        resolveStockImageIntent(context)
+    }
+}
+
+private fun resolveGalleryImageOrVideoIntent(context: Context): Intent {
+    return if (isHuaweiOrHarmony()) {
+        resolveHarmonyImageAndVideoIntent(context, maxItems = 1)
+    } else {
+        resolveStockImageOrVideoIntent(context)
+    }
+}
+
+private fun resolveGalleryImageAndVideoMultipleIntent(context: Context, maxItems: Int): Intent {
+    return if (isHuaweiOrHarmony()) {
+        resolveHarmonyImageAndVideoIntent(context, maxItems = maxItems)
+    } else {
+        resolveStockImageAndVideoMultipleIntent(context, maxItems)
+    }
 }
 
 class PickGalleryImage : ActivityResultContract<Unit, Uri?>() {

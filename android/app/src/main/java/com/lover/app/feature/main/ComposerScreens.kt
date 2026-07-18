@@ -33,6 +33,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.AddPhotoAlternate
 import androidx.compose.material.icons.rounded.Cancel
+import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.Favorite
 import androidx.compose.material.icons.rounded.PlayCircle
 import androidx.compose.material3.Button
@@ -691,6 +692,113 @@ fun AnniversaryComposeScreen(
                 label = "纪念日期",
                 modifier = Modifier.fillMaxWidth(),
             )
+        }
+    }
+}
+
+@Composable
+fun AnniversaryEditScreen(
+    item: com.lover.app.core.model.Anniversary,
+    onClose: () -> Unit,
+    onSave: (String, String, AnniversaryType) -> Unit,
+    onDelete: () -> Unit,
+) {
+    var title by rememberSaveable { mutableStateOf(item.title) }
+    var date by rememberSaveable { mutableStateOf(item.date) }
+    var type by rememberSaveable { mutableStateOf(item.type) }
+    var confirmDelete by rememberSaveable { mutableStateOf(false) }
+
+    val mood = LocalMood.current
+    ComposerScaffold(
+        title = "编辑纪念日",
+        subtitle = "修改这个重要的日子",
+        onClose = onClose,
+        actionEnabled = title.isNotBlank(),
+        actionLabel = "保存",
+        onAction = { onSave(title, date, type) },
+    ) { padding ->
+        Column(
+            Modifier
+                .fillMaxSize()
+                .padding(padding)
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 20.dp)
+                .padding(bottom = 24.dp),
+            verticalArrangement = Arrangement.spacedBy(18.dp),
+        ) {
+            Surface(
+                shape = RoundedCornerShape(28.dp),
+                color = mood.blush.copy(alpha = 0.65f),
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Row(
+                    Modifier.padding(20.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(14.dp),
+                ) {
+                    Box(
+                        Modifier.size(52.dp).background(Color.White.copy(alpha = 0.7f), CircleShape),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(Icons.Rounded.Favorite, null, tint = mood.soft)
+                    }
+                    Column {
+                        Text("纪念类型", fontWeight = FontWeight.SemiBold, color = mood.accent)
+                        Text("年度会循环倒数，里程碑指向那天", style = MaterialTheme.typography.bodySmall, color = LocalMood.current.stone)
+                    }
+                }
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                SoftEditorChip(type == AnniversaryType.YEARLY, { type = AnniversaryType.YEARLY }, "年度纪念")
+                SoftEditorChip(type == AnniversaryType.MILESTONE, { type = AnniversaryType.MILESTONE }, "里程碑")
+            }
+            SoftTextField(
+                value = title,
+                onValueChange = { title = it.take(30) },
+                label = "纪念日名称",
+                placeholder = "例如：正式在一起",
+                modifier = Modifier.fillMaxWidth(),
+            )
+            LoverDateField(
+                value = date,
+                onValueChange = { date = it },
+                label = "纪念日期",
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Spacer(Modifier.height(12.dp))
+            if (confirmDelete) {
+                AlertDialog(
+                    onDismissRequest = { confirmDelete = false },
+                    shape = RoundedCornerShape(28.dp),
+                    containerColor = mood.background,
+                    title = { Text("确认删除") },
+                    text = { Text("删除后无法恢复，确定要删除「${item.title}」吗？") },
+                    confirmButton = {
+                        TextButton(
+                            onClick = onDelete,
+                            colors = ButtonDefaults.textButtonColors(contentColor = Color(0xFFC45C5C)),
+                        ) { Text("删除") }
+                    },
+                    dismissButton = {
+                        TextButton(
+                            onClick = { confirmDelete = false },
+                            colors = ButtonDefaults.textButtonColors(contentColor = mood.stone),
+                        ) { Text("取消") }
+                    },
+                )
+            } else {
+                OutlinedButton(
+                    onClick = { confirmDelete = true },
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(22.dp),
+                    border = BorderStroke(1.dp, Color(0xFFC45C5C).copy(alpha = 0.5f)),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFFC45C5C)),
+                ) {
+                    Icon(Icons.Rounded.Delete, null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text("删除此纪念日")
+                }
+            }
         }
     }
 }

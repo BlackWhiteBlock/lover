@@ -26,6 +26,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -122,6 +123,7 @@ internal fun TimelineGalleryContent(
     pendingUploads: List<PendingMediaUpload>,
     onMedia: (MediaItem) -> Unit,
     uploadingCard: @Composable (PendingMediaUpload) -> Unit,
+    onLoadMore: () -> Unit = {},
 ) {
     val featured = media.firstOrNull()
     val restPlans = remember(media) {
@@ -187,6 +189,25 @@ internal fun TimelineGalleryContent(
                             )
                         }
                     }
+                }
+            }
+        }
+
+        // 触底加载更多
+        if (media.size >= 30) {
+            item(key = "load-more-sentinel") {
+                androidx.compose.foundation.layout.Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(48.dp),
+                    contentAlignment = androidx.compose.ui.Alignment.Center,
+                ) {
+                    androidx.compose.material3.CircularProgressIndicator(
+                        modifier = Modifier.size(24.dp),
+                        strokeWidth = 2.dp,
+                        color = LocalMood.current.soft,
+                    )
+                    LaunchedEffect(Unit) { onLoadMore() }
                 }
             }
         }

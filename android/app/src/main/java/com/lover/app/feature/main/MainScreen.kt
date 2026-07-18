@@ -46,16 +46,21 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.PathEffect
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -71,6 +76,7 @@ import com.lover.app.core.media.PickGalleryImage
 import com.lover.app.core.media.listMediaImageRequest
 import com.lover.app.core.media.signedMediaImageRequest
 import com.lover.app.core.model.*
+import kotlinx.coroutines.launch
 import java.time.LocalDate
 import java.time.temporal.ChronoUnit
 
@@ -139,6 +145,7 @@ fun MainScreen(
     var mediaDetail by remember { mutableStateOf<MediaItem?>(null) }
     var mediaEdit by remember { mutableStateOf<MediaItem?>(null) }
     var letterDetail by remember { mutableStateOf<Letter?>(null) }
+    var anniversaryEdit by remember { mutableStateOf<Anniversary?>(null) }
     var togetherDraft by rememberSaveable {
         mutableStateOf(java.time.LocalDate.now().minusYears(1).toString())
     }
@@ -147,7 +154,8 @@ fun MainScreen(
     val composing = editor != null
     val mediaDetailOpen = mediaDetail != null
     val mediaEditOpen = mediaEdit != null
-    val overlayOpen = composing || mediaDetailOpen || mediaEditOpen
+    val anniversaryEditOpen = anniversaryEdit != null
+    val overlayOpen = composing || mediaDetailOpen || mediaEditOpen || anniversaryEditOpen
     val incomingBind = remember(state.pendingIncomingBinds, state.couple?.pendingIncomingBinds, state.linked) {
         if (state.linked) {
             null
@@ -228,10 +236,14 @@ fun MainScreen(
                             media = state.media,
                             pendingUploads = pendingUploads,
                             onMedia = { item -> viewModel.openMediaDetail(item) { mediaDetail = it } },
+                            onLoadMore = { viewModel.loadMoreMedia() },
                         )
-                        MainTab.ANNIVERSARY -> AnniversaryPage(state.anniversaries) {
-                            editor = Editor.ANNIVERSARY
-                        }
+                        MainTab.ANNIVERSARY -> AnniversaryPage(
+                            anniversaries = state.anniversaries,
+                            viewModel = viewModel,
+                            onAdd = { editor = Editor.ANNIVERSARY },
+                            onEdit = { anniversaryEdit = it },
+                        )
                         MainTab.LETTERS -> LettersPage(state.letters, { letterDetail = it }) {
                             editor = Editor.LETTER
                         }
@@ -367,7 +379,41 @@ fun MainScreen(
             }
         }
 
-        letterDetail?.let { LetterDetail(it) { letterDetail = null } }
+        AnimatedVisibility(
+            visible = anniversaryEditOpen,
+            enter = slideInHorizontally(
+                animationSpec = tween(400, easing = FastOutSlowInEasing),
+                initialOffsetX = { it },
+            ) + fadeIn(tween(220)),
+            exit = slideOutHorizontally(
+                animationSpec = tween(320, easing = FastOutSlowInEasing),
+                targetOffsetX = { it },
+            ) + fadeOut(tween(180)),
+        ) {
+            val editing = anniversaryEdit
+            if (editing != null) {
+                Box(
+                    Modifier
+                        .fillMaxSize()
+                        .background(LocalMood.current.background),
+                ) {
+                    AnniversaryEditScreen(
+                        item = editing,
+                        onClose = { anniversaryEdit = null },
+                        onSave = { title, date, type ->
+                            viewModel.updateAnniversary(editing.id, title, date, type)
+                            anniversaryEdit = null
+                        },
+                        onDelete = {
+                            viewModel.deleteAnniversary(editing.id)
+                            anniversaryEdit = null
+                        },
+                    )
+                }
+            }
+        }
+
+        letterDetail?.let { LetterDetail(it, state.user?.id, { letterDetail = null }, onDelete = { viewModel.deleteLetter(it.id) }) }
 
         if (showBindPrompt && incomingBind != null) {
             IncomingBindDialog(
@@ -716,6 +762,7 @@ private fun TimelinePage(
     media: List<MediaItem>,
     pendingUploads: List<PendingMediaUpload>,
     onMedia: (MediaItem) -> Unit,
+    onLoadMore: () -> Unit = {},
 ) {
     val mood = LocalMood.current
     Column(modifier = Modifier.fillMaxSize()) {
@@ -733,6 +780,7 @@ private fun TimelinePage(
                 media = media,
                 pendingUploads = pendingUploads,
                 onMedia = onMedia,
+                onLoadMore = onLoadMore,
                 uploadingCard = { pending -> UploadingMediaCard(pending) },
             )
         }
@@ -909,8 +957,35 @@ private fun MediaImage(item: MediaItem, modifier: Modifier = Modifier) {
 }
 
 @Composable
-private fun AnniversaryPage(anniversaries: List<Anniversary>, onAdd: () -> Unit) {
+private fun AnniversaryPage(
+    anniversaries: List<Anniversary>,
+    viewModel: MainViewModel,
+    onAdd: () -> Unit,
+    onEdit: (Anniversary) -> Unit,
+) {
     val mood = LocalMood.current
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    // 签封面图 URL
+    val coverUrls = remember(anniversaries.map { it.coverAssetId }) {
+        mutableStateMapOf<String, String?>()
+    }
+    LaunchedEffect(anniversaries.map { it.coverAssetId }) {
+        anniversaries.forEach { ann ->
+            val assetId = ann.coverAssetId
+            if (assetId != null && !coverUrls.containsKey(assetId)) {
+                coverUrls[assetId] = null // placeholder
+                scope.launch {
+                    runCatching { viewModel.signAssetUrl(assetId) }
+                        .onSuccess { coverUrls[assetId] = it }
+                        .onFailure { coverUrls.remove(assetId) }
+                }
+            }
+        }
+    }
+    val dashedStroke = remember(mood.soft) {
+        BorderStroke(1.5.dp, mood.soft.copy(alpha = 0.35f))
+    }
     Column {
         PageHeader(
             if (mood.solo) "纪念日" else "爱的纪念日",
@@ -918,56 +993,137 @@ private fun AnniversaryPage(anniversaries: List<Anniversary>, onAdd: () -> Unit)
         )
         LazyColumn(
             contentPadding = PaddingValues(horizontal = 18.dp, vertical = 4.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
             if (anniversaries.isEmpty()) item { EmptyHint("把重要的日子珍藏在这里", Icons.Rounded.Event) }
             items(anniversaries, key = { it.id }) { anniversary ->
                 val countdown = anniversary.countdown
-                Card(
-                    colors = CardDefaults.cardColors(containerColor = mood.softSurface),
-                    shape = RoundedCornerShape(28.dp),
-                    elevation = CardDefaults.cardElevation(0.dp),
-                    border = BorderStroke(1.dp, mood.softOutline.copy(alpha = 0.7f)),
+                val coverUrl = anniversary.coverAssetId?.let { coverUrls[it] }
+                val hasCover = !coverUrl.isNullOrBlank()
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(192.dp)
+                        .clip(RoundedCornerShape(28.dp))
+                        .clickable { onEdit(anniversary) },
                 ) {
-                    Row(Modifier.fillMaxWidth().padding(20.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Box(Modifier.size(64.dp).background(mood.blush, CircleShape), contentAlignment = Alignment.Center) {
-                            Icon(Icons.Rounded.Favorite, null, tint = mood.soft)
-                        }
-                        Column(Modifier.weight(1f).padding(horizontal = 16.dp)) {
-                            Text(anniversary.title, style = MaterialTheme.typography.titleLarge)
-                            Text(anniversary.date, color = mood.stone)
-                            SuggestionChip(
-                                onClick = {},
-                                label = { Text(if (anniversary.type == AnniversaryType.YEARLY) "年度纪念" else "里程碑") },
-                                colors = SuggestionChipDefaults.suggestionChipColors(
-                                    containerColor = mood.blush,
-                                    labelColor = mood.accent,
+                    // 封面图或渐变背景
+                    if (hasCover) {
+                        AsyncImage(
+                            model = signedMediaImageRequest(context, coverUrl),
+                            contentDescription = null,
+                            modifier = Modifier.fillMaxSize(),
+                            contentScale = ContentScale.Crop,
+                        )
+                    } else {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .background(
+                                    Brush.horizontalGradient(
+                                        listOf(mood.blush, mood.peach.copy(alpha = 0.6f)),
+                                    ),
                                 ),
-                                border = null,
+                        )
+                    }
+                    // 渐变叠层
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(
+                                Brush.horizontalGradient(
+                                    listOf(Color.Black.copy(alpha = 0.45f), Color.Transparent),
+                                ),
+                            ),
+                    )
+                    // 内容
+                    Column(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(24.dp),
+                        verticalArrangement = Arrangement.SpaceBetween,
+                    ) {
+                        // 顶部：类型 badge
+                        Surface(
+                            shape = RoundedCornerShape(20.dp),
+                            color = Color.White.copy(alpha = 0.2f),
+                        ) {
+                            Text(
+                                text = if (anniversary.type == AnniversaryType.MILESTONE) "里程碑" else "年度纪念",
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 5.dp),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = Color.White,
+                                letterSpacing = 1.2.sp,
                             )
                         }
-                        Column(horizontalAlignment = Alignment.End) {
+                        // 底部：标题 + 倒计时
+                        Column {
                             Text(
-                                if (countdown?.reached == true) "✓" else countdown?.days?.toString() ?: "—",
-                                style = MaterialTheme.typography.headlineMedium,
-                                color = mood.soft,
+                                anniversary.title,
+                                style = MaterialTheme.typography.titleLarge.copy(
+                                    fontFamily = FontFamily.Serif,
+                                ),
+                                color = Color.White,
                             )
-                            Text(if (countdown?.reached == true) "已达成" else "天", color = mood.stone)
+                            Text(
+                                anniversary.date,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = Color.White.copy(alpha = 0.7f),
+                            )
+                            Spacer(Modifier.height(8.dp))
+                            Row(verticalAlignment = Alignment.Bottom) {
+                                Text(
+                                    "还有",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = Color.White.copy(alpha = 0.7f),
+                                )
+                                Spacer(Modifier.width(4.dp))
+                                Text(
+                                    if (countdown?.reached == true) "✓" else countdown?.days?.toString() ?: "—",
+                                    style = MaterialTheme.typography.headlineMedium.copy(
+                                        fontFamily = FontFamily.Serif,
+                                    ),
+                                    color = Color.White,
+                                )
+                                Spacer(Modifier.width(2.dp))
+                                Text(
+                                    if (countdown?.reached == true) "已达成" else "天",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = Color.White.copy(alpha = 0.7f),
+                                    modifier = Modifier.padding(bottom = 4.dp),
+                                )
+                            }
                         }
                     }
                 }
             }
             item {
-                OutlinedButton(
-                    onClick = onAdd,
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(22.dp),
-                    border = BorderStroke(1.dp, mood.soft.copy(alpha = 0.35f)),
-                    colors = ButtonDefaults.outlinedButtonColors(contentColor = mood.soft),
+                // 虚线边框添加按钮
+                val dashPath = remember { PathEffect.dashPathEffect(floatArrayOf(10f, 8f), 0f) }
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(56.dp)
+                        .clip(RoundedCornerShape(22.dp))
+                        .drawBehind {
+                            drawRoundRect(
+                                color = mood.soft.copy(alpha = 0.35f),
+                                size = size,
+                                cornerRadius = CornerRadius(22.dp.toPx()),
+                                style = Stroke(
+                                    width = 1.5.dp.toPx(),
+                                    pathEffect = dashPath,
+                                ),
+                            )
+                        }
+                        .clickable { onAdd() },
+                    contentAlignment = Alignment.Center,
                 ) {
-                    Icon(Icons.Rounded.Add, null)
-                    Spacer(Modifier.width(6.dp))
-                    Text("添加新的纪念日")
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Rounded.Add, null, tint = mood.soft, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text("添加新的纪念日", color = mood.soft, style = MaterialTheme.typography.bodySmall)
+                    }
                 }
             }
         }
@@ -977,6 +1133,7 @@ private fun AnniversaryPage(anniversaries: List<Anniversary>, onAdd: () -> Unit)
 @Composable
 private fun LettersPage(letters: List<Letter>, onLetter: (Letter) -> Unit, onAdd: () -> Unit) {
     val mood = LocalMood.current
+    val dashPath = remember { PathEffect.dashPathEffect(floatArrayOf(6f, 4f), 0f) }
     Column {
         PageHeader(
             if (mood.solo) "为爱信封" else "爱的信封",
@@ -984,7 +1141,7 @@ private fun LettersPage(letters: List<Letter>, onLetter: (Letter) -> Unit, onAdd
         )
         LazyColumn(
             contentPadding = PaddingValues(horizontal = 18.dp, vertical = 4.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
             if (letters.isEmpty()) item { EmptyHint("给 TA 写第一封信吧", Icons.Rounded.MarkEmailUnread) }
             items(letters, key = { it.id }) { letter ->
@@ -992,41 +1149,115 @@ private fun LettersPage(letters: List<Letter>, onLetter: (Letter) -> Unit, onAdd
                 Card(
                     modifier = Modifier.fillMaxWidth().clickable { onLetter(letter) },
                     colors = CardDefaults.cardColors(
-                        containerColor = if (unlocked) Color.White.copy(alpha = 0.96f) else mood.blush.copy(alpha = 0.75f),
+                        containerColor = if (unlocked) Color.White.copy(alpha = 0.96f) else Color(0xFFFAF8F5),
                     ),
                     shape = RoundedCornerShape(28.dp),
-                    elevation = CardDefaults.cardElevation(0.dp),
-                    border = BorderStroke(1.dp, mood.softOutline.copy(alpha = 0.7f)),
+                    elevation = CardDefaults.cardElevation(if (unlocked) 1.dp else 0.dp),
+                    border = BorderStroke(1.dp, mood.softOutline.copy(alpha = 0.4f)),
                 ) {
-                    Row(Modifier.padding(22.dp), verticalAlignment = Alignment.Top) {
+                    Box(Modifier.padding(24.dp)) {
+                        // 右上角邮票装饰
                         Box(
-                            Modifier.size(44.dp).background(if (unlocked) LocalMood.current.softSurface else Color.White.copy(alpha = 0.5f), CircleShape),
+                            modifier = Modifier
+                                .align(Alignment.TopEnd)
+                                .size(44.dp)
+                                .graphicsLayer { rotationZ = 12f }
+                                .drawBehind {
+                                    drawRoundRect(
+                                        color = mood.soft.copy(alpha = 0.25f),
+                                        size = size,
+                                        cornerRadius = CornerRadius(8.dp.toPx()),
+                                        style = Stroke(width = 1.5.dp.toPx(), pathEffect = dashPath),
+                                    )
+                                },
                             contentAlignment = Alignment.Center,
                         ) {
                             Icon(
-                                if (unlocked) Icons.Rounded.Drafts else Icons.Rounded.Lock,
+                                Icons.Rounded.Favorite,
                                 null,
-                                tint = mood.soft,
+                                tint = mood.soft.copy(alpha = 0.35f),
                                 modifier = Modifier.size(22.dp),
                             )
                         }
-                        Column(Modifier.weight(1f).padding(start = 14.dp)) {
+                        Column {
+                            // 类型 badge + 日期
                             Row(verticalAlignment = Alignment.CenterVertically) {
-                                Text(letter.title, style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
-                                Text(letter.createdAt.take(10), style = MaterialTheme.typography.labelSmall, color = mood.stone)
+                                Surface(
+                                    shape = RoundedCornerShape(4.dp),
+                                    color = if (letter.type == LetterType.INSTANT) mood.blush else Color(0xFFE8E4DF),
+                                ) {
+                                    Text(
+                                        text = if (letter.type == LetterType.INSTANT) "Instant" else "Time Capsule",
+                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
+                                        style = MaterialTheme.typography.labelSmall.copy(fontSize = 8.sp),
+                                        color = if (letter.type == LetterType.INSTANT) mood.accent else mood.stone,
+                                        letterSpacing = 0.8.sp,
+                                    )
+                                }
+                                Spacer(Modifier.width(8.dp))
+                                Text(letter.createdAt.take(10), style = MaterialTheme.typography.labelSmall, color = mood.stone.copy(alpha = 0.6f))
                             }
-                            Spacer(Modifier.height(6.dp))
+                            Spacer(Modifier.height(14.dp))
+                            // 标题
                             Text(
-                                if (unlocked) {
-                                    letter.summary ?: letter.content.orEmpty()
-                                } else {
-                                    letterCapsuleLockHint(letter)
-                                },
-                                maxLines = 2,
-                                overflow = TextOverflow.Ellipsis,
-                                color = mood.stone,
+                                letter.title,
+                                style = MaterialTheme.typography.titleLarge.copy(fontFamily = FontFamily.Serif),
+                                color = if (unlocked) mood.accent.copy(alpha = 0.8f) else mood.stone,
                             )
-                            Text("来自 ${letter.senderNickname}", style = MaterialTheme.typography.labelSmall, color = mood.soft)
+                            Spacer(Modifier.height(8.dp))
+                            // 内容或锁提示
+                            if (unlocked) {
+                                Text(
+                                    letter.summary ?: letter.content.orEmpty(),
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = Color(0xFF78716C),
+                                    maxLines = 3,
+                                    overflow = TextOverflow.Ellipsis,
+                                    lineHeight = 20.sp,
+                                )
+                            } else {
+                                Column(
+                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                    modifier = Modifier.fillMaxWidth().padding(vertical = 12.dp),
+                                ) {
+                                    Icon(
+                                        Icons.Rounded.Lock,
+                                        null,
+                                        tint = mood.stone.copy(alpha = 0.4f),
+                                        modifier = Modifier.size(24.dp),
+                                    )
+                                    Spacer(Modifier.height(6.dp))
+                                    Text(
+                                        letterCapsuleLockHint(letter),
+                                        style = MaterialTheme.typography.bodySmall.copy(fontStyle = androidx.compose.ui.text.font.FontStyle.Italic),
+                                        color = mood.stone,
+                                        textAlign = TextAlign.Center,
+                                    )
+                                }
+                            }
+                            Spacer(Modifier.height(16.dp))
+                            // 底部：头像 + FROM
+                            HorizontalDivider(color = mood.softOutline.copy(alpha = 0.2f))
+                            Spacer(Modifier.height(10.dp))
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.fillMaxWidth(),
+                            ) {
+                                // 小头像圆点
+                                Box(Modifier.size(18.dp).background(mood.blush, CircleShape).border(1.dp, Color.White, CircleShape))
+                                Box(
+                                    Modifier.size(18.dp).background(mood.softSurface, CircleShape)
+                                        .graphicsLayer { translationX = -6.dp.toPx() }
+                                        .border(1.dp, Color.White, CircleShape),
+                                )
+                                Spacer(Modifier.weight(1f))
+                                Text(
+                                    "FROM ${letter.senderNickname}",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = mood.stone.copy(alpha = 0.5f),
+                                    letterSpacing = 1.5.sp,
+                                )
+                            }
                         }
                     }
                 }
@@ -2127,11 +2358,44 @@ private fun letterCapsuleLockDetail(letter: Letter): String = when {
 }
 
 @Composable
-private fun LetterDetail(letter: Letter, onDismiss: () -> Unit) {
+private fun LetterDetail(letter: Letter, currentUserId: String?, onDismiss: () -> Unit, onDelete: (() -> Unit)? = null) {
     val unlocked = letter.isUnlocked
+    val mood = LocalMood.current
+    val isAuthor = currentUserId != null && currentUserId == letter.senderId
+    var confirmDelete by rememberSaveable { mutableStateOf(false) }
+
+    if (confirmDelete) {
+        AlertDialog(
+            onDismissRequest = { confirmDelete = false },
+            shape = RoundedCornerShape(28.dp),
+            containerColor = mood.background,
+            title = { Text("确认删除") },
+            text = { Text("删除后无法恢复，确定要删除这封信吗？") },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        confirmDelete = false
+                        onDelete?.invoke()
+                        onDismiss()
+                    },
+                    colors = ButtonDefaults.textButtonColors(contentColor = Color(0xFFC45C5C)),
+                ) { Text("删除") }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = { confirmDelete = false },
+                    colors = ButtonDefaults.textButtonColors(contentColor = mood.stone),
+                ) { Text("取消") }
+            },
+        )
+        return
+    }
+
     AlertDialog(
         onDismissRequest = onDismiss,
-        icon = { Icon(if (unlocked) Icons.Rounded.Favorite else Icons.Rounded.Lock, null, tint = LocalMood.current.soft) },
+        shape = RoundedCornerShape(28.dp),
+        containerColor = mood.background,
+        icon = { Icon(if (unlocked) Icons.Rounded.Favorite else Icons.Rounded.Lock, null, tint = mood.soft) },
         title = { Text(letter.title) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -2140,7 +2404,18 @@ private fun LetterDetail(letter: Letter, onDismiss: () -> Unit) {
                     else letterCapsuleLockDetail(letter),
                 )
                 HorizontalDivider()
-                Text("${letter.senderNickname} · ${letter.createdAt.take(10)}", color = LocalMood.current.stone)
+                Text("${letter.senderNickname} · ${letter.createdAt.take(10)}", color = mood.stone)
+                if (isAuthor) {
+                    Spacer(Modifier.height(4.dp))
+                    TextButton(
+                        onClick = { confirmDelete = true },
+                        colors = ButtonDefaults.textButtonColors(contentColor = Color(0xFFC45C5C)),
+                    ) {
+                        Icon(Icons.Rounded.Delete, null, modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text("删除此信件")
+                    }
+                }
             }
         },
         confirmButton = { TextButton(onClick = onDismiss) { Text("收好") } },

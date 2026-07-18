@@ -36,10 +36,12 @@ export interface StorageProvider {
   createUploadGrant(input: UploadGrantInput): Promise<UploadGrant>;
   statObject(objectKey: string): Promise<StoredObjectInfo>;
   signDownload(objectKey: string, mimeType: string, variant: DownloadVariant): Promise<{ url: string; expiresIn: number }>;
+  deleteObject(objectKey: string): Promise<void>;
 }
 
 export interface QiniuManager {
   stat(bucket: string, key: string): ReturnType<qiniu.rs.BucketManager['stat']>;
+  delete(bucket: string, key: string, callback: (err: any, resp: any) => void): void;
   privateDownloadUrl(domain: string, key: string, deadline: number): string;
 }
 
@@ -68,6 +70,11 @@ export class LocalStorageProvider implements StorageProvider {
 
   async signDownload(): Promise<{ url: string; expiresIn: number }> {
     throw new Error('Local downloads are signed by the application route');
+  }
+
+  async deleteObject(objectKey: string): Promise<void> {
+    const filePath = resolveLocalObjectPath(this.config.storage.dir, objectKey);
+    await fs.unlink(filePath).catch(() => {});
   }
 }
 
@@ -157,6 +164,15 @@ export class QiniuStorageProvider implements StorageProvider {
       url: this.manager().privateDownloadUrl(this.config.storage.qiniu.downloadDomain, key, deadline),
       expiresIn,
     };
+  }
+
+  async deleteObject(objectKey: string): Promise<void> {
+    await new Promise<void>((resolve, reject) => {
+      this.manager().delete(this.bucket, objectKey, (err) => {
+        if (err && (err as any).code !== 612) reject(err); // 612 = not found, ignore
+        else resolve();
+      });
+    });
   }
 }
 

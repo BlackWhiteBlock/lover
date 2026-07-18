@@ -335,10 +335,36 @@ class AppRepository @Inject constructor(
     /** 仅刷新时光列表，保留已有缩略图签名，避免整页重载闪白 */
     suspend fun refreshMedia() {
         val previous = tokenStore.snapshot.media
+        val page = call { api.media(limit = 30) }
+        mediaCursor = page.nextCursor
         val signed = runCatching {
-            signMedia(sortMediaByRecordDate(call { api.media().items }), previous)
+            signMedia(sortMediaByRecordDate(page.items), previous)
         }.getOrDefault(previous)
         tokenStore.update { it.copy(media = signed) }
+    }
+
+    private var mediaCursor: String? = null
+    private var loadingMore = false
+
+    /** 加载更多媒体（cursor 分页）；返回是否成功加载了更多数据 */
+    suspend fun loadMoreMedia(): Boolean {
+        val cursor = mediaCursor ?: return false
+        if (loadingMore) return false
+        loadingMore = true
+        try {
+            val page = call { api.media(cursor = cursor, limit = 30) }
+            mediaCursor = page.nextCursor
+            if (page.items.isEmpty()) return false
+            val previous = tokenStore.snapshot.media
+            val signed = runCatching {
+                signMedia(page.items, previous)
+            }.getOrDefault(page.items)
+            val merged = previous + signed
+            tokenStore.update { it.copy(media = sortMediaByRecordDate(merged)) }
+            return true
+        } finally {
+            loadingMore = false
+        }
     }
 
     private fun sortMediaByRecordDate(items: List<MediaItem>): List<MediaItem> =
@@ -569,6 +595,25 @@ class AppRepository @Inject constructor(
         refreshAll()
     }
 
+    suspend fun updateAnniversary(id: String, title: String, date: String, type: AnniversaryType) {
+        call {
+            api.updateAnniversary(
+                id,
+                UpdateAnniversaryRequest(title = title.trim(), date = date, type = type),
+            )
+        }
+        refreshAll()
+    }
+
+    suspend fun deleteAnniversary(id: String) {
+        call { api.deleteAnniversary(id) }
+        refreshAll()
+    }
+
+    /** 签发单个 asset 的原始 URL（用于纪念日封面等非媒体列表场景） */
+    suspend fun signAssetOriginalUrl(assetId: String): String =
+        call { api.signAsset(assetId, SignAssetRequest("original")).url }
+
     suspend fun addLetter(
         title: String,
         content: String,
@@ -592,6 +637,11 @@ class AppRepository @Inject constructor(
                 ),
             )
         }
+        refreshAll()
+    }
+
+    suspend fun deleteLetter(id: String) {
+        call { api.deleteLetter(id) }
         refreshAll()
     }
 
