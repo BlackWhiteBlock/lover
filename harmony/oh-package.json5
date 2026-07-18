@@ -1,0 +1,8 @@
+{
+  "modelVersion": "5.0.0",
+  "description": "Lover - Couple Space App for HarmonyOS",
+  "dependencies": {},
+  "devDependencies": {
+    "@ohos/hypium": "1.0.19"
+  }
+}

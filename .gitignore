@@ -18,7 +18,19 @@ android/keystore.properties
 .idea/
 *.iml
 .DS_Store
-*** End Patch
+
+# HarmonyOS / DevEco (see also harmony/.gitignore)
+.hvigor/
+**/.hvigor/
+**/oh_modules/
+**/.preview/
+**/.codegenie/
+*.hap
+*.app
+*.hsp
+# Local signing profile — contains keystore passwords; use *.example instead
+harmony/build-profile.json5
+
 .github/workflows/backend-deploy.yml.before
 
 #qoder

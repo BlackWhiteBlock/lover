@@ -1,0 +1,50 @@
+# Dependencies & build
+/node_modules
+/oh_modules
+**/oh_modules
+**/build
+/.hvigor
+**/.hvigor
+/.preview
+**/.preview
+/.cxx
+**/.cxx
+/.test
+**/.test
+/.appanalyzer
+
+# DevEco / IDE
+/.idea
+/.vscode
+/.codegenie
+*.iml
+.clangd
+.clang-format
+.clang-tidy
+
+# Local machine config (SDK paths etc.)
+/local.properties
+
+# Signing material & secrets — NEVER commit
+# build-profile.json5 often embeds debug/release keystore passwords
+/build-profile.json5
+*.p12
+*.jks
+*.keystore
+*.cer
+*.p7b
+*.csr
+*.pem
+
+# Packaged outputs (if copied outside build/)
+*.hap
+*.app
+*.hsp
+*.har
+
+# Generated
+**/BuildProfile.ets
+/hvigor/hvigor-wrapper.js
+*.log
+.DS_Store
+Thumbs.db

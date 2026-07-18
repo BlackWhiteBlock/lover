@@ -1,0 +1,16 @@
+{
+  "src": [
+    "pages/Index",
+    "pages/AuthPage",
+    "pages/OnboardingPage",
+    "pages/MainPage",
+    "pages/CouplePage",
+    "pages/MediaDetailPage",
+    "pages/MediaEditPage",
+    "pages/LetterDetailPage",
+    "pages/AnniversaryComposePage",
+    "pages/LetterComposePage",
+    "pages/MediaComposePage",
+    "pages/SpaceEditPage"
+  ]
+}

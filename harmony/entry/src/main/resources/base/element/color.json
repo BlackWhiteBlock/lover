@@ -1,0 +1,48 @@
+{
+  "color": [
+    {
+      "name": "start_window_background",
+      "value": "#FFFCFB"
+    },
+    {
+      "name": "rose",
+      "value": "#E88998"
+    },
+    {
+      "name": "deep_rose",
+      "value": "#B84F66"
+    },
+    {
+      "name": "warm_background",
+      "value": "#FFFCFB"
+    },
+    {
+      "name": "blush",
+      "value": "#FFE9E6"
+    },
+    {
+      "name": "peach",
+      "value": "#FFDCC8"
+    },
+    {
+      "name": "stone",
+      "value": "#857A78"
+    },
+    {
+      "name": "soft_outline",
+      "value": "#E9DAD6"
+    },
+    {
+      "name": "soft_surface",
+      "value": "#FFF7F5"
+    },
+    {
+      "name": "dust_purple",
+      "value": "#6B5B80"
+    },
+    {
+      "name": "parchment",
+      "value": "#F2EDE6"
+    }
+  ]
+}
