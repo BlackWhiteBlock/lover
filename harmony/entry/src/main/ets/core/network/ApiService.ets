@@ -174,7 +174,10 @@ export class ApiService {
   }
 
   async markMediaRead(id: string): Promise<MediaUnreadSummary> {
-    return this.http.post<MediaUnreadSummary>(`api/media/${id}/read`, {} as Object)
+    // 显式空对象：避免 `{}` 字面量触发 arkts-no-untyped-obj-literals，
+    // 同时保证 POST 带合法 JSON body（避免 Fastify empty JSON body 报错）
+    const emptyBody: MarkMediaReadRequest = { ids: null, all: null }
+    return this.http.post<MediaUnreadSummary>(`api/media/${id}/read`, emptyBody)
   }
 
   async markMediaReadBatch(request: MarkMediaReadRequest): Promise<MediaUnreadSummary> {

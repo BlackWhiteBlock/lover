@@ -593,13 +593,13 @@ struct UnreadMediaSheet {
     this.loadingMore = true
     const page = await this.vm.loadUnreadMediaPage(this.nextCursor)
     if (page) {
-      const existing: Record<string, boolean> = {}
+      const existingIds: string[] = []
       for (let i = 0; i < this.items.length; i++) {
-        existing[this.items[i].id] = true
+        existingIds.push(this.items[i].id)
       }
       const merged = [...this.items]
       for (let i = 0; i < page.items.length; i++) {
-        if (!existing[page.items[i].id]) {
+        if (existingIds.indexOf(page.items[i].id) < 0) {
           merged.push(page.items[i])
         }
       }
@@ -678,7 +678,7 @@ struct UnreadMediaSheet {
               UnreadMediaRow({
                 mood: this.mood,
                 item: item,
-                onClick: () => this.onOpenItem(item),
+                onItemClick: () => this.onOpenItem(item),
               })
             }
           }, (item: MediaItem) => item.id)
@@ -721,7 +721,7 @@ struct UnreadMediaSheet {
 struct UnreadMediaRow {
   @Prop mood: MoodPalette
   @Prop item: MediaItem = new MediaItem()
-  onClick: () => void = () => {}
+  onItemClick: () => void = () => {}
 
   private thumb(): string {
     return MediaItem.thumbUrlOf(this.item)
@@ -794,7 +794,7 @@ struct UnreadMediaRow {
     .padding(10)
     .borderRadius(18)
     .backgroundColor(this.mood.softSurface)
-    .onClick(() => this.onClick())
+    .onClick(() => this.onItemClick())
   }
 }
 

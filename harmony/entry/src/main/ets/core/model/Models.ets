@@ -163,6 +163,7 @@ export interface JsonObject {
   
   // MediaItem fields
   uploaderId?: string | null
+  updatedAt?: string | null
   
   // Letter fields
   senderId?: string | null
