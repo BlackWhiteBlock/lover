@@ -90,7 +90,7 @@ export function registerLetters(app: FastifyInstance, context: AppContext, auth:
   app.get('/api/letters', { preHandler: auth }, async (request) => {
     const spaceIds = await readableSpaceIds(context, request.user.id);
     const result = await db.query<LetterRow>(
-      `${selectLetters(request.user.id)}
+      `${selectLetters()}
        where l.space_id = any($2::uuid[])
        order by l.created_at desc`,
       [request.user.id, spaceIds],
