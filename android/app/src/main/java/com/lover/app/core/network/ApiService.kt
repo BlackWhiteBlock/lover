@@ -147,8 +147,14 @@ interface ApiService {
     @GET("api/letters")
     suspend fun letters(): ItemPage<Letter>
 
+    @GET("api/letters/unread-summary")
+    suspend fun letterUnreadSummary(): LetterUnreadSummary
+
     @GET("api/letters/{id}")
     suspend fun letterDetail(@Path("id") id: String): Letter
+
+    @POST("api/letters/{id}/open")
+    suspend fun openLetter(@Path("id") id: String): Letter
 
     @retrofit2.http.PUT("api/letters/{id}")
     suspend fun updateLetter(@Path("id") id: String, @Body request: CreateLetterRequest): Letter

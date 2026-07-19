@@ -1,5 +1,5 @@
 /**
- * Letter detail — reading layout aligned with Android LetterDetail dialog feel.
+ * Letter detail — 全屏阅读；未拆信进入时播放拆信动效。
  */
 import { AppNav, AppDialog, LetterDetailParams } from '../core/nav/AppNav'
 import { AppViewModel } from '../core/data/AppViewModel'
@@ -14,6 +14,11 @@ struct LetterDetailPage {
   @State mood: MoodPalette = CoupleMood
   @State letter: Letter | null = null
   @State loading: boolean = true
+  @State playOpenAnimation: boolean = false
+  @State showContent: boolean = true
+  @State flap: number = 0
+  @State lift: number = 0
+  @State contentAlpha: number = 1
   private vm: AppViewModel = AppViewModel.getInstance()
   private letterId: string = ''
 
@@ -21,13 +26,80 @@ struct LetterDetailPage {
     this.mood = this.vm.data.linked ? CoupleMood : SoleilMood
     const params = AppNav.params<LetterDetailParams>()
     this.letterId = params?.letterId ?? ''
-    if (this.letterId) this.loadLetter()
+    this.playOpenAnimation = params?.playOpenAnimation ?? false
+    if (this.letterId) {
+      void this.loadLetter()
+    }
   }
 
-  loadLetter(): void {
+  async loadLetter(): Promise<void> {
     const found = this.vm.data.letters.find((l) => l.id === this.letterId)
-    if (found) this.letter = found
+    if (found) {
+      this.letter = found
+    } else {
+      try {
+        this.letter = await this.vm.fetchLetterDetail(this.letterId)
+      } catch (_e) {
+        this.letter = null
+      }
+    }
     this.loading = false
+    if (this.playOpenAnimation && this.letter?.isUnlocked) {
+      this.showContent = false
+      this.contentAlpha = 0
+      this.runOpenAnimation()
+    } else {
+      this.showContent = true
+      this.contentAlpha = 1
+    }
+  }
+
+  private animTo(duration: number, update: () => void, onFinish?: () => void): void {
+    try {
+      this.getUIContext().animateTo({
+        duration: duration,
+        curve: Curve.EaseOut,
+        onFinish: onFinish,
+      }, update)
+    } catch (_e) {
+      animateTo({
+        duration: duration,
+        curve: Curve.EaseOut,
+        onFinish: onFinish,
+      }, update)
+    }
+  }
+
+  private runOpenAnimation(): void {
+    this.lift = 0
+    this.flap = 0
+    this.animTo(420, () => {
+      this.lift = 1
+    }, () => {
+      this.animTo(650, () => {
+        this.flap = 1
+      }, () => {
+        setTimeout(() => {
+          this.showContent = true
+          this.animTo(480, () => {
+            this.contentAlpha = 1
+          })
+        }, 180)
+      })
+    })
+  }
+
+  private statusLabel(): string {
+    if (!this.letter) {
+      return ''
+    }
+    if (this.letter.deliveryStatus === 'read') {
+      return '已阅'
+    }
+    if (this.letter.deliveryStatus === 'sent') {
+      return '已寄'
+    }
+    return ''
   }
 
   build() {
@@ -57,97 +129,127 @@ struct LetterDetailPage {
       if (this.loading) {
         LoadingProgress().width(40).height(40).color(this.mood.accent).margin({ top: 100 })
       } else if (this.letter) {
-        Scroll() {
-          Column({ space: 16 }) {
-            Text(this.letter.type === LetterType.CAPSULE ? 'Time Capsule' : 'Instant')
-              .fontSize(FontSizes.labelMedium)
-              .fontFamily(Fonts.LATO_LIGHT)
-              .fontColor(this.mood.accent)
-              .letterSpacing(1.2)
-              .alignSelf(ItemAlign.Start)
-
-            Text(this.letter.title)
-              .fontSize(FontSizes.headlineMedium)
-              .fontFamily(Fonts.GARAMOND)
-              .fontColor(this.mood.onSurface)
-              .alignSelf(ItemAlign.Start)
-
-            Text(this.letter.createdAt.substring(0, 10))
-              .fontSize(FontSizes.bodySmall)
-              .fontFamily(Fonts.LATO)
-              .fontColor(this.mood.stone)
-              .alignSelf(ItemAlign.Start)
-
-            if (!this.letter.isUnlocked) {
-              Column({ space: 8 }) {
-                Text('这封信还未解锁')
-                  .fontSize(FontSizes.bodyLarge)
-                  .fontFamily(Fonts.LATO)
-                  .fontColor(this.mood.stone)
-                if (this.letter.unlockAt) {
-                  Text(`解锁日期：${this.letter.unlockAt.substring(0, 10)}`)
-                    .fontSize(FontSizes.bodyMedium)
-                    .fontColor(this.mood.accent)
-                }
-                if (this.letter.unlockOnPartnerBind) {
-                  Text('绑定另一半后自动解锁')
-                    .fontSize(FontSizes.bodyMedium)
-                    .fontColor(this.mood.accent)
-                }
+        Stack() {
+          // 拆信动效
+          if (this.playOpenAnimation && this.letter.isUnlocked && this.contentAlpha < 0.95) {
+            Column({ space: 18 }) {
+              Column() {
+                Column()
+                  .width(200)
+                  .height(120)
+                  .borderRadius({ topLeft: 18, topRight: 18 })
+                  .backgroundColor('rgba(251,113,133,0.35)')
+                  .translate({ y: -36 * this.flap })
+                  .rotate({ angle: -8 * this.flap })
+                  .opacity(1 - 0.85 * this.flap)
+                  .scale({ y: 1 - 0.25 * this.flap })
+                Column()
+                  .width(200)
+                  .height(110)
+                  .borderRadius({ bottomLeft: 18, bottomRight: 18 })
+                  .backgroundColor('rgba(255,255,255,0.96)')
               }
-              .width('100%')
-              .padding(32)
-              .backgroundColor(this.mood.softSurface)
-              .borderRadius(Radii.medium)
-              .alignItems(HorizontalAlign.Center)
-              .margin({ top: 24 })
-            }
+              .translate({ y: -12 * this.lift })
+              .scale({ x: 0.96 + 0.04 * this.lift, y: 0.96 + 0.04 * this.lift })
 
-            if (this.letter.isUnlocked && this.letter.content) {
-              Text(this.letter.content)
-                .fontSize(FontSizes.bodyLarge)
-                .fontFamily(Fonts.GARAMOND)
-                .fontColor(this.mood.onSurface)
-                .lineHeight(28)
-                .width('100%')
-                .padding(20)
-                .backgroundColor(this.mood.softSurface)
-                .borderRadius(Radii.medium)
-                .border({ width: 1, color: this.mood.softOutline })
-            }
-
-            Row() {
-              Blank()
-              Column({ space: 4 }) {
-                Text('FROM')
-                  .fontSize(FontSizes.labelSmall)
-                  .fontFamily(Fonts.LATO_LIGHT)
-                  .fontColor(this.mood.stone)
-                  .letterSpacing(1.4)
-                Text(this.letter.senderNickname)
-                  .fontSize(FontSizes.bodyMedium)
-                  .fontFamily(Fonts.LATO)
-                  .fontColor(this.mood.onSurface)
-              }
-              .alignItems(HorizontalAlign.End)
+              Text('正在拆开信件…')
+                .fontSize(FontSizes.bodyMedium)
+                .fontFamily(Fonts.LATO)
+                .fontColor(this.mood.stone)
             }
             .width('100%')
-            .margin({ top: 24 })
-
-            Button('收好')
-              .width('100%')
-              .height(52)
-              .margin({ top: 16 })
-              .borderRadius(Radii.small)
-              .backgroundColor(this.mood.soft)
-              .fontColor(Colors.white)
-              .onClick(() => AppNav.back())
+            .margin({ top: 48 })
+            .alignItems(HorizontalAlign.Center)
           }
-          .width('100%')
-          .padding({ left: 20, right: 20, bottom: 48 })
+
+          if (this.showContent) {
+            Scroll() {
+              Column({ space: 16 }) {
+                Row({ space: 8 }) {
+                  Text(this.letter.type === LetterType.CAPSULE ? 'Time Capsule' : 'Instant')
+                    .fontSize(FontSizes.labelMedium)
+                    .fontFamily(Fonts.LATO_LIGHT)
+                    .fontColor(this.mood.accent)
+                    .letterSpacing(1.2)
+                  if (this.letter.senderId === this.vm.data.user?.id && this.statusLabel().length > 0) {
+                    Text(this.statusLabel())
+                      .fontSize(FontSizes.labelSmall)
+                      .fontFamily(Fonts.LATO)
+                      .fontColor(this.letter.deliveryStatus === 'read' ? this.mood.soft : this.mood.stone)
+                  }
+                }
+                .alignSelf(ItemAlign.Start)
+
+                Text(this.letter.title)
+                  .fontSize(FontSizes.headlineMedium)
+                  .fontFamily(Fonts.GARAMOND)
+                  .fontColor(this.mood.onSurface)
+                  .alignSelf(ItemAlign.Start)
+
+                Text(`${this.letter.senderNickname} · ${this.letter.createdAt.substring(0, 10)}`)
+                  .fontSize(FontSizes.bodySmall)
+                  .fontFamily(Fonts.LATO)
+                  .fontColor(this.mood.stone)
+                  .alignSelf(ItemAlign.Start)
+
+                if (!this.letter.isUnlocked) {
+                  Column({ space: 8 }) {
+                    Text('这封信还未解锁')
+                      .fontSize(FontSizes.bodyLarge)
+                      .fontFamily(Fonts.LATO)
+                      .fontColor(this.mood.stone)
+                    if (this.letter.unlockAt) {
+                      Text(`解锁日期：${this.letter.unlockAt.substring(0, 10)}`)
+                        .fontSize(FontSizes.bodyMedium)
+                        .fontColor(this.mood.accent)
+                    }
+                    if (this.letter.unlockOnPartnerBind) {
+                      Text('绑定另一半后自动解锁')
+                        .fontSize(FontSizes.bodyMedium)
+                        .fontColor(this.mood.accent)
+                    }
+                  }
+                  .width('100%')
+                  .padding(32)
+                  .backgroundColor(this.mood.softSurface)
+                  .borderRadius(Radii.medium)
+                  .alignItems(HorizontalAlign.Center)
+                  .margin({ top: 24 })
+                }
+
+                if (this.letter.isUnlocked && this.letter.content) {
+                  Text(this.letter.content)
+                    .fontSize(FontSizes.bodyLarge)
+                    .fontFamily(Fonts.GARAMOND)
+                    .fontColor(this.mood.onSurface)
+                    .lineHeight(28)
+                    .width('100%')
+                    .padding(20)
+                    .backgroundColor(this.mood.softSurface)
+                    .borderRadius(Radii.medium)
+                    .border({ width: 1, color: this.mood.softOutline })
+                }
+
+                Button('收好')
+                  .width('100%')
+                  .height(52)
+                  .margin({ top: 16 })
+                  .borderRadius(Radii.small)
+                  .backgroundColor(this.mood.soft)
+                  .fontColor(Colors.white)
+                  .onClick(() => AppNav.back())
+              }
+              .width('100%')
+              .padding({ left: 20, right: 20, bottom: 48 })
+              .opacity(this.contentAlpha)
+            }
+            .width('100%')
+            .height('100%')
+            .scrollBar(BarState.Off)
+          }
         }
         .layoutWeight(1)
-        .scrollBar(BarState.Off)
+        .width('100%')
       }
     }
     .width('100%')
@@ -157,7 +259,9 @@ struct LetterDetailPage {
 
   async confirmDelete(): Promise<void> {
     const ok = await AppDialog.confirm('确认删除', '确定要删除这封信吗？删除后无法恢复。')
-    if (!ok) return
+    if (!ok) {
+      return
+    }
     try {
       await this.vm.deleteLetter(this.letterId)
       AppNav.back()

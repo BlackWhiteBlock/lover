@@ -142,6 +142,12 @@ enum class LetterType {
 }
 
 @Serializable
+enum class LetterDeliveryStatus {
+    @SerialName("sent") SENT,
+    @SerialName("read") READ,
+}
+
+@Serializable
 data class Letter(
     val id: String,
     val senderId: String,
@@ -153,8 +159,21 @@ data class Letter(
     val unlockAt: String? = null,
     val unlockOnPartnerBind: Boolean = false,
     val isUnlocked: Boolean,
+    /** 接收方是否已拆开；发送方恒为 true */
+    val isOpened: Boolean = true,
+    /** 发送方可见：已寄 / 已阅 */
+    val deliveryStatus: LetterDeliveryStatus? = null,
     val createdAt: String,
-)
+) {
+    fun isSealedFor(viewerId: String?): Boolean =
+        viewerId != null &&
+            senderId != viewerId &&
+            isUnlocked &&
+            !isOpened
+}
+
+@Serializable
+data class LetterUnreadSummary(val count: Int = 0, val hasUnread: Boolean = false)
 
 @Serializable
 data class AppState(

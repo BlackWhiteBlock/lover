@@ -9,7 +9,7 @@ import { TokenStore } from './TokenStore'
 import { isUnauthorized } from '../network/NetworkErrors'
 import { MediaPicker, PickedMediaFile } from '../media/MediaPicker'
 import {
-  AppState, AnniversaryType, LetterType, MediaItem, MediaFileInput,
+  AppState, AnniversaryType, Letter, LetterType, MediaItem, MediaFileInput,
   UserLookupResponse, MediaAssetOrderItem, MediaUnreadPage,
 } from '../model/Models'
 import { common } from '@kit.AbilityKit'
@@ -170,6 +170,7 @@ export class AppViewModel {
     try {
       await this.repository.restoreSession()
       await this.refreshMediaUnreadBadge()
+      await this.refreshLetterUnreadBadge()
     } catch (error) {
       const err = error instanceof Error ? error : new Error(String(error))
       if (isUnauthorized(err) || !this.tokenStore.snapshot.accessToken) {
@@ -188,12 +189,17 @@ export class AppViewModel {
     try {
       await this.repository.refreshAll()
       await this.refreshMediaUnreadBadge()
+      await this.refreshLetterUnreadBadge()
       this.bumpUi()
     } catch (_e) { /* quiet */ }
   }
 
   get mediaUnreadCount(): number {
     return this.repository.mediaUnreadCount
+  }
+
+  get letterUnreadCount(): number {
+    return this.repository.letterUnreadCount
   }
 
   get mediaHasMore(): boolean {
@@ -212,6 +218,30 @@ export class AppViewModel {
     try {
       await this.repository.refreshMediaUnreadSummary()
     } catch (_e) { /* ignore */ }
+  }
+
+  private async refreshLetterUnreadBadge(): Promise<void> {
+    try {
+      await this.repository.refreshLetterUnreadSummary()
+    } catch (_e) { /* ignore */ }
+  }
+
+  async openLetter(id: string): Promise<Letter | null> {
+    try {
+      const letter = await this.repository.openLetter(id)
+      this.bumpUi()
+      return letter
+    } catch (_e) {
+      return null
+    }
+  }
+
+  async fetchLetterDetail(id: string): Promise<Letter | null> {
+    try {
+      return await this.repository.fetchLetterDetail(id)
+    } catch (_e) {
+      return null
+    }
   }
 
   async setMediaYearFilter(year: number | null): Promise<void> {
@@ -255,6 +285,9 @@ export class AppViewModel {
     if (tab === MainTab.TIMELINE) {
       void this.refreshMediaYears()
       void this.refreshMediaUnreadBadge().then(() => this.bumpUi())
+    }
+    if (tab === MainTab.LETTERS) {
+      void this.refreshLetterUnreadBadge().then(() => this.bumpUi())
     }
     this.bumpUi()
   }

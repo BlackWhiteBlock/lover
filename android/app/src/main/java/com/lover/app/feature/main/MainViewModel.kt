@@ -134,9 +134,11 @@ class MainViewModel @Inject constructor(
         if (repository.state.value.accessToken == null) return@launch
         runCatching { repository.refreshAll() }
         refreshMediaUnreadBadge()
+        refreshLetterUnreadBadge()
     }
 
     val mediaUnreadCount = repository.mediaUnreadCount
+    val letterUnreadCount = repository.letterUnreadCount
     val mediaHasMore = repository.mediaHasMore
     val mediaYears = repository.mediaYears
     val mediaYearFilter = repository.mediaYearFilterState
@@ -144,6 +146,16 @@ class MainViewModel @Inject constructor(
     private suspend fun refreshMediaUnreadBadge() {
         runCatching { repository.refreshMediaUnreadSummary() }
     }
+
+    private suspend fun refreshLetterUnreadBadge() {
+        runCatching { repository.refreshLetterUnreadSummary() }
+    }
+
+    suspend fun openLetter(id: String): Letter? =
+        runCatching { repository.openLetter(id) }.getOrNull()
+
+    suspend fun fetchLetterDetail(id: String): Letter? =
+        runCatching { repository.fetchLetterDetail(id) }.getOrNull()
 
     fun setMediaYearFilter(year: Int?) = viewModelScope.launch {
         runCatching { repository.setMediaYearFilter(year) }
@@ -174,6 +186,9 @@ class MainViewModel @Inject constructor(
         if (tab == MainTab.TIMELINE) {
             refreshMediaYears()
             viewModelScope.launch { refreshMediaUnreadBadge() }
+        }
+        if (tab == MainTab.LETTERS) {
+            viewModelScope.launch { refreshLetterUnreadBadge() }
         }
     }
 

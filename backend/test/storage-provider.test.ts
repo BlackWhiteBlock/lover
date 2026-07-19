@@ -142,7 +142,7 @@ test('local completion retains size validation', () => {
   }));
 });
 
-test('migration executor orders the real 001–012 migrations', async () => {
+test('migration executor orders the real 001–013 migrations', async () => {
   const entries = await fs.readdir(new URL('../db/migrations/', import.meta.url));
   assert.deepEqual(orderedMigrationNames(entries), [
     '001_initial.sql',
@@ -157,5 +157,6 @@ test('migration executor orders the real 001–012 migrations', async () => {
     '010_solo_daily_quotes.sql',
     '011_partner_activity.sql',
     '012_media_unread.sql',
+    '013_letter_reads.sql',
   ]);
 });

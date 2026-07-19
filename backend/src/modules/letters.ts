@@ -12,7 +12,12 @@ const base = z.object({
   content: z.string().trim().min(1).max(20_000),
 });
 const letterInput = z.discriminatedUnion('type', [
-  base.extend({ type: z.literal('instant'), unlockAt: z.null().optional() }).strict(),
+  // 客户端创建即时信时仍会带 unlockAt/unlockOnPartnerBind，需允许并忽略
+  base.extend({
+    type: z.literal('instant'),
+    unlockAt: z.string().datetime({ offset: true }).nullable().optional(),
+    unlockOnPartnerBind: z.boolean().optional(),
+  }).strict(),
   base.extend({
     type: z.literal('capsule'),
     unlockAt: z.string().datetime({ offset: true }).nullable().optional(),
@@ -40,11 +45,22 @@ interface LetterRow {
   unlockAt: Date | null;
   unlockOnPartnerBind?: boolean;
   createdAt: Date;
+  myOpenedAt?: Date | null;
+  recipientOpenedAt?: Date | null;
 }
 
-export function serializeLetter(row: LetterRow, now = new Date()) {
+export function serializeLetter(row: LetterRow, viewerId: string, now = new Date()) {
   const unlockOnPartnerBind = Boolean(row.unlockOnPartnerBind);
   const unlocked = isLetterUnlocked(row.type, row.unlockAt, now, unlockOnPartnerBind);
+  const isMine = row.senderId === viewerId;
+  const openedByMe = Boolean(row.myOpenedAt);
+  // 接收方：解锁且未拆 → 密封；发送方始终可看正文
+  const isOpened = isMine ? true : openedByMe;
+  const revealContent = unlocked && (isMine || openedByMe);
+  const deliveryStatus = isMine
+    ? (row.recipientOpenedAt ? 'read' : 'sent')
+    : null;
+
   return {
     id: row.id,
     senderId: row.senderId,
@@ -54,29 +70,71 @@ export function serializeLetter(row: LetterRow, now = new Date()) {
     unlockAt: row.unlockAt,
     unlockOnPartnerBind,
     isUnlocked: unlocked,
+    isOpened,
+    deliveryStatus,
     createdAt: row.createdAt,
-    ...(unlocked ? { content: row.content, summary: row.content.slice(0, 120) } : {}),
+    ...(revealContent ? { content: row.content, summary: row.content.slice(0, 120) } : {}),
   };
 }
 
 export function registerLetters(app: FastifyInstance, context: AppContext, auth: AuthHandler) {
   const { db } = context;
 
+  app.get('/api/letters/unread-summary', { preHandler: auth }, async (request) => {
+    await ensureLetterUnreadBaseline(context, request.user.id);
+    const spaceIds = await readableSpaceIds(context, request.user.id);
+    const count = await countUnreadLetters(context, request.user.id, spaceIds);
+    return { count, hasUnread: count > 0 };
+  });
+
   app.get('/api/letters', { preHandler: auth }, async (request) => {
     const spaceIds = await readableSpaceIds(context, request.user.id);
     const result = await db.query<LetterRow>(
-      `${selectLetters} where l.space_id = any($1::uuid[]) order by l.created_at desc`,
-      [spaceIds],
+      `${selectLetters(request.user.id)}
+       where l.space_id = any($2::uuid[])
+       order by l.created_at desc`,
+      [request.user.id, spaceIds],
     );
-    return { items: result.rows.map((row) => serializeLetter(row)) };
+    return {
+      items: result.rows.map((row) => serializeLetter(row, request.user.id)),
+    };
+  });
+
+  app.post('/api/letters/:id/open', { preHandler: auth }, async (request) => {
+    const spaceIds = await readableSpaceIds(context, request.user.id);
+    const { id } = idSchema.parse(request.params);
+    const row = await findLetter(context, spaceIds, id, request.user.id);
+    if (!row) throw notFound('信件不存在');
+    if (row.senderId === request.user.id) {
+      return serializeLetter(row, request.user.id);
+    }
+    const unlocked = isLetterUnlocked(
+      row.type,
+      row.unlockAt,
+      new Date(),
+      Boolean(row.unlockOnPartnerBind),
+    );
+    if (!unlocked) {
+      throw badRequest('LETTER_LOCKED', '信件尚未解锁，暂时不能拆开');
+    }
+    await ensureLetterUnreadBaseline(context, request.user.id);
+    await db.query(
+      `insert into letter_item_reads(user_id, letter_id, opened_at)
+       values ($1, $2, now())
+       on conflict (user_id, letter_id)
+       do update set opened_at = letter_item_reads.opened_at`,
+      [request.user.id, id],
+    );
+    const refreshed = await findLetter(context, spaceIds, id, request.user.id);
+    return serializeLetter(refreshed!, request.user.id);
   });
 
   app.get('/api/letters/:id', { preHandler: auth }, async (request) => {
     const spaceIds = await readableSpaceIds(context, request.user.id);
     const { id } = idSchema.parse(request.params);
-    const row = await findLetter(context, spaceIds, id);
+    const row = await findLetter(context, spaceIds, id, request.user.id);
     if (!row) throw notFound('信件不存在');
-    return serializeLetter(row);
+    return serializeLetter(row, request.user.id);
   });
 
   app.post('/api/letters', { preHandler: auth }, async (request, reply) => {
@@ -124,7 +182,11 @@ export function registerLetters(app: FastifyInstance, context: AppContext, auth:
         link: linked,
       });
     }
-    return reply.code(201).send(serializeLetter(row));
+    return reply.code(201).send(serializeLetter({
+      ...row,
+      myOpenedAt: new Date(),
+      recipientOpenedAt: null,
+    }, request.user.id));
   });
 
   app.put('/api/letters/:id', { preHandler: auth }, async (request) => {
@@ -157,7 +219,8 @@ export function registerLetters(app: FastifyInstance, context: AppContext, auth:
       ],
     );
     if (!result.rowCount) throw forbidden('仅作者可编辑信件');
-    return serializeLetter(result.rows[0]!);
+    const refreshed = await findLetter(context, spaceIds, id, request.user.id);
+    return serializeLetter(refreshed!, request.user.id);
   });
 
   app.delete('/api/letters/:id', { preHandler: auth }, async (request) => {
@@ -172,16 +235,69 @@ export function registerLetters(app: FastifyInstance, context: AppContext, auth:
   });
 }
 
-const selectLetters = `
+function selectLetters(viewerParamIndex = 1) {
+  // $1 = viewerId when used with find/list patterns below
+  void viewerParamIndex;
+  return `
   select l.id, l.sender_id as "senderId", u.nickname as "senderNickname",
          l.title, l.content, l.type, l.unlock_at as "unlockAt",
-         l.unlock_on_partner_bind as "unlockOnPartnerBind", l.created_at as "createdAt"
-  from letters l join users u on u.id = l.sender_id`;
+         l.unlock_on_partner_bind as "unlockOnPartnerBind", l.created_at as "createdAt",
+         my_read.opened_at as "myOpenedAt",
+         recipient_read.opened_at as "recipientOpenedAt"
+  from letters l
+  join users u on u.id = l.sender_id
+  left join letter_item_reads my_read
+    on my_read.letter_id = l.id and my_read.user_id = $1
+  left join letter_item_reads recipient_read
+    on recipient_read.letter_id = l.id and recipient_read.user_id <> l.sender_id`;
+}
 
-async function findLetter(context: AppContext, spaceIds: string[], id: string) {
+async function findLetter(
+  context: AppContext,
+  spaceIds: string[],
+  id: string,
+  viewerId: string,
+) {
   const result = await context.db.query<LetterRow>(
-    `${selectLetters} where l.id = $1 and l.space_id = any($2::uuid[])`,
-    [id, spaceIds],
+    `${selectLetters()} where l.id = $2 and l.space_id = any($3::uuid[])`,
+    [viewerId, id, spaceIds],
   );
   return result.rows[0] ?? null;
+}
+
+async function ensureLetterUnreadBaseline(context: AppContext, userId: string) {
+  await context.db.query(
+    `insert into letter_unread_baselines(user_id, baseline_at)
+     values ($1, now())
+     on conflict (user_id) do nothing`,
+    [userId],
+  );
+}
+
+async function countUnreadLetters(
+  context: AppContext,
+  userId: string,
+  spaceIds: string[],
+) {
+  const result = await context.db.query<{ count: string }>(
+    `select count(*)::text as count
+     from letters l
+     join letter_unread_baselines b on b.user_id = $1
+     where l.space_id = any($2::uuid[])
+       and l.sender_id <> $1
+       and (
+         l.created_at > b.baseline_at
+         or (l.unlock_at is not null and l.unlock_at > b.baseline_at)
+       )
+       and (
+         l.type = 'instant'
+         or (l.unlock_at is not null and l.unlock_at <= now())
+       )
+       and not exists (
+         select 1 from letter_item_reads r
+         where r.user_id = $1 and r.letter_id = l.id
+       )`,
+    [userId, spaceIds],
+  );
+  return Number(result.rows[0]?.count ?? 0);
 }

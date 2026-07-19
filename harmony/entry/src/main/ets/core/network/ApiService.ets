@@ -232,8 +232,17 @@ export class ApiService {
     return this.http.get<ItemPage<Letter>>('api/letters')
   }
 
+  async letterUnreadSummary(): Promise<MediaUnreadSummary> {
+    return this.http.get<MediaUnreadSummary>('api/letters/unread-summary')
+  }
+
   async letterDetail(id: string): Promise<Letter> {
     return this.http.get<Letter>(`api/letters/${id}`)
+  }
+
+  async openLetter(id: string): Promise<Letter> {
+    const emptyBody: MarkMediaReadRequest = { ids: null, all: null }
+    return this.http.post<Letter>(`api/letters/${id}/open`, emptyBody)
   }
 
   async updateLetter(id: string, request: CreateLetterRequest): Promise<Letter> {

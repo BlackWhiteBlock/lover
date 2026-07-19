@@ -14,9 +14,11 @@ export class MediaDetailParams {
 
 export class LetterDetailParams {
   letterId: string = ''
+  playOpenAnimation: boolean = false
 
-  constructor(letterId: string) {
+  constructor(letterId: string, playOpenAnimation: boolean = false) {
     this.letterId = letterId
+    this.playOpenAnimation = playOpenAnimation
   }
 }
 
@@ -95,8 +97,8 @@ export class AppNav {
     AppNav.push('pages/MediaEditPage', new MediaDetailParams(mediaId))
   }
 
-  static pushLetterDetail(letterId: string): void {
-    AppNav.push('pages/LetterDetailPage', new LetterDetailParams(letterId))
+  static pushLetterDetail(letterId: string, playOpenAnimation: boolean = false): void {
+    AppNav.push('pages/LetterDetailPage', new LetterDetailParams(letterId, playOpenAnimation))
   }
 
   static pushAnniversaryCompose(id: string = ''): void {

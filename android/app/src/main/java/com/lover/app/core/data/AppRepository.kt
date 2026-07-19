@@ -275,8 +275,8 @@ class AppRepository @Inject constructor(
     }
 
     /**
-     * 「空间」首页必需数据。掠影用 bootstrap.recentMedia（8）只签封面，
-     * 不再请求 media?limit=100 并对每个 asset 签名。
+     * 「空间」首页必需数据。掠影用 bootstrap.recentMedia（8）签列表缩略图，
+     * 不再请求 media?limit=100 并对全部 asset 签原图。
      */
     suspend fun refreshHomeEssentials(fetchMe: Boolean = true) = coroutineScope {
         val meDeferred = if (fetchMe) {
@@ -371,6 +371,7 @@ class AppRepository @Inject constructor(
         val mediaJob = async { runCatching { refreshMedia() } }
         val yearsJob = async { runCatching { refreshMediaYears() } }
         val unreadJob = async { runCatching { refreshMediaUnreadSummary() } }
+        val letterUnreadJob = async { runCatching { refreshLetterUnreadSummary() } }
         val annJob = async {
             runCatching { call { api.anniversaries().items } }.getOrNull()
         }
@@ -380,6 +381,7 @@ class AppRepository @Inject constructor(
         mediaJob.await()
         yearsJob.await()
         unreadJob.await()
+        letterUnreadJob.await()
         val anniversaries = annJob.await()
         val letters = lettersJob.await()
         if (anniversaries != null || letters != null) {
@@ -435,6 +437,42 @@ class AppRepository @Inject constructor(
         }
         val summary = runCatching { call { api.mediaUnreadSummary() } }.getOrNull() ?: return
         _mediaUnreadCount.value = summary.count
+    }
+
+    private val _letterUnreadCount = MutableStateFlow(0)
+    val letterUnreadCount = _letterUnreadCount.asStateFlow()
+
+    suspend fun refreshLetterUnreadSummary() {
+        if (!tokenStore.snapshot.linked) {
+            _letterUnreadCount.value = 0
+            return
+        }
+        val summary = runCatching { call { api.letterUnreadSummary() } }.getOrNull() ?: return
+        _letterUnreadCount.value = summary.count
+    }
+
+    suspend fun openLetter(id: String): Letter {
+        val opened = call { api.openLetter(id) }
+        tokenStore.update { state ->
+            state.copy(letters = state.letters.map { if (it.id == id) opened else it })
+        }
+        runCatching { refreshLetterUnreadSummary() }
+        return opened
+    }
+
+    suspend fun fetchLetterDetail(id: String): Letter {
+        val detail = call { api.letterDetail(id) }
+        tokenStore.update { state ->
+            val exists = state.letters.any { it.id == id }
+            state.copy(
+                letters = if (exists) {
+                    state.letters.map { if (it.id == id) detail else it }
+                } else {
+                    listOf(detail) + state.letters
+                },
+            )
+        }
+        return detail
     }
 
     suspend fun fetchUnreadMedia(cursor: String? = null, limit: Int = 30): MediaUnreadPage {
@@ -493,7 +531,11 @@ class AppRepository @Inject constructor(
                 .thenByDescending { it.createdAt },
         )
 
-    /** 列表只签封面 cover，详情页再 ensureMediaOriginals。 */
+    /**
+     * 列表缩略图签名。
+     * 时光页 Featured strip 最多展示 5 张，Duo/Strip 需要 2–3 张；
+     * 只签封面会导致后续格空白。详情原图仍走 ensureMediaOriginals。
+     */
     private suspend fun signMediaCovers(
         items: List<MediaItem>,
         previous: List<MediaItem> = emptyList(),
@@ -505,20 +547,25 @@ class AppRepository @Inject constructor(
                 if (prev != null && canReuseSignedThumbs(item, prev)) {
                     mergeSignedThumbs(item, prev)
                 } else {
-                    val cover = item.cover ?: return@async item
-                    val signedCover = signAssetForList(cover)
-                    item.copy(
-                        assets = item.assets.map { part ->
-                            if (part.id == signedCover.id || part.assetId == signedCover.assetId) {
-                                signedCover
-                            } else {
-                                part
-                            }
-                        },
-                    )
+                    signAssetsForList(item)
                 }
             }
         }.awaitAll()
+    }
+
+    private suspend fun signAssetsForList(item: MediaItem): MediaItem = coroutineScope {
+        if (item.assets.isEmpty()) return@coroutineScope item
+        val toSign = item.assets
+            .sortedBy { it.sortOrder }
+            .take(LIST_SIGNED_ASSET_LIMIT)
+        val signedParts = toSign.map { part -> async { signAssetForList(part) } }.awaitAll()
+        val byPartId = signedParts.filter { it.id.isNotBlank() }.associateBy { it.id }
+        val byAssetId = signedParts.associateBy { it.assetId }
+        item.copy(
+            assets = item.assets.map { part ->
+                byPartId[part.id] ?: byAssetId[part.assetId] ?: part
+            },
+        )
     }
 
     private fun mediaAssetFingerprint(assets: List<MediaAssetPart>): List<String> =
@@ -526,9 +573,21 @@ class AppRepository @Inject constructor(
             "${part.id}:${part.assetId}:${part.type.name}:${part.sortOrder}"
         }
 
+    private fun listVisibleAssets(assets: List<MediaAssetPart>): List<MediaAssetPart> =
+        assets.sortedBy { it.sortOrder }.take(LIST_SIGNED_ASSET_LIMIT)
+
     private fun canReuseSignedThumbs(item: MediaItem, prev: MediaItem): Boolean {
         if (mediaAssetFingerprint(item.assets) != mediaAssetFingerprint(prev.assets)) return false
-        return prev.assets.any { isReusableSignedUrl(it.thumbnailUrl) || isReusableSignedUrl(it.url) }
+        val prevByPartId = prev.assets.filter { it.id.isNotBlank() }.associateBy { it.id }
+        val prevByAssetId = prev.assets.associateBy { it.assetId }
+        val visible = listVisibleAssets(item.assets)
+        if (visible.isEmpty()) return false
+        return visible.all { part ->
+            val cached = prevByPartId[part.id] ?: prevByAssetId[part.assetId]
+            cached != null && (
+                isReusableSignedUrl(cached.thumbnailUrl) || isReusableSignedUrl(cached.url)
+            )
+        }
     }
 
     private fun mergeSignedThumbs(item: MediaItem, prev: MediaItem): MediaItem {
@@ -861,6 +920,9 @@ class AppRepository @Inject constructor(
         }
 
     companion object {
+        /** Timeline Featured 最多 5 格；Duo/Strip 需 2–3 张。超出部分详情再签。 */
+        private const val LIST_SIGNED_ASSET_LIMIT = 5
+
         fun localMidnightWithOffset(date: String, zoneId: ZoneId = ZoneId.systemDefault()): String =
             LocalDate.parse(date)
                 .atStartOfDay(zoneId)

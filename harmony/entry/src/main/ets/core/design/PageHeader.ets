@@ -11,6 +11,8 @@ export struct PageHeader {
   @Prop mood: MoodPalette
   @Prop title: string = ''
   @Prop subtitle: string = ''
+  /** 底部内边距；时光页有年份筛选时可收紧 */
+  @Prop bottomPadding: number = 18
   @BuilderParam actionBuilder: () => void = this.emptyAction
 
   @Builder
@@ -43,7 +45,7 @@ export struct PageHeader {
       .alignItems(VerticalAlign.Center)
     }
     .width('100%')
-    .padding({ left: 22, right: 22, top: 18, bottom: 18 })
+    .padding({ left: 22, right: 22, top: 18, bottom: this.bottomPadding })
     .alignItems(HorizontalAlign.Start)
   }
 }

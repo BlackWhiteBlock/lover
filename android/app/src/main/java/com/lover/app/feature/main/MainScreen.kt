@@ -64,6 +64,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.DialogProperties
@@ -142,13 +143,16 @@ fun MainScreen(
     val pendingUploads by viewModel.pendingMediaUploads.collectAsState()
     val promptTogether by viewModel.promptTogetherDate.collectAsState()
     val mediaUnreadCount by viewModel.mediaUnreadCount.collectAsState()
+    val letterUnreadCount by viewModel.letterUnreadCount.collectAsState()
     val mediaHasMore by viewModel.mediaHasMore.collectAsState()
     val mediaYears by viewModel.mediaYears.collectAsState()
     val mediaYearFilter by viewModel.mediaYearFilter.collectAsState()
+    val scope = rememberCoroutineScope()
     var editor by remember { mutableStateOf<Editor?>(null) }
     var mediaDetail by remember { mutableStateOf<MediaItem?>(null) }
     var mediaEdit by remember { mutableStateOf<MediaItem?>(null) }
     var letterDetail by remember { mutableStateOf<Letter?>(null) }
+    var letterOpenAnimated by remember { mutableStateOf(false) }
     var anniversaryEdit by remember { mutableStateOf<Anniversary?>(null) }
     var showUnreadMedia by remember { mutableStateOf(false) }
     var togetherDraft by rememberSaveable {
@@ -160,7 +164,9 @@ fun MainScreen(
     val mediaDetailOpen = mediaDetail != null
     val mediaEditOpen = mediaEdit != null
     val anniversaryEditOpen = anniversaryEdit != null
-    val overlayOpen = composing || mediaDetailOpen || mediaEditOpen || anniversaryEditOpen || showUnreadMedia
+    val letterDetailOpen = letterDetail != null
+    val overlayOpen =
+        composing || mediaDetailOpen || mediaEditOpen || anniversaryEditOpen || showUnreadMedia || letterDetailOpen
     val incomingBind = remember(state.pendingIncomingBinds, state.couple?.pendingIncomingBinds, state.linked) {
         if (state.linked) {
             null
@@ -184,6 +190,7 @@ fun MainScreen(
                         onSelect = viewModel::selectTab,
                         soloMode = !state.linked,
                         timelineUnread = mediaUnreadCount > 0,
+                        lettersUnread = letterUnreadCount > 0,
                     )
                 }
             },
@@ -256,9 +263,24 @@ fun MainScreen(
                             onAdd = { editor = Editor.ANNIVERSARY },
                             onEdit = { anniversaryEdit = it },
                         )
-                        MainTab.LETTERS -> LettersPage(state.letters, { letterDetail = it }) {
-                            editor = Editor.LETTER
-                        }
+                        MainTab.LETTERS -> LettersPage(
+                            letters = state.letters,
+                            currentUserId = state.user?.id,
+                            onLetter = { letter ->
+                                val sealed = letter.isSealedFor(state.user?.id)
+                                if (sealed) {
+                                    scope.launch {
+                                        val opened = viewModel.openLetter(letter.id) ?: return@launch
+                                        letterOpenAnimated = true
+                                        letterDetail = opened
+                                    }
+                                } else {
+                                    letterOpenAnimated = false
+                                    letterDetail = letter
+                                }
+                            },
+                            onAdd = { editor = Editor.LETTER },
+                        )
                         MainTab.PROFILE -> ProfilePage(
                             state = state,
                             viewModel = viewModel,
@@ -425,7 +447,32 @@ fun MainScreen(
             }
         }
 
-        letterDetail?.let { LetterDetail(it, state.user?.id, { letterDetail = null }, onDelete = { viewModel.deleteLetter(it.id) }) }
+        AnimatedVisibility(
+            visible = letterDetailOpen,
+            enter = slideInHorizontally(
+                animationSpec = tween(420, easing = FastOutSlowInEasing),
+                initialOffsetX = { it },
+            ) + fadeIn(tween(260)),
+            exit = slideOutHorizontally(
+                animationSpec = tween(320, easing = FastOutSlowInEasing),
+                targetOffsetX = { it },
+            ) + fadeOut(tween(180)),
+        ) {
+            val current = letterDetail
+            if (current != null) {
+                val live = state.letters.firstOrNull { it.id == current.id } ?: current
+                LetterDetailScreen(
+                    letter = live,
+                    currentUserId = state.user?.id,
+                    playOpenAnimation = letterOpenAnimated,
+                    onClose = {
+                        letterDetail = null
+                        letterOpenAnimated = false
+                    },
+                    onDelete = { viewModel.deleteLetter(live.id) },
+                )
+            }
+        }
 
         if (showUnreadMedia) {
             UnreadMediaSheet(
@@ -539,6 +586,7 @@ private fun LoverNavigation(
     onSelect: (MainTab) -> Unit,
     soloMode: Boolean,
     timelineUnread: Boolean = false,
+    lettersUnread: Boolean = false,
 ) {
     val mood = LocalMood.current
     val tabs = listOf(
@@ -577,7 +625,9 @@ private fun LoverNavigation(
                                     tint = iconTint,
                                     modifier = Modifier.scale(scale).size(24.dp),
                                 )
-                                if (tab == MainTab.TIMELINE && timelineUnread) {
+                                if ((tab == MainTab.TIMELINE && timelineUnread) ||
+                                    (tab == MainTab.LETTERS && lettersUnread)
+                                ) {
                                     Box(
                                         Modifier
                                             .align(Alignment.TopEnd)
@@ -612,10 +662,17 @@ private fun LoverNavigation(
 }
 
 @Composable
-private fun PageHeader(title: String, subtitle: String, action: (@Composable () -> Unit)? = null) {
+private fun PageHeader(
+    title: String,
+    subtitle: String,
+    action: (@Composable () -> Unit)? = null,
+    bottomPadding: Dp = 18.dp,
+) {
     val mood = LocalMood.current
     Row(
-        Modifier.fillMaxWidth().padding(horizontal = 22.dp, vertical = 18.dp),
+        Modifier
+            .fillMaxWidth()
+            .padding(start = 22.dp, end = 22.dp, top = 18.dp, bottom = bottomPadding),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Column(modifier = Modifier.weight(1f)) {
@@ -816,6 +873,8 @@ private fun TimelinePage(
                     UnreadMediaBadgeButton(count = unreadCount, onClick = onOpenUnread)
                 }
             },
+            // 有年份筛选时收紧底部间距，避免标题与 chips 过远
+            bottomPadding = if (years.isNotEmpty()) 6.dp else 18.dp,
         )
         if (years.isNotEmpty()) {
             TimelineYearFilterRow(
@@ -846,40 +905,7 @@ private fun TimelinePage(
 
 @Composable
 private fun UnreadMediaBadgeButton(count: Int, onClick: () -> Unit) {
-    val mood = LocalMood.current
-    Box(
-        modifier = Modifier
-            .clip(RoundedCornerShape(18.dp))
-            .clickable(onClick = onClick)
-            .background(mood.softSurface)
-            .padding(horizontal = 12.dp, vertical = 8.dp),
-    ) {
-        Icon(
-            Icons.Rounded.NotificationsNone,
-            contentDescription = "未读时光",
-            tint = mood.soft,
-            modifier = Modifier.size(22.dp),
-        )
-        if (count > 0) {
-            Box(
-                modifier = Modifier
-                    .align(Alignment.TopEnd)
-                    .offset(x = 6.dp, y = (-4).dp)
-                    .defaultMinSize(minWidth = 16.dp, minHeight = 16.dp)
-                    .background(Color(0xFFE53935), CircleShape)
-                    .padding(horizontal = 4.dp),
-                contentAlignment = Alignment.Center,
-            ) {
-                Text(
-                    text = if (count > 99) "99+" else count.toString(),
-                    color = Color.White,
-                    fontSize = 9.sp,
-                    fontWeight = FontWeight.Bold,
-                    lineHeight = 10.sp,
-                )
-            }
-        }
-    }
+    UnreadMemoryIcon(count = count, onClick = onClick)
 }
 
 @Composable
@@ -890,7 +916,7 @@ private fun TimelineYearFilterRow(
 ) {
     val mood = LocalMood.current
     LazyRow(
-        contentPadding = PaddingValues(horizontal = 18.dp, vertical = 4.dp),
+        contentPadding = PaddingValues(start = 18.dp, end = 18.dp, top = 0.dp, bottom = 4.dp),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         modifier = Modifier.fillMaxWidth(),
     ) {
@@ -941,6 +967,10 @@ private fun UnreadMediaSheet(
         nextCursor = page?.nextCursor
         totalCount = page?.count ?: 0
         loading = false
+        // 打开即视为已读：角标归零、图标回静默；列表仍展示本次拉取的快照
+        if (items.isNotEmpty()) {
+            onMarkAllRead()
+        }
     }
 
     LaunchedEffect(Unit) { refreshFirstPage() }
@@ -984,7 +1014,7 @@ private fun UnreadMediaSheet(
 
             when {
                 loading -> {
-                    Box(Modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                         CircularProgressIndicator(color = mood.soft, strokeWidth = 2.dp)
                     }
                 }
@@ -1070,7 +1100,11 @@ private fun UnreadMediaRow(item: MediaItem, onClick: () -> Unit) {
         ) {
             if (!thumb.isNullOrBlank()) {
                 AsyncImage(
-                    model = listMediaImageRequest(context, thumb),
+                    model = listMediaImageRequest(
+                        context,
+                        thumb,
+                        cover?.assetId ?: item.id,
+                    ),
                     contentDescription = null,
                     contentScale = ContentScale.Crop,
                     modifier = Modifier.fillMaxSize(),
@@ -1456,7 +1490,12 @@ private fun AnniversaryPage(
 }
 
 @Composable
-private fun LettersPage(letters: List<Letter>, onLetter: (Letter) -> Unit, onAdd: () -> Unit) {
+private fun LettersPage(
+    letters: List<Letter>,
+    currentUserId: String?,
+    onLetter: (Letter) -> Unit,
+    onAdd: () -> Unit,
+) {
     val mood = LocalMood.current
     val dashPath = remember { PathEffect.dashPathEffect(floatArrayOf(6f, 4f), 0f) }
     Column {
@@ -1471,17 +1510,22 @@ private fun LettersPage(letters: List<Letter>, onLetter: (Letter) -> Unit, onAdd
             if (letters.isEmpty()) item { EmptyHint("给 TA 写第一封信吧", Icons.Rounded.MarkEmailUnread) }
             items(letters, key = { it.id }) { letter ->
                 val unlocked = letter.isUnlocked
+                val sealed = letter.isSealedFor(currentUserId)
+                val isMine = currentUserId != null && letter.senderId == currentUserId
                 Card(
                     modifier = Modifier.fillMaxWidth().clickable { onLetter(letter) },
                     colors = CardDefaults.cardColors(
-                        containerColor = if (unlocked) Color.White.copy(alpha = 0.96f) else Color(0xFFFAF8F5),
+                        containerColor = when {
+                            sealed -> mood.blush.copy(alpha = 0.35f)
+                            unlocked -> Color.White.copy(alpha = 0.96f)
+                            else -> Color(0xFFFAF8F5)
+                        },
                     ),
                     shape = RoundedCornerShape(28.dp),
-                    elevation = CardDefaults.cardElevation(if (unlocked) 1.dp else 0.dp),
+                    elevation = CardDefaults.cardElevation(if (unlocked && !sealed) 1.dp else 0.dp),
                     border = BorderStroke(1.dp, mood.softOutline.copy(alpha = 0.4f)),
                 ) {
                     Box(Modifier.padding(24.dp)) {
-                        // 右上角邮票装饰
                         Box(
                             modifier = Modifier
                                 .align(Alignment.TopEnd)
@@ -1498,14 +1542,13 @@ private fun LettersPage(letters: List<Letter>, onLetter: (Letter) -> Unit, onAdd
                             contentAlignment = Alignment.Center,
                         ) {
                             Icon(
-                                Icons.Rounded.Favorite,
+                                if (sealed) Icons.Rounded.Mail else Icons.Rounded.Favorite,
                                 null,
-                                tint = mood.soft.copy(alpha = 0.35f),
+                                tint = mood.soft.copy(alpha = if (sealed) 0.55f else 0.35f),
                                 modifier = Modifier.size(22.dp),
                             )
                         }
                         Column {
-                            // 类型 badge + 日期
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Surface(
                                     shape = RoundedCornerShape(4.dp),
@@ -1519,63 +1562,116 @@ private fun LettersPage(letters: List<Letter>, onLetter: (Letter) -> Unit, onAdd
                                         letterSpacing = 0.8.sp,
                                     )
                                 }
+                                if (isMine && letter.deliveryStatus != null) {
+                                    Spacer(Modifier.width(8.dp))
+                                    Surface(
+                                        shape = RoundedCornerShape(4.dp),
+                                        color = if (letter.deliveryStatus == LetterDeliveryStatus.READ) {
+                                            mood.soft.copy(alpha = 0.18f)
+                                        } else {
+                                            mood.softOutline.copy(alpha = 0.35f)
+                                        },
+                                    ) {
+                                        Text(
+                                            text = when (letter.deliveryStatus) {
+                                                LetterDeliveryStatus.READ -> "已阅"
+                                                LetterDeliveryStatus.SENT -> "已寄"
+                                            },
+                                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
+                                            style = MaterialTheme.typography.labelSmall.copy(fontSize = 8.sp),
+                                            color = if (letter.deliveryStatus == LetterDeliveryStatus.READ) {
+                                                mood.soft
+                                            } else {
+                                                mood.stone
+                                            },
+                                        )
+                                    }
+                                }
+                                if (sealed) {
+                                    Spacer(Modifier.width(8.dp))
+                                    Surface(
+                                        shape = RoundedCornerShape(4.dp),
+                                        color = Color(0xFFE53935).copy(alpha = 0.12f),
+                                    ) {
+                                        Text(
+                                            "未拆",
+                                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
+                                            style = MaterialTheme.typography.labelSmall.copy(fontSize = 8.sp),
+                                            color = Color(0xFFE53935),
+                                        )
+                                    }
+                                }
                                 Spacer(Modifier.width(8.dp))
-                                Text(letter.createdAt.take(10), style = MaterialTheme.typography.labelSmall, color = mood.stone.copy(alpha = 0.6f))
+                                Text(
+                                    letter.createdAt.take(10),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = mood.stone.copy(alpha = 0.6f),
+                                )
                             }
                             Spacer(Modifier.height(14.dp))
-                            // 标题
                             Text(
                                 letter.title,
                                 style = MaterialTheme.typography.titleLarge.copy(fontFamily = FontFamily.Serif),
                                 color = if (unlocked) mood.accent.copy(alpha = 0.8f) else mood.stone,
                             )
                             Spacer(Modifier.height(8.dp))
-                            // 内容或锁提示
-                            if (unlocked) {
-                                Text(
-                                    letter.summary ?: letter.content.orEmpty(),
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    color = Color(0xFF78716C),
-                                    maxLines = 3,
-                                    overflow = TextOverflow.Ellipsis,
-                                    lineHeight = 20.sp,
-                                )
-                            } else {
-                                Column(
-                                    horizontalAlignment = Alignment.CenterHorizontally,
-                                    modifier = Modifier.fillMaxWidth().padding(vertical = 12.dp),
-                                ) {
-                                    Icon(
-                                        Icons.Rounded.Lock,
-                                        null,
-                                        tint = mood.stone.copy(alpha = 0.4f),
-                                        modifier = Modifier.size(24.dp),
-                                    )
-                                    Spacer(Modifier.height(6.dp))
+                            when {
+                                !unlocked -> {
+                                    Column(
+                                        horizontalAlignment = Alignment.CenterHorizontally,
+                                        modifier = Modifier.fillMaxWidth().padding(vertical = 12.dp),
+                                    ) {
+                                        Icon(
+                                            Icons.Rounded.Lock,
+                                            null,
+                                            tint = mood.stone.copy(alpha = 0.4f),
+                                            modifier = Modifier.size(24.dp),
+                                        )
+                                        Spacer(modifier = Modifier.height(6.dp))
+                                        Text(
+                                            letterCapsuleLockHint(letter),
+                                            style = MaterialTheme.typography.bodySmall.copy(
+                                                fontStyle = androidx.compose.ui.text.font.FontStyle.Italic,
+                                            ),
+                                            color = mood.stone,
+                                            textAlign = TextAlign.Center,
+                                        )
+                                    }
+                                }
+                                sealed -> {
                                     Text(
-                                        letterCapsuleLockHint(letter),
-                                        style = MaterialTheme.typography.bodySmall.copy(fontStyle = androidx.compose.ui.text.font.FontStyle.Italic),
-                                        color = mood.stone,
-                                        textAlign = TextAlign.Center,
+                                        "轻触拆开这封信",
+                                        style = MaterialTheme.typography.bodyMedium.copy(
+                                            fontStyle = androidx.compose.ui.text.font.FontStyle.Italic,
+                                        ),
+                                        color = mood.soft,
+                                    )
+                                }
+                                else -> {
+                                    Text(
+                                        letter.summary ?: letter.content.orEmpty(),
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = Color(0xFF78716C),
+                                        maxLines = 3,
+                                        overflow = TextOverflow.Ellipsis,
+                                        lineHeight = 20.sp,
                                     )
                                 }
                             }
-                            Spacer(Modifier.height(16.dp))
-                            // 底部：头像 + FROM
+                            Spacer(modifier = Modifier.height(16.dp))
                             HorizontalDivider(color = mood.softOutline.copy(alpha = 0.2f))
-                            Spacer(Modifier.height(10.dp))
+                            Spacer(modifier = Modifier.height(10.dp))
                             Row(
                                 verticalAlignment = Alignment.CenterVertically,
                                 modifier = Modifier.fillMaxWidth(),
                             ) {
-                                // 小头像圆点
-                                Box(Modifier.size(18.dp).background(mood.blush, CircleShape).border(1.dp, Color.White, CircleShape))
+                                Box(modifier = Modifier.size(18.dp).background(mood.blush, CircleShape).border(1.dp, Color.White, CircleShape))
                                 Box(
                                     Modifier.size(18.dp).background(mood.softSurface, CircleShape)
                                         .graphicsLayer { translationX = -6.dp.toPx() }
                                         .border(1.dp, Color.White, CircleShape),
                                 )
-                                Spacer(Modifier.weight(1f))
+                                Spacer(modifier = Modifier.weight(1f))
                                 Text(
                                     "FROM ${letter.senderNickname}",
                                     style = MaterialTheme.typography.labelSmall,
@@ -2676,7 +2772,7 @@ private fun letterCapsuleLockHint(letter: Letter): String = when {
     else -> "时间胶囊 · 尚未解锁"
 }
 
-private fun letterCapsuleLockDetail(letter: Letter): String = when {
+internal fun letterCapsuleLockDetail(letter: Letter): String = when {
     letter.unlockOnPartnerBind -> "这封时间胶囊将在绑定另一半以后自动开启。"
     !letter.unlockAt.isNullOrBlank() -> "这封时间胶囊将在 ${letter.unlockAt.take(10)} 解锁。"
     else -> "这封时间胶囊尚未解锁。"

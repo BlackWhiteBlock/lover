@@ -7,6 +7,7 @@ import { CoupleMood, SoleilMood, Colors, FontSizes, Radii } from '../core/design
 import type { MoodPalette } from '../core/design/Theme'
 import { Fonts } from '../core/design/Fonts'
 import { PageHeader } from '../core/design/PageHeader'
+import { UnreadMemoryIcon } from '../core/design/UnreadMemoryIcon'
 import { LoverNoticeBar } from '../core/design/LoverNotice'
 import {
   MediaItem, Anniversary, Letter, AnniversaryType, LetterType, MediaType,
@@ -171,7 +172,8 @@ struct MainPage {
                     x: this.currentIndex === (item.tab as number) ? 1.06 : 1,
                     y: this.currentIndex === (item.tab as number) ? 1.06 : 1,
                   })
-                if (item.tab === MainTab.TIMELINE && this.vm.mediaUnreadCount > 0) {
+                if ((item.tab === MainTab.TIMELINE && this.vm.mediaUnreadCount > 0) ||
+                  (item.tab === MainTab.LETTERS && this.vm.letterUnreadCount > 0)) {
                   Row()
                     .width(8)
                     .height(8)
@@ -201,7 +203,7 @@ struct MainPage {
             .justifyContent(FlexAlign.Center)
             .alignItems(HorizontalAlign.Center)
             .onClick(() => this.selectTab(item.tab))
-          }, (item: NavItem) => `${item.label}_${this.uiEpoch}_${this.vm.mediaUnreadCount}`)
+          }, (item: NavItem) => `${item.label}_${this.uiEpoch}_${this.vm.mediaUnreadCount}_${this.vm.letterUnreadCount}`)
         }
         .width('100%')
         .padding({ left: 8, right: 8, top: 6, bottom: 6 })
@@ -409,44 +411,44 @@ struct TimelineTabContent {
     return this.mood.solo ? '选择照片或视频，记录这一刻' : '选择照片或视频，记录共同的故事'
   }
 
-  @Builder
-  unreadHeaderAction() {
-    if (!this.mood.solo) {
-      Stack({ alignContent: Alignment.TopEnd }) {
-        Image($r('app.media.ic_notifications'))
-          .width(22)
-          .height(22)
-          .fillColor(this.mood.soft)
-        if (this.unreadCount > 0) {
-          Text(this.unreadCount > 99 ? '99+' : `${this.unreadCount}`)
-            .fontSize(9)
-            .fontWeight(FontWeight.Bold)
-            .fontColor(Colors.white)
-            .padding({ left: 4, right: 4 })
-            .constraintSize({ minWidth: 16, minHeight: 16 })
-            .textAlign(TextAlign.Center)
-            .borderRadius(8)
-            .backgroundColor('#E53935')
-            .margin({ top: -4, right: -6 })
-        }
-      }
-      .padding({ left: 12, right: 12, top: 8, bottom: 8 })
-      .borderRadius(18)
-      .backgroundColor(this.mood.softSurface)
-      .onClick(() => {
-        this.showUnreadSheet = true
-      })
-    }
-  }
-
   build() {
     Column() {
-      PageHeader({
-        mood: this.mood,
-        title: this.mood.solo ? '时光' : '相爱时光',
-        subtitle: this.mood.solo ? 'Quiet Moments' : 'Visual Memories',
-        actionBuilder: this.unreadHeaderAction,
+      // 时光页自绘标题栏，保证未读图标一定挂载（不走 PageHeader BuilderParam）
+      Row() {
+        Column({ space: 4 }) {
+          Text(this.mood.solo ? '时光' : '相爱时光')
+            .fontSize(FontSizes.headlineMedium)
+            .fontFamily(this.mood.solo ? Fonts.GARAMOND : Fonts.LATO)
+            .fontColor(this.mood.accent)
+            .opacity(0.92)
+            .width('100%')
+          Text((this.mood.solo ? 'Quiet Moments' : 'Visual Memories').toUpperCase())
+            .fontSize(FontSizes.labelSmall)
+            .fontFamily(Fonts.LATO_LIGHT)
+            .fontColor(this.mood.stone)
+            .letterSpacing(1.2)
+            .width('100%')
+        }
+        .layoutWeight(1)
+        .alignItems(HorizontalAlign.Start)
+
+        if (!this.mood.solo) {
+          UnreadMemoryIcon({
+            count: this.unreadCount,
+            onIconClick: () => {
+              this.showUnreadSheet = true
+            },
+          })
+        }
+      }
+      .width('100%')
+      .padding({
+        left: 22,
+        right: 22,
+        top: 18,
+        bottom: this.years.length > 0 ? 6 : 18,
       })
+      .alignItems(VerticalAlign.Center)
 
       if (this.years.length > 0) {
         TimelineYearFilterRow({
@@ -550,7 +552,7 @@ struct TimelineYearFilterRow {
             .onClick(() => this.onYearSelected(year))
         }, (year: number) => `year_${year}`)
       }
-      .padding({ left: 18, right: 18, top: 4, bottom: 4 })
+      .padding({ left: 18, right: 18, top: 0, bottom: 4 })
     }
     .scrollable(ScrollDirection.Horizontal)
     .scrollBar(BarState.Off)
@@ -584,6 +586,10 @@ struct UnreadMediaSheet {
     this.nextCursor = page?.nextCursor ?? null
     this.totalCount = page?.count ?? 0
     this.loading = false
+    // 打开即视为已读：角标归零、图标回静默；列表仍展示本次快照
+    if (this.items.length > 0) {
+      this.onMarkAllRead()
+    }
   }
 
   async loadMore(): Promise<void> {
@@ -900,6 +906,32 @@ struct LettersTabContent {
   onEpoch(): void { this.reload() }
   reload(): void { this.letters = [...this.vm.data.letters] }
 
+  private viewerId(): string | null {
+    return this.vm.data.user?.id ?? null
+  }
+
+  private async onLetterClick(item: Letter): Promise<void> {
+    const sealed = Letter.isSealedFor(item, this.viewerId())
+    if (sealed) {
+      const opened = await this.vm.openLetter(item.id)
+      if (opened) {
+        AppNav.pushLetterDetail(opened.id, true)
+      }
+      return
+    }
+    AppNav.pushLetterDetail(item.id, false)
+  }
+
+  private statusLabel(item: Letter): string {
+    if (item.deliveryStatus === 'read') {
+      return '已阅'
+    }
+    if (item.deliveryStatus === 'sent') {
+      return '已寄'
+    }
+    return ''
+  }
+
   build() {
     Column() {
       PageHeader({
@@ -927,29 +959,59 @@ struct LettersTabContent {
             ListItem() {
               Stack({ alignContent: Alignment.TopEnd }) {
                 Column({ space: 6 }) {
-                  Text(item.type === LetterType.CAPSULE ? 'Time Capsule' : 'Instant')
-                    .fontSize(FontSizes.labelSmall)
-                    .fontFamily(Fonts.LATO_LIGHT)
-                    .fontColor(this.mood.accent)
-                    .letterSpacing(1.2)
+                  Row({ space: 8 }) {
+                    Text(item.type === LetterType.CAPSULE ? 'Time Capsule' : 'Instant')
+                      .fontSize(FontSizes.labelSmall)
+                      .fontFamily(Fonts.LATO_LIGHT)
+                      .fontColor(this.mood.accent)
+                      .letterSpacing(1.2)
+                    if (item.senderId === this.viewerId() && this.statusLabel(item).length > 0) {
+                      Text(this.statusLabel(item))
+                        .fontSize(9)
+                        .fontFamily(Fonts.LATO)
+                        .fontColor(item.deliveryStatus === 'read' ? this.mood.soft : this.mood.stone)
+                        .padding({ left: 8, right: 8, top: 2, bottom: 2 })
+                        .borderRadius(4)
+                        .backgroundColor(item.deliveryStatus === 'read' ?
+                          'rgba(251,113,133,0.18)' : this.mood.softOutline)
+                    }
+                    if (Letter.isSealedFor(item, this.viewerId())) {
+                      Text('未拆')
+                        .fontSize(9)
+                        .fontFamily(Fonts.LATO)
+                        .fontColor('#E53935')
+                        .padding({ left: 8, right: 8, top: 2, bottom: 2 })
+                        .borderRadius(4)
+                        .backgroundColor('rgba(229,57,53,0.12)')
+                    }
+                  }
+
                   Text(item.title)
                     .fontSize(FontSizes.titleLarge)
                     .fontFamily(Fonts.GARAMOND)
                     .fontColor(this.mood.onSurface)
-                  if (item.isUnlocked && item.summary) {
+
+                  if (!item.isUnlocked) {
+                    Text(item.unlockOnPartnerBind ? '绑定另一半后解锁' : '尚未解锁')
+                      .fontSize(FontSizes.bodySmall)
+                      .fontFamily(Fonts.LATO)
+                      .fontStyle(FontStyle.Italic)
+                      .fontColor(this.mood.stone)
+                  } else if (Letter.isSealedFor(item, this.viewerId())) {
+                    Text('轻触拆开这封信')
+                      .fontSize(FontSizes.bodySmall)
+                      .fontFamily(Fonts.LATO)
+                      .fontStyle(FontStyle.Italic)
+                      .fontColor(this.mood.soft)
+                  } else if (item.summary) {
                     Text(item.summary)
                       .fontSize(FontSizes.bodySmall)
                       .fontFamily(Fonts.LATO)
                       .fontColor(this.mood.stone)
                       .maxLines(2)
                       .textOverflow({ overflow: TextOverflow.Ellipsis })
-                  } else if (!item.isUnlocked) {
-                    Text(item.unlockOnPartnerBind ? '绑定另一半后解锁' : '尚未解锁')
-                      .fontSize(FontSizes.bodySmall)
-                      .fontFamily(Fonts.LATO)
-                      .fontStyle(FontStyle.Italic)
-                      .fontColor(this.mood.stone)
                   }
+
                   Text(`FROM  ${item.senderNickname}`)
                     .fontSize(FontSizes.labelSmall)
                     .fontFamily(Fonts.LATO_LIGHT)
@@ -961,7 +1023,7 @@ struct LettersTabContent {
                 .padding(18)
                 .alignItems(HorizontalAlign.Start)
 
-                Text('♥')
+                Text(Letter.isSealedFor(item, this.viewerId()) ? '✉' : '♥')
                   .fontSize(16)
                   .fontColor(this.mood.accent)
                   .width(36)
@@ -973,12 +1035,15 @@ struct LettersTabContent {
                   .rotate({ angle: 12 })
               }
               .width('100%')
-              .backgroundColor(this.mood.softSurface)
+              .backgroundColor(Letter.isSealedFor(item, this.viewerId()) ?
+                'rgba(255,228,232,0.65)' : this.mood.softSurface)
               .borderRadius(Radii.medium)
               .border({ width: 1, color: this.mood.softOutline })
-              .onClick(() => AppNav.pushLetterDetail(item.id))
+              .onClick(() => {
+                void this.onLetterClick(item)
+              })
             }
-          }, (item: Letter) => `${item.id}_${this.uiEpoch}`)
+          }, (item: Letter) => `${item.id}_${item.isOpened}_${item.deliveryStatus}_${this.uiEpoch}`)
         }
         .width('100%')
         .padding({ left: 16, right: 16, bottom: 24 })

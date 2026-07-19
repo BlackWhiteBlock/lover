@@ -170,6 +170,8 @@ export interface JsonObject {
   senderNickname?: string | null
   summary?: string | null
   isUnlocked?: boolean | null
+  isOpened?: boolean | null
+  deliveryStatus?: string | null
   
   // UnbindingRequest fields
   requestedBy?: string | null
@@ -514,6 +516,8 @@ export class MediaItem {
   }
 }
 
+export type LetterDeliveryStatus = 'sent' | 'read'
+
 export class Letter {
   id: string = ''
   senderId: string = ''
@@ -525,7 +529,18 @@ export class Letter {
   unlockAt: string | null = null
   unlockOnPartnerBind: boolean = false
   isUnlocked: boolean = false
+  /** 接收方是否已拆；发送方恒 true */
+  isOpened: boolean = true
+  /** 发送方：已寄 / 已阅 */
+  deliveryStatus: LetterDeliveryStatus | null = null
   createdAt: string = ''
+
+  static isSealedFor(letter: Letter, viewerId: string | null | undefined): boolean {
+    if (!viewerId || viewerId.length === 0) {
+      return false
+    }
+    return letter.senderId !== viewerId && letter.isUnlocked && !letter.isOpened
+  }
 
   static fromJson(json: JsonMap): Letter {
     const obj = json as JsonObject
@@ -540,6 +555,13 @@ export class Letter {
     l.unlockAt = (obj.unlockAt as string | null) ?? null
     l.unlockOnPartnerBind = (obj.unlockOnPartnerBind as boolean) ?? false
     l.isUnlocked = (obj.isUnlocked as boolean) ?? false
+    l.isOpened = (obj.isOpened as boolean) ?? true
+    const status = obj.deliveryStatus as string | null | undefined
+    if (status === 'sent' || status === 'read') {
+      l.deliveryStatus = status
+    } else {
+      l.deliveryStatus = null
+    }
     l.createdAt = (obj.createdAt as string) ?? ''
     return l
   }

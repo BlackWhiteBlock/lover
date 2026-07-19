@@ -1,0 +1,82 @@
+<svg viewBox="0 0 56 56" width="216" height="216" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <!-- Pulse glow ring gradient -->
+    <radialGradient id="glow1" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#fb7185" stop-opacity="0.35"/>
+      <stop offset="100%" stop-color="#fb7185" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="glow2" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#fb7185" stop-opacity="0.18"/>
+      <stop offset="100%" stop-color="#fb7185" stop-opacity="0"/>
+    </radialGradient>
+    <!-- Icon background gradient -->
+    <linearGradient id="iconBg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#fff0f2"/>
+      <stop offset="100%" stop-color="#ffe4e8"/>
+    </linearGradient>
+    <!-- Badge gradient -->
+    <linearGradient id="badgeBg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#f43f5e"/>
+      <stop offset="100%" stop-color="#fb7185"/>
+    </linearGradient>
+    <!-- Drop shadow for icon circle -->
+    <filter id="iconShadow" x="-30%" y="-30%" width="160%" height="160%">
+      <feDropShadow dx="0" dy="4" stdDeviation="4" flood-color="#fb7185" flood-opacity="0.22"/>
+    </filter>
+    <!-- Drop shadow for badge -->
+    <filter id="badgeShadow" x="-40%" y="-40%" width="180%" height="180%">
+      <feDropShadow dx="0" dy="2" stdDeviation="2.5" flood-color="#f43f5e" flood-opacity="0.45"/>
+    </filter>
+  </defs>
+
+  <!-- Outer pulse ring 1 (largest, most transparent) -->
+  <circle cx="28" cy="30" r="22" fill="url(#glow2)" opacity="0.5"/>
+
+  <!-- Outer pulse ring 2 -->
+  <circle cx="28" cy="30" r="17" fill="url(#glow1)" opacity="0.7"/>
+
+  <!-- Icon background circle -->
+  <circle cx="28" cy="30" r="13" fill="url(#iconBg)" stroke="#fb7185" stroke-width="0.8" stroke-opacity="0.35" filter="url(#iconShadow)"/>
+
+  <!-- Heart icon (scaled to fit ~13px radius circle, centered at 28,30) -->
+  <!-- Heart path scaled: original 24×24 viewBox → center at 12,12, scaled ~0.72× and translated -->
+  <g transform="translate(28,30) scale(0.72) translate(-12,-11)">
+    <path
+      d="M12 20.5C12 20.5 3 14.5 3 8.5C3 5.42 5.42 3 8.5 3C10.24 3 11.91 3.81 13 5.08C14.09 3.81 15.76 3 17.5 3C20.58 3 23 5.42 23 8.5C23 14.5 14 20.5 12 20.5Z"
+      fill="#fb7185"
+      fill-opacity="0.18"
+      stroke="#fb7185"
+      stroke-width="1.6"
+      stroke-linejoin="round"
+    />
+    <!-- Inner sparkle cross — "a moment lives inside" -->
+    <circle cx="12" cy="11" r="1.5" fill="#fb7185" opacity="0.7"/>
+    <line x1="12" y1="8.5"  x2="12" y2="9.5"  stroke="#fb7185" stroke-width="1" stroke-linecap="round" opacity="0.5"/>
+    <line x1="12" y1="12.5" x2="12" y2="13.5" stroke="#fb7185" stroke-width="1" stroke-linecap="round" opacity="0.5"/>
+    <line x1="9.5"  y1="11" x2="10.5" y2="11" stroke="#fb7185" stroke-width="1" stroke-linecap="round" opacity="0.5"/>
+    <line x1="13.5" y1="11" x2="14.5" y2="11" stroke="#fb7185" stroke-width="1" stroke-linecap="round" opacity="0.5"/>
+  </g>
+
+  <!-- Orbiting sparkle dots (static snapshot at spread positions) -->
+  <!-- dot at -45° -->
+  <circle cx="36.8" cy="22.2" r="1.75" fill="#fb7185" opacity="0.85"/>
+  <!-- dot at 45° -->
+  <circle cx="36.8" cy="37.8" r="1.75" fill="#fb7185" opacity="0.55"/>
+  <!-- dot at 135° -->
+  <circle cx="19.2" cy="37.8" r="1.75" fill="#fb7185" opacity="0.7"/>
+
+  <!-- Badge background -->
+  <rect x="36" y="13" width="16" height="12" rx="6" fill="url(#badgeBg)" filter="url(#badgeShadow)"/>
+
+  <!-- Badge number "3" -->
+  <text
+    x="44"
+    y="22.5"
+    text-anchor="middle"
+    font-family="'Lato', 'Helvetica Neue', Arial, sans-serif"
+    font-size="7.5"
+    font-weight="700"
+    fill="#ffffff"
+    letter-spacing="0"
+  >3</text>
+</svg>

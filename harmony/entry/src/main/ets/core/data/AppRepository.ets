@@ -37,6 +37,7 @@ export class AppRepository {
   mediaHasMore: boolean = false
   mediaYears: number[] = []
   mediaUnreadCount: number = 0
+  letterUnreadCount: number = 0
   private secondaryReadyListener: (() => void) | null = null
 
   constructor(api: ApiService, uploader: AssetUploader, tokenStore: TokenStore) {
@@ -399,6 +400,7 @@ export class AppRepository {
       this.refreshMedia(),
       this.refreshMediaYears(),
       this.refreshMediaUnreadSummary(),
+      this.refreshLetterUnreadSummary(),
       this.refreshAnniversariesAndLetters(),
     ])
   }
@@ -468,6 +470,35 @@ export class AppRepository {
     } catch (_e) {
       // keep previous count
     }
+  }
+
+  async refreshLetterUnreadSummary(): Promise<void> {
+    if (!this.tokenStore.snapshot.linked) {
+      this.letterUnreadCount = 0
+      return
+    }
+    try {
+      const summary = await this.call(() => this.api.letterUnreadSummary())
+      this.letterUnreadCount = summary.count ?? 0
+    } catch (_e) {
+      // keep previous
+    }
+  }
+
+  async openLetter(id: string): Promise<Letter> {
+    const raw = await this.call(() => this.api.openLetter(id))
+    const opened = Letter.fromJson(raw as JsonMap)
+    this.tokenStore.update((s) => {
+      s.letters = s.letters.map((l) => l.id === id ? opened : l)
+      return s
+    })
+    await this.refreshLetterUnreadSummary()
+    return opened
+  }
+
+  async fetchLetterDetail(id: string): Promise<Letter> {
+    const raw = await this.call(() => this.api.letterDetail(id))
+    return Letter.fromJson(raw as JsonMap)
   }
 
   async fetchUnreadMedia(cursor: string | null = null, limit: number = 30): Promise<MediaUnreadPage> {
@@ -548,12 +579,17 @@ export class AppRepository {
   }
 
   /**
-   * 列表缩略图：每条只签封面 cover（首页掠影 / 时光列表只展示封面）。
-   * 并行签名，避免登录时上百次串行 /sign。
+   * 列表缩略图签名。
+   * 时光页 Featured strip 最多展示 5 张，Duo/Strip 需要 2–3 张；
+   * 只签封面会导致后续格空白。详情原图仍走 ensureMediaOriginals。
+   * 条目间并行签名，避免登录时串行 /sign。
    */
   private async signMedia(items: MediaItem[], previous: MediaItem[] = []): Promise<MediaItem[]> {
     return this.signMediaCovers(items, previous)
   }
+
+  /** Timeline Featured 最多 5 格；超出部分详情再签。 */
+  private static readonly LIST_SIGNED_ASSET_LIMIT: number = 5
 
   private async signMediaCovers(items: MediaItem[], previous: MediaItem[] = []): Promise<MediaItem[]> {
     const prevById = new Map<string, MediaItem>()
@@ -565,22 +601,30 @@ export class AppRepository {
       if (prev && this.canReuseSignedThumbs(item, prev)) {
         return this.mergeSignedThumbs(item, prev)
       }
-      const cover = MediaItem.coverOf(item)
-      if (!cover) {
-        return item
-      }
-      const signedCover = await this.signAssetForList(cover)
-      const assets: MediaAssetPart[] = []
-      for (const part of item.assets) {
-        if (part.id === signedCover.id || part.assetId === signedCover.assetId) {
-          assets.push(signedCover)
-        } else {
-          assets.push(part)
-        }
-      }
-      return this.cloneMediaItem(item, assets)
+      return await this.signAssetsForList(item)
     })
     return await Promise.all(tasks)
+  }
+
+  private async signAssetsForList(item: MediaItem): Promise<MediaItem> {
+    if (!item.assets || item.assets.length === 0) {
+      return item
+    }
+    const toSign = MediaItem.sortedAssets(item).slice(0, AppRepository.LIST_SIGNED_ASSET_LIMIT)
+    const signedParts = await Promise.all(toSign.map((part) => this.signAssetForList(part)))
+    const byPartId = new Map<string, MediaAssetPart>()
+    const byAssetId = new Map<string, MediaAssetPart>()
+    for (const signed of signedParts) {
+      if (signed.id) {
+        byPartId.set(signed.id, signed)
+      }
+      byAssetId.set(signed.assetId, signed)
+    }
+    const assets: MediaAssetPart[] = []
+    for (const part of item.assets) {
+      assets.push(byPartId.get(part.id) ?? byAssetId.get(part.assetId) ?? part)
+    }
+    return this.cloneMediaItem(item, assets)
   }
 
   private mediaAssetFingerprint(assets: MediaAssetPart[]): string {
@@ -592,16 +636,36 @@ export class AppRepository {
     return parts.join('|')
   }
 
+  private listVisibleAssets(assets: MediaAssetPart[]): MediaAssetPart[] {
+    return [...assets]
+      .sort((a, b) => a.sortOrder - b.sortOrder)
+      .slice(0, AppRepository.LIST_SIGNED_ASSET_LIMIT)
+  }
+
   private canReuseSignedThumbs(item: MediaItem, prev: MediaItem): boolean {
     if (this.mediaAssetFingerprint(item.assets) !== this.mediaAssetFingerprint(prev.assets)) {
       return false
     }
+    const prevByPartId = new Map<string, MediaAssetPart>()
+    const prevByAssetId = new Map<string, MediaAssetPart>()
     for (const a of prev.assets) {
-      if (this.isReusableSignedUrl(a.thumbnailUrl) || this.isReusableSignedUrl(a.url)) {
-        return true
+      if (a.id) prevByPartId.set(a.id, a)
+      prevByAssetId.set(a.assetId, a)
+    }
+    const visible = this.listVisibleAssets(item.assets)
+    if (visible.length === 0) {
+      return false
+    }
+    for (const part of visible) {
+      const cached = prevByPartId.get(part.id) ?? prevByAssetId.get(part.assetId)
+      if (!cached) {
+        return false
+      }
+      if (!this.isReusableSignedUrl(cached.thumbnailUrl) && !this.isReusableSignedUrl(cached.url)) {
+        return false
       }
     }
-    return false
+    return true
   }
 
   private mergeSignedThumbs(item: MediaItem, prev: MediaItem): MediaItem {
@@ -894,6 +958,7 @@ export class AppRepository {
     this.mediaHasMore = false
     this.mediaYears = []
     this.mediaUnreadCount = 0
+    this.letterUnreadCount = 0
     await this.tokenStore.clearSession()
   }
 
