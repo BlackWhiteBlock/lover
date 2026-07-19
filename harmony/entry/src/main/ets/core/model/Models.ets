@@ -397,6 +397,7 @@ export class MediaItem {
   mediaDate: string = ''
   uploaderId: string | null = null
   createdAt: string = ''
+  updatedAt: string = ''
   assets: MediaAssetPart[] = []
 
   get cover(): MediaAssetPart | null {
@@ -505,6 +506,7 @@ export class MediaItem {
     m.mediaDate = (obj.mediaDate as string) ?? ''
     m.uploaderId = (obj.uploaderId as string | null) ?? null
     m.createdAt = (obj.createdAt as string) ?? ''
+    m.updatedAt = (obj.updatedAt as string) ?? ''
     const assetsArr = (obj.assets as JsonMap[]) ?? []
     m.assets = assetsArr.map((a) => MediaAssetPart.fromJson(a))
     return m
@@ -851,6 +853,26 @@ export interface BootstrapResponse {
 export interface ItemPage<T> {
   items: T[]
   nextCursor: string | null
+}
+
+export interface MediaYearsResponse {
+  years: number[]
+}
+
+export interface MediaUnreadSummary {
+  count: number
+  hasUnread: boolean
+}
+
+export interface MediaUnreadPage {
+  items: MediaItem[]
+  nextCursor: string | null
+  count: number
+}
+
+export interface MarkMediaReadRequest {
+  ids: string[] | null
+  all: boolean | null
 }
 
 export interface TokenAssetRequest {

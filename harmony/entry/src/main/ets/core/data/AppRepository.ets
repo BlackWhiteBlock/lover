@@ -15,6 +15,7 @@ import {
   CreateMediaAssetRequest, MediaAssetOrderItem,
   IncomingBindRequest, OutgoingBindRequest,
   PartnerActivityEvent, JsonMap, DailyQuote, MediaFileInput,
+  MediaUnreadPage, MediaUnreadSummary,
 } from '../model/Models'
 import type {
   SendSmsRequest, LoginRequest, OnboardingRequest,
@@ -23,7 +24,7 @@ import type {
   CreateMediaRequest, UpdateMediaRequest,
   CreateAnniversaryRequest, UpdateAnniversaryRequest,
   CreateLetterRequest, CreateUnbindingRequest,
-  PatchMeRequest, MarkActivityReadRequest,
+  PatchMeRequest, MarkActivityReadRequest, MarkMediaReadRequest,
 } from '../model/Models'
 
 export class AppRepository {
@@ -31,12 +32,25 @@ export class AppRepository {
   private uploader: AssetUploader
   private tokenStore: TokenStore
   private mediaCursor: string | null = null
+  private mediaYearFilter: number | null = null
   private loadingMore: boolean = false
+  mediaHasMore: boolean = false
+  mediaYears: number[] = []
+  mediaUnreadCount: number = 0
+  private secondaryReadyListener: (() => void) | null = null
 
   constructor(api: ApiService, uploader: AssetUploader, tokenStore: TokenStore) {
     this.api = api
     this.uploader = uploader
     this.tokenStore = tokenStore
+  }
+
+  get mediaYearFilterState(): number | null {
+    return this.mediaYearFilter
+  }
+
+  setSecondaryReadyListener(listener: (() => void) | null): void {
+    this.secondaryReadyListener = listener
   }
 
   get state(): AppState {
@@ -72,7 +86,9 @@ export class AppRepository {
       const me = await this.call(() => this.api.me())
       this.applyMe(me, true)
       if (this.tokenStore.snapshot.profileCompleted) {
-        await this.refreshAll()
+        // 登录首屏：只挡「空间」必需数据；时光/纪念/信封后台补齐
+        await this.refreshHomeEssentials(false)
+        this.warmSecondaryHomeData()
       } else {
         this.tokenStore.update((s) => { s.sessionReady = true; return s })
       }
@@ -89,7 +105,8 @@ export class AppRepository {
       const me = await this.call(() => this.api.me())
       this.applyMe(me, false)
       if (this.tokenStore.snapshot.profileCompleted) {
-        await this.refreshAll()
+        await this.refreshHomeEssentials(false)
+        this.warmSecondaryHomeData()
       } else {
         this.tokenStore.update((s) => { s.sessionReady = true; return s })
       }
@@ -266,39 +283,51 @@ export class AppRepository {
 
   // ─── Refresh All ────────────────────────────────────
 
+  /**
+   * 完整刷新：先解锁「空间」首屏，再等待时光/纪念/信封补齐（下拉刷新等场景）。
+   * 登录/恢复会话请用 refreshHomeEssentials + warmSecondaryHomeData，避免挡在全量签名上。
+   */
   async refreshAll(): Promise<void> {
+    await this.refreshHomeEssentials(true)
+    await this.awaitSecondaryHomeData()
+  }
+
+  /**
+   * 「空间」首页必需：me（可选）+ bootstrap + coupleSpace。
+   * 掠影只用 bootstrap.recentMedia（8 条）并为封面签 thumb，不再拉 media?limit=100。
+   */
+  async refreshHomeEssentials(fetchMe: boolean = true): Promise<void> {
     const previous = this.tokenStore.snapshot
     let meResult: MeResponse | null = null
     let bootstrapResult: BootstrapResponse | null = null
     let coupleBase: CoupleSpace | null = null
-    let mediaItems: MediaItem[] = [...previous.media]
-    let anniversariesList: Anniversary[] = []
-    let lettersList: Letter[] = []
 
-    // Parallel fetch with individual error handling
-    const results = await Promise.allSettled([
-      this.api.me(),
-      this.api.bootstrap(),
-      this.api.coupleSpace(),
-      this.api.media(undefined, 100),
-      this.api.anniversaries(),
-      this.api.letters(),
-    ])
-
-    if (results[0].status === 'fulfilled') meResult = results[0].value
-    if (results[1].status === 'fulfilled') bootstrapResult = results[1].value
-    if (results[2].status === 'fulfilled') coupleBase = CoupleSpace.fromJson(results[2].value as JsonMap)
-    if (results[3].status === 'fulfilled') {
-      const page = results[3].value
-      this.mediaCursor = page.nextCursor
-      const raw = page.items.map((m) => MediaItem.fromJson(m as JsonMap))
-      mediaItems = await this.signMedia(this.sortByDate(raw), previous.media)
-    }
-    if (results[4].status === 'fulfilled') {
-      anniversariesList = results[4].value.items.map((a) => Anniversary.fromJson(a as JsonMap))
-    }
-    if (results[5].status === 'fulfilled') {
-      lettersList = results[5].value.items.map((l) => Letter.fromJson(l as JsonMap))
+    if (fetchMe) {
+      const results = await Promise.allSettled([
+        this.api.me(),
+        this.api.bootstrap(),
+        this.api.coupleSpace(),
+      ])
+      if (results[0].status === 'fulfilled') {
+        meResult = results[0].value as MeResponse
+      }
+      if (results[1].status === 'fulfilled') {
+        bootstrapResult = results[1].value as BootstrapResponse
+      }
+      if (results[2].status === 'fulfilled') {
+        coupleBase = CoupleSpace.fromJson(results[2].value as JsonMap)
+      }
+    } else {
+      const results = await Promise.allSettled([
+        this.api.bootstrap(),
+        this.api.coupleSpace(),
+      ])
+      if (results[0].status === 'fulfilled') {
+        bootstrapResult = results[0].value as BootstrapResponse
+      }
+      if (results[1].status === 'fulfilled') {
+        coupleBase = CoupleSpace.fromJson(results[1].value as JsonMap)
+      }
     }
 
     if (!meResult && !bootstrapResult && !coupleBase) {
@@ -310,6 +339,7 @@ export class AppRepository {
     let dailyQuote = previous.dailyQuote
     let coupleLinkId = previous.coupleLinkId
     let linked = previous.linked
+    let mediaItems: MediaItem[] = previous.media
 
     if (bootstrapResult) {
       const journey = bootstrapResult.lovingJourney
@@ -320,6 +350,13 @@ export class AppRepository {
       }
       coupleLinkId = bootstrapResult.coupleLinkId ?? coupleLinkId
       linked = bootstrapResult.linked || linked
+      const recent = bootstrapResult.recentMedia ?? []
+      if (recent.length > 0) {
+        const raw = recent.map((m) => MediaItem.fromJson(m as JsonMap))
+        mediaItems = await this.signMediaCovers(this.sortByDate(raw), previous.media)
+      } else if (previous.media.length === 0) {
+        mediaItems = []
+      }
     }
 
     this.tokenStore.update((s) => {
@@ -339,34 +376,169 @@ export class AppRepository {
       s.needsTogetherDate = needsTogetherDate
       s.dailyQuote = dailyQuote
       s.media = mediaItems
+      s.sessionReady = true
+      return s
+    })
+  }
+
+  /** 登录后不阻塞进首页：后台补齐时光列表、年份、未读与纪念/信封 */
+  private warmSecondaryHomeData(): void {
+    this.awaitSecondaryHomeData()
+      .then(() => {
+        if (this.secondaryReadyListener) {
+          this.secondaryReadyListener()
+        }
+      })
+      .catch(() => {
+        // best-effort
+      })
+  }
+
+  private async awaitSecondaryHomeData(): Promise<void> {
+    await Promise.allSettled([
+      this.refreshMedia(),
+      this.refreshMediaYears(),
+      this.refreshMediaUnreadSummary(),
+      this.refreshAnniversariesAndLetters(),
+    ])
+  }
+
+  private async refreshAnniversariesAndLetters(): Promise<void> {
+    const results = await Promise.allSettled([
+      this.api.anniversaries(),
+      this.api.letters(),
+    ])
+    let anniversariesList: Anniversary[] = this.tokenStore.snapshot.anniversaries
+    let lettersList: Letter[] = this.tokenStore.snapshot.letters
+    if (results[0].status === 'fulfilled') {
+      anniversariesList = results[0].value.items.map((a) => Anniversary.fromJson(a as JsonMap))
+    }
+    if (results[1].status === 'fulfilled') {
+      lettersList = results[1].value.items.map((l) => Letter.fromJson(l as JsonMap))
+    }
+    this.tokenStore.update((s) => {
       s.anniversaries = anniversariesList
       s.letters = lettersList
-      s.sessionReady = true
       return s
     })
   }
 
   // ─── Media ──────────────────────────────────────────
 
-  async refreshMedia(): Promise<void> {
-    const page = await this.call(() => this.api.media(null, 30))
+  async refreshMedia(year: number | null = this.mediaYearFilter): Promise<void> {
+    this.mediaYearFilter = year
+    const page = await this.call(() => this.api.media(null, 30, year))
     this.mediaCursor = page.nextCursor
+    this.mediaHasMore = page.nextCursor !== null && page.nextCursor !== undefined
     const previous = this.tokenStore.snapshot.media
     const items = page.items.map((m) => MediaItem.fromJson(m as JsonMap))
-    const signed = await this.signMedia(this.sortByDate(items), previous)
+    let signed = previous
+    try {
+      signed = await this.signMediaCovers(this.sortByDate(items), previous)
+    } catch (_e) {
+      signed = previous
+    }
     this.tokenStore.update((s) => { s.media = signed; return s })
   }
 
+  async setMediaYearFilter(year: number | null): Promise<void> {
+    if (this.mediaYearFilter === year) {
+      return
+    }
+    await this.refreshMedia(year)
+  }
+
+  async refreshMediaYears(): Promise<void> {
+    try {
+      const res = await this.call(() => this.api.mediaYears())
+      this.mediaYears = res.years ?? []
+    } catch (_e) {
+      this.mediaYears = []
+    }
+  }
+
+  async refreshMediaUnreadSummary(): Promise<void> {
+    if (!this.tokenStore.snapshot.linked) {
+      this.mediaUnreadCount = 0
+      return
+    }
+    try {
+      const summary = await this.call(() => this.api.mediaUnreadSummary())
+      this.mediaUnreadCount = summary.count ?? 0
+    } catch (_e) {
+      // keep previous count
+    }
+  }
+
+  async fetchUnreadMedia(cursor: string | null = null, limit: number = 30): Promise<MediaUnreadPage> {
+    const page = await this.call(() => this.api.mediaUnread(cursor, limit))
+    const previous = this.tokenStore.snapshot.media
+    const rawItems = (page.items ?? []).map((m) => MediaItem.fromJson(m as JsonMap))
+    let signed = rawItems
+    try {
+      signed = await this.signMediaCovers(this.sortByDate(rawItems), previous)
+    } catch (_e) {
+      signed = rawItems
+    }
+    this.mediaUnreadCount = page.count ?? 0
+    const result: MediaUnreadPage = {
+      items: signed,
+      nextCursor: page.nextCursor ?? null,
+      count: page.count ?? 0,
+    }
+    return result
+  }
+
+  async markMediaRead(id: string): Promise<void> {
+    try {
+      const summary: MediaUnreadSummary = await this.call(() => this.api.markMediaRead(id))
+      this.mediaUnreadCount = summary.count ?? 0
+    } catch (_e) {
+      // ignore
+    }
+  }
+
+  async markAllUnreadMediaRead(): Promise<void> {
+    try {
+      const req: MarkMediaReadRequest = { ids: null, all: true }
+      const summary: MediaUnreadSummary = await this.call(() => this.api.markMediaReadBatch(req))
+      this.mediaUnreadCount = summary.count ?? 0
+    } catch (_e) {
+      // ignore
+    }
+  }
+
+  async fetchMediaDetail(id: string): Promise<MediaItem> {
+    const raw = await this.call(() => this.api.mediaDetail(id))
+    return MediaItem.fromJson(raw as JsonMap)
+  }
+
   async loadMoreMedia(): Promise<boolean> {
-    if (!this.mediaCursor || this.loadingMore) return false
+    const cursor = this.mediaCursor
+    if (!cursor) {
+      this.mediaHasMore = false
+      return false
+    }
+    if (this.loadingMore) {
+      return false
+    }
     this.loadingMore = true
     try {
-      const page = await this.call(() => this.api.media(this.mediaCursor, 30))
+      const page = await this.call(() => this.api.media(cursor, 30, this.mediaYearFilter))
       this.mediaCursor = page.nextCursor
-      if (page.items.length === 0) return false
+      this.mediaHasMore = page.nextCursor !== null && page.nextCursor !== undefined
+      if (page.items.length === 0) {
+        this.mediaHasMore = false
+        return false
+      }
       const newItems = page.items.map((m) => MediaItem.fromJson(m as JsonMap))
       const previous = this.tokenStore.snapshot.media
-      const signed = await this.signMedia(newItems, previous)
+      let signed = newItems
+      try {
+        signed = await this.signMedia(newItems, previous)
+      } catch (_e) {
+        signed = newItems
+      }
       const merged = [...previous, ...signed]
       this.tokenStore.update((s) => { s.media = this.sortByDate(merged); return s })
       return true
@@ -375,26 +547,40 @@ export class AppRepository {
     }
   }
 
-  /** List thumbs: sign CDN URLs (API returns assetId only). Mirror Android signMedia. */
+  /**
+   * 列表缩略图：每条只签封面 cover（首页掠影 / 时光列表只展示封面）。
+   * 并行签名，避免登录时上百次串行 /sign。
+   */
   private async signMedia(items: MediaItem[], previous: MediaItem[] = []): Promise<MediaItem[]> {
+    return this.signMediaCovers(items, previous)
+  }
+
+  private async signMediaCovers(items: MediaItem[], previous: MediaItem[] = []): Promise<MediaItem[]> {
     const prevById = new Map<string, MediaItem>()
     for (const p of previous) {
       prevById.set(p.id, p)
     }
-    const signed: MediaItem[] = []
-    for (const item of items) {
+    const tasks: Promise<MediaItem>[] = items.map(async (item: MediaItem) => {
       const prev = prevById.get(item.id)
       if (prev && this.canReuseSignedThumbs(item, prev)) {
-        signed.push(this.mergeSignedThumbs(item, prev))
-        continue
+        return this.mergeSignedThumbs(item, prev)
       }
+      const cover = MediaItem.coverOf(item)
+      if (!cover) {
+        return item
+      }
+      const signedCover = await this.signAssetForList(cover)
       const assets: MediaAssetPart[] = []
       for (const part of item.assets) {
-        assets.push(await this.signAssetForList(part))
+        if (part.id === signedCover.id || part.assetId === signedCover.assetId) {
+          assets.push(signedCover)
+        } else {
+          assets.push(part)
+        }
       }
-      signed.push(this.cloneMediaItem(item, assets))
-    }
-    return signed
+      return this.cloneMediaItem(item, assets)
+    })
+    return await Promise.all(tasks)
   }
 
   private mediaAssetFingerprint(assets: MediaAssetPart[]): string {
@@ -499,6 +685,7 @@ export class AppRepository {
     m.mediaDate = item.mediaDate
     m.uploaderId = item.uploaderId
     m.createdAt = item.createdAt
+    m.updatedAt = item.updatedAt
     m.assets = assets
     return m
   }
@@ -531,6 +718,7 @@ export class AppRepository {
     result.mediaDate = item.mediaDate
     result.uploaderId = item.uploaderId
     result.createdAt = item.createdAt
+    result.updatedAt = item.updatedAt
     result.assets = signedAssets
     return result
   }
@@ -701,6 +889,11 @@ export class AppRepository {
 
   async logout(): Promise<void> {
     try { await this.api.logout() } catch (_e) { /* ignore */ }
+    this.mediaCursor = null
+    this.mediaYearFilter = null
+    this.mediaHasMore = false
+    this.mediaYears = []
+    this.mediaUnreadCount = 0
     await this.tokenStore.clearSession()
   }
 

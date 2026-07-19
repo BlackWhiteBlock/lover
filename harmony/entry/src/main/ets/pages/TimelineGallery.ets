@@ -125,6 +125,7 @@ export struct TimelineGalleryContent {
   @Prop mood: MoodPalette
   @Prop @Watch('onMediaChange') media: MediaItem[] = []
   @Prop pendingUploads: PendingMediaUpload[] = []
+  @Prop hasMore: boolean = false
   onLoadMore: () => void = () => {}
 
   @State private featured: MediaItem | null = null
@@ -209,13 +210,26 @@ export struct TimelineGalleryContent {
           .alignItems(VerticalAlign.Top)
         }
 
-        if (this.media.length >= 30) {
-          LoadingProgress()
-            .width(24)
-            .height(24)
-            .color(this.mood.soft)
-            .margin({ top: 8, bottom: 8 })
-            .onAppear(() => this.onLoadMore())
+        // 触底：有下一页才转圈加载；否则显示「没有更多」
+        if (this.media.length > 0) {
+          Column() {
+            if (this.hasMore) {
+              LoadingProgress()
+                .width(24)
+                .height(24)
+                .color(this.mood.soft)
+                .onAppear(() => this.onLoadMore())
+            } else {
+              Text('没有更多时光记录')
+                .fontSize(FontSizes.bodySmall)
+                .fontFamily(Fonts.LATO)
+                .fontColor(this.mood.stone)
+            }
+          }
+          .width('100%')
+          .height(56)
+          .justifyContent(FlexAlign.Center)
+          .alignItems(HorizontalAlign.Center)
         }
 
         Blank().height(120)

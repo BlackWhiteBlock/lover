@@ -89,8 +89,27 @@ interface ApiService {
     @GET("api/media")
     suspend fun media(
         @Query("cursor") cursor: String? = null,
-        @Query("limit") limit: Int = 100,
+        @Query("limit") limit: Int = 30,
+        @Query("year") year: Int? = null,
     ): ItemPage<MediaItem>
+
+    @GET("api/media/years")
+    suspend fun mediaYears(): MediaYearsResponse
+
+    @GET("api/media/unread-summary")
+    suspend fun mediaUnreadSummary(): MediaUnreadSummary
+
+    @GET("api/media/unread")
+    suspend fun mediaUnread(
+        @Query("cursor") cursor: String? = null,
+        @Query("limit") limit: Int = 30,
+    ): MediaUnreadPage
+
+    @POST("api/media/{id}/read")
+    suspend fun markMediaRead(@Path("id") id: String): MediaUnreadSummary
+
+    @POST("api/media/read")
+    suspend fun markMediaReadBatch(@Body request: MarkMediaReadRequest): MediaUnreadSummary
 
     @POST("api/media")
     suspend fun createMedia(@Body request: CreateMediaRequest): MediaItem

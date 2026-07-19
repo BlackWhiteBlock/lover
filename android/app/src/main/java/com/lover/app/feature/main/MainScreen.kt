@@ -141,11 +141,16 @@ fun MainScreen(
     val tab by viewModel.selectedTab.collectAsState()
     val pendingUploads by viewModel.pendingMediaUploads.collectAsState()
     val promptTogether by viewModel.promptTogetherDate.collectAsState()
+    val mediaUnreadCount by viewModel.mediaUnreadCount.collectAsState()
+    val mediaHasMore by viewModel.mediaHasMore.collectAsState()
+    val mediaYears by viewModel.mediaYears.collectAsState()
+    val mediaYearFilter by viewModel.mediaYearFilter.collectAsState()
     var editor by remember { mutableStateOf<Editor?>(null) }
     var mediaDetail by remember { mutableStateOf<MediaItem?>(null) }
     var mediaEdit by remember { mutableStateOf<MediaItem?>(null) }
     var letterDetail by remember { mutableStateOf<Letter?>(null) }
     var anniversaryEdit by remember { mutableStateOf<Anniversary?>(null) }
+    var showUnreadMedia by remember { mutableStateOf(false) }
     var togetherDraft by rememberSaveable {
         mutableStateOf(java.time.LocalDate.now().minusYears(1).toString())
     }
@@ -155,7 +160,7 @@ fun MainScreen(
     val mediaDetailOpen = mediaDetail != null
     val mediaEditOpen = mediaEdit != null
     val anniversaryEditOpen = anniversaryEdit != null
-    val overlayOpen = composing || mediaDetailOpen || mediaEditOpen || anniversaryEditOpen
+    val overlayOpen = composing || mediaDetailOpen || mediaEditOpen || anniversaryEditOpen || showUnreadMedia
     val incomingBind = remember(state.pendingIncomingBinds, state.couple?.pendingIncomingBinds, state.linked) {
         if (state.linked) {
             null
@@ -178,6 +183,7 @@ fun MainScreen(
                         selected = tab,
                         onSelect = viewModel::selectTab,
                         soloMode = !state.linked,
+                        timelineUnread = mediaUnreadCount > 0,
                     )
                 }
             },
@@ -235,6 +241,12 @@ fun MainScreen(
                         MainTab.TIMELINE -> TimelinePage(
                             media = state.media,
                             pendingUploads = pendingUploads,
+                            unreadCount = mediaUnreadCount,
+                            years = mediaYears,
+                            selectedYear = mediaYearFilter,
+                            hasMore = mediaHasMore,
+                            onYearSelected = viewModel::setMediaYearFilter,
+                            onOpenUnread = { showUnreadMedia = true },
                             onMedia = { item -> viewModel.openMediaDetail(item) { mediaDetail = it } },
                             onLoadMore = { viewModel.loadMoreMedia() },
                         )
@@ -415,6 +427,18 @@ fun MainScreen(
 
         letterDetail?.let { LetterDetail(it, state.user?.id, { letterDetail = null }, onDelete = { viewModel.deleteLetter(it.id) }) }
 
+        if (showUnreadMedia) {
+            UnreadMediaSheet(
+                loadPage = viewModel::loadUnreadMediaPage,
+                onDismiss = { showUnreadMedia = false },
+                onOpenItem = { item ->
+                    showUnreadMedia = false
+                    viewModel.openMediaDetail(item) { mediaDetail = it }
+                },
+                onMarkAllRead = { viewModel.markAllUnreadMediaRead() },
+            )
+        }
+
         if (showBindPrompt && incomingBind != null) {
             IncomingBindDialog(
                 inviterLabel = bindInviterLabel(incomingBind.requesterNickname, incomingBind.requesterPhone),
@@ -514,6 +538,7 @@ private fun LoverNavigation(
     selected: MainTab,
     onSelect: (MainTab) -> Unit,
     soloMode: Boolean,
+    timelineUnread: Boolean = false,
 ) {
     val mood = LocalMood.current
     val tabs = listOf(
@@ -544,13 +569,24 @@ private fun LoverNavigation(
                     onClick = { onSelect(tab) },
                     icon = {
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            NavTabIcon(
-                                tab = tab,
-                                label = label,
-                                soloMode = soloMode,
-                                tint = iconTint,
-                                modifier = Modifier.scale(scale).size(24.dp),
-                            )
+                            Box {
+                                NavTabIcon(
+                                    tab = tab,
+                                    label = label,
+                                    soloMode = soloMode,
+                                    tint = iconTint,
+                                    modifier = Modifier.scale(scale).size(24.dp),
+                                )
+                                if (tab == MainTab.TIMELINE && timelineUnread) {
+                                    Box(
+                                        Modifier
+                                            .align(Alignment.TopEnd)
+                                            .offset(x = 3.dp, y = (-2).dp)
+                                            .size(8.dp)
+                                            .background(Color(0xFFE53935), CircleShape),
+                                    )
+                                }
+                            }
                             if (selected == tab) {
                                 Box(
                                     Modifier
@@ -761,6 +797,12 @@ private fun HomePage(
 private fun TimelinePage(
     media: List<MediaItem>,
     pendingUploads: List<PendingMediaUpload>,
+    unreadCount: Int,
+    years: List<Int>,
+    selectedYear: Int?,
+    hasMore: Boolean,
+    onYearSelected: (Int?) -> Unit,
+    onOpenUnread: () -> Unit,
     onMedia: (MediaItem) -> Unit,
     onLoadMore: () -> Unit = {},
 ) {
@@ -769,10 +811,24 @@ private fun TimelinePage(
         PageHeader(
             if (mood.solo) "时光" else "相爱时光",
             if (mood.solo) "Quiet Moments" else "Visual Memories",
+            action = {
+                if (!mood.solo) {
+                    UnreadMediaBadgeButton(count = unreadCount, onClick = onOpenUnread)
+                }
+            },
         )
+        if (years.isNotEmpty()) {
+            TimelineYearFilterRow(
+                years = years,
+                selectedYear = selectedYear,
+                onYearSelected = onYearSelected,
+            )
+        }
         if (media.isEmpty() && pendingUploads.isEmpty()) {
             EmptyHint(
-                if (mood.solo) "选择照片或视频，记录这一刻" else "选择照片或视频，记录共同的故事",
+                if (selectedYear != null) "这一年还没有时光记录"
+                else if (mood.solo) "选择照片或视频，记录这一刻"
+                else "选择照片或视频，记录共同的故事",
                 Icons.Rounded.PhotoLibrary,
             )
         } else {
@@ -781,9 +837,278 @@ private fun TimelinePage(
                 pendingUploads = pendingUploads,
                 onMedia = onMedia,
                 onLoadMore = onLoadMore,
+                hasMore = hasMore,
                 uploadingCard = { pending -> UploadingMediaCard(pending) },
             )
         }
+    }
+}
+
+@Composable
+private fun UnreadMediaBadgeButton(count: Int, onClick: () -> Unit) {
+    val mood = LocalMood.current
+    Box(
+        modifier = Modifier
+            .clip(RoundedCornerShape(18.dp))
+            .clickable(onClick = onClick)
+            .background(mood.softSurface)
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+    ) {
+        Icon(
+            Icons.Rounded.NotificationsNone,
+            contentDescription = "未读时光",
+            tint = mood.soft,
+            modifier = Modifier.size(22.dp),
+        )
+        if (count > 0) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .offset(x = 6.dp, y = (-4).dp)
+                    .defaultMinSize(minWidth = 16.dp, minHeight = 16.dp)
+                    .background(Color(0xFFE53935), CircleShape)
+                    .padding(horizontal = 4.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    text = if (count > 99) "99+" else count.toString(),
+                    color = Color.White,
+                    fontSize = 9.sp,
+                    fontWeight = FontWeight.Bold,
+                    lineHeight = 10.sp,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun TimelineYearFilterRow(
+    years: List<Int>,
+    selectedYear: Int?,
+    onYearSelected: (Int?) -> Unit,
+) {
+    val mood = LocalMood.current
+    LazyRow(
+        contentPadding = PaddingValues(horizontal = 18.dp, vertical = 4.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        item(key = "year-all") {
+            FilterChip(
+                selected = selectedYear == null,
+                onClick = { onYearSelected(null) },
+                label = { Text("全部") },
+                colors = FilterChipDefaults.filterChipColors(
+                    selectedContainerColor = mood.soft.copy(alpha = 0.22f),
+                    selectedLabelColor = mood.soft,
+                ),
+            )
+        }
+        items(years, key = { it }) { year ->
+            FilterChip(
+                selected = selectedYear == year,
+                onClick = { onYearSelected(year) },
+                label = { Text("${year}年") },
+                colors = FilterChipDefaults.filterChipColors(
+                    selectedContainerColor = mood.soft.copy(alpha = 0.22f),
+                    selectedLabelColor = mood.soft,
+                ),
+            )
+        }
+    }
+}
+
+@Composable
+private fun UnreadMediaSheet(
+    loadPage: suspend (String?) -> MediaUnreadPage?,
+    onDismiss: () -> Unit,
+    onOpenItem: (MediaItem) -> Unit,
+    onMarkAllRead: () -> Unit,
+) {
+    val mood = LocalMood.current
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    var items by remember { mutableStateOf<List<MediaItem>>(emptyList()) }
+    var nextCursor by remember { mutableStateOf<String?>(null) }
+    var totalCount by remember { mutableStateOf(0) }
+    var loading by remember { mutableStateOf(true) }
+    var loadingMore by remember { mutableStateOf(false) }
+
+    suspend fun refreshFirstPage() {
+        loading = true
+        val page = loadPage(null)
+        items = page?.items.orEmpty()
+        nextCursor = page?.nextCursor
+        totalCount = page?.count ?: 0
+        loading = false
+    }
+
+    LaunchedEffect(Unit) { refreshFirstPage() }
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
+        containerColor = mood.background,
+        shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .fillMaxHeight(0.88f)
+                .padding(horizontal = 18.dp),
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("未读时光", style = MaterialTheme.typography.titleLarge, color = mood.accent)
+                    Text(
+                        if (totalCount > 0) "共 $totalCount 条对方更新" else "暂无未读",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = mood.stone,
+                    )
+                }
+                if (items.isNotEmpty()) {
+                    TextButton(
+                        onClick = {
+                            onMarkAllRead()
+                            items = emptyList()
+                            nextCursor = null
+                            totalCount = 0
+                        },
+                        colors = ButtonDefaults.textButtonColors(contentColor = mood.soft),
+                    ) { Text("全部已读") }
+                }
+            }
+
+            when {
+                loading -> {
+                    Box(Modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        CircularProgressIndicator(color = mood.soft, strokeWidth = 2.dp)
+                    }
+                }
+                items.isEmpty() -> {
+                    EmptyHint("对方的新时光会出现在这里", Icons.Rounded.NotificationsNone)
+                }
+                else -> {
+                    LazyColumn(
+                        verticalArrangement = Arrangement.spacedBy(10.dp),
+                        contentPadding = PaddingValues(bottom = 28.dp),
+                        modifier = Modifier.fillMaxSize(),
+                    ) {
+                        items(items, key = { it.id }) { item ->
+                            UnreadMediaRow(item = item, onClick = { onOpenItem(item) })
+                        }
+                        item(key = "unread-footer") {
+                            Box(
+                                modifier = Modifier.fillMaxWidth().height(48.dp),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                when {
+                                    nextCursor != null -> {
+                                        if (!loadingMore) {
+                                            LaunchedEffect(nextCursor, items.size) {
+                                                loadingMore = true
+                                                val page = loadPage(nextCursor)
+                                                if (page != null) {
+                                                    val existing = items.map { it.id }.toSet()
+                                                    items = items + page.items.filter { it.id !in existing }
+                                                    nextCursor = page.nextCursor
+                                                    totalCount = page.count
+                                                } else {
+                                                    nextCursor = null
+                                                }
+                                                loadingMore = false
+                                            }
+                                        }
+                                        CircularProgressIndicator(
+                                            modifier = Modifier.size(22.dp),
+                                            strokeWidth = 2.dp,
+                                            color = mood.soft,
+                                        )
+                                    }
+                                    else -> {
+                                        Text(
+                                            "没有更多未读",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = mood.stone,
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun UnreadMediaRow(item: MediaItem, onClick: () -> Unit) {
+    val mood = LocalMood.current
+    val context = LocalContext.current
+    val cover = item.cover
+    val thumb = item.thumbnailUrl
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(18.dp))
+            .background(mood.softSurface)
+            .clickable(onClick = onClick)
+            .padding(10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Box(
+            modifier = Modifier
+                .size(64.dp)
+                .clip(RoundedCornerShape(14.dp))
+                .background(mood.soft.copy(alpha = 0.12f)),
+            contentAlignment = Alignment.Center,
+        ) {
+            if (!thumb.isNullOrBlank()) {
+                AsyncImage(
+                    model = listMediaImageRequest(context, thumb),
+                    contentDescription = null,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize(),
+                )
+            } else {
+                Icon(Icons.Rounded.PhotoLibrary, null, tint = mood.stone)
+            }
+            if (cover?.type == MediaType.VIDEO) {
+                Icon(
+                    Icons.Rounded.PlayArrow,
+                    contentDescription = null,
+                    tint = Color.White,
+                    modifier = Modifier
+                        .size(22.dp)
+                        .background(Color.Black.copy(alpha = 0.35f), CircleShape)
+                        .padding(2.dp),
+                )
+            }
+        }
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = item.caption.ifBlank { "未读时光" },
+                style = MaterialTheme.typography.titleSmall,
+                color = mood.accent,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                text = item.mediaDate.take(10),
+                style = MaterialTheme.typography.bodySmall,
+                color = mood.stone,
+            )
+        }
+        Box(
+            modifier = Modifier
+                .size(8.dp)
+                .background(Color(0xFFE53935), CircleShape),
+        )
     }
 }
 

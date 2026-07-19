@@ -14,10 +14,15 @@ import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
-import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import okhttp3.MediaType.Companion.toMediaType
@@ -34,6 +39,9 @@ class AppRepository @Inject constructor(
     private val tokenStore: TokenStore,
 ) {
     val state = tokenStore.state
+
+    /** 登录后后台补齐时光/纪念/信封，不阻塞 sessionReady */
+    private val warmScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     suspend fun sendSms(phone: String): SendSmsResponse =
         call { api.sendSms(SendSmsRequest(phone.trim())) }
@@ -56,7 +64,8 @@ class AppRepository @Inject constructor(
         try {
             applyMe(call { api.me() }, clearContent = true)
             if (tokenStore.snapshot.profileCompleted) {
-                refreshAll()
+                refreshHomeEssentials(fetchMe = false)
+                warmSecondaryHomeData()
             } else {
                 tokenStore.update { it.copy(sessionReady = true) }
             }
@@ -72,7 +81,8 @@ class AppRepository @Inject constructor(
         try {
             applyMe(call { api.me() }, clearContent = false)
             if (tokenStore.snapshot.profileCompleted) {
-                refreshAll()
+                refreshHomeEssentials(fetchMe = false)
+                warmSecondaryHomeData()
             } else {
                 tokenStore.update { it.copy(sessionReady = true) }
             }
@@ -255,37 +265,39 @@ class AppRepository @Inject constructor(
         refreshAll()
     }
 
-    suspend fun refreshAll() = coroutineScope {
-        val meDeferred = async { runCatching { call { api.me() } }.getOrNull() }
+    /**
+     * 完整刷新：先解锁「空间」首屏，再等待时光/纪念/信封（下拉刷新等）。
+     * 登录请用 [refreshHomeEssentials] + [warmSecondaryHomeData]。
+     */
+    suspend fun refreshAll() {
+        refreshHomeEssentials(fetchMe = true)
+        awaitSecondaryHomeData()
+    }
+
+    /**
+     * 「空间」首页必需数据。掠影用 bootstrap.recentMedia（8）只签封面，
+     * 不再请求 media?limit=100 并对每个 asset 签名。
+     */
+    suspend fun refreshHomeEssentials(fetchMe: Boolean = true) = coroutineScope {
+        val meDeferred = if (fetchMe) {
+            async { runCatching { call { api.me() } }.getOrNull() }
+        } else {
+            async { null }
+        }
         val bootstrapDeferred = async { runCatching { call { api.bootstrap() } }.getOrNull() }
         val coupleDeferred = async { runCatching { call { api.coupleSpace() } }.getOrNull() }
         val pendingDeferred = async { runCatching { call { api.pendingBinds() } }.getOrNull() }
         val previous = tokenStore.snapshot
-        val mediaDeferred = async {
-            runCatching {
-                signMedia(sortMediaByRecordDate(call { api.media().items }), previous.media)
-            }.getOrDefault(previous.media)
-        }
-        val anniversariesDeferred = async {
-            runCatching { call { api.anniversaries().items } }.getOrDefault(emptyList())
-        }
-        val lettersDeferred = async {
-            runCatching { call { api.letters().items } }.getOrDefault(emptyList())
-        }
 
         val me = meDeferred.await()
         val bootstrap = bootstrapDeferred.await()
         val coupleBase = coupleDeferred.await()
         val pending = pendingDeferred.await()
-        val media = mediaDeferred.await()
-        val anniversaries = anniversariesDeferred.await()
-        val letters = lettersDeferred.await()
 
         if (me == null && bootstrap == null && coupleBase == null && pending == null) {
             error("刷新失败，请检查网络后重试")
         }
 
-        // pending == null 表示接口失败，保留本地；pending != null 则以服务端为准（含空列表）
         val incoming = when {
             pending != null -> pending.incoming
             coupleBase != null -> coupleBase.pendingIncomingBinds
@@ -312,7 +324,14 @@ class AppRepository @Inject constructor(
             )
         }
 
-        // 一次原子写入：绑定状态 + 列表，避免二次 update 冲掉邀请
+        val media = if (bootstrap != null && bootstrap.recentMedia.isNotEmpty()) {
+            runCatching {
+                signMediaCovers(sortMediaByRecordDate(bootstrap.recentMedia), previous.media)
+            }.getOrDefault(previous.media)
+        } else {
+            previous.media
+        }
+
         tokenStore.update {
             it.copy(
                 user = me?.user ?: it.user,
@@ -337,39 +356,128 @@ class AppRepository @Inject constructor(
                 needsTogetherDate = bootstrap?.lovingJourney?.needsTogetherDate ?: it.needsTogetherDate,
                 dailyQuote = bootstrap?.dailyQuote ?: it.dailyQuote,
                 media = media,
-                anniversaries = anniversaries,
-                letters = letters,
                 sessionReady = true,
             )
         }
     }
 
-    /** 仅刷新时光列表，保留已有缩略图签名，避免整页重载闪白 */
-    suspend fun refreshMedia() {
+    private fun warmSecondaryHomeData() {
+        warmScope.launch {
+            runCatching { awaitSecondaryHomeData() }
+        }
+    }
+
+    private suspend fun awaitSecondaryHomeData() = coroutineScope {
+        val mediaJob = async { runCatching { refreshMedia() } }
+        val yearsJob = async { runCatching { refreshMediaYears() } }
+        val unreadJob = async { runCatching { refreshMediaUnreadSummary() } }
+        val annJob = async {
+            runCatching { call { api.anniversaries().items } }.getOrNull()
+        }
+        val lettersJob = async {
+            runCatching { call { api.letters().items } }.getOrNull()
+        }
+        mediaJob.await()
+        yearsJob.await()
+        unreadJob.await()
+        val anniversaries = annJob.await()
+        val letters = lettersJob.await()
+        if (anniversaries != null || letters != null) {
+            tokenStore.update {
+                it.copy(
+                    anniversaries = anniversaries ?: it.anniversaries,
+                    letters = letters ?: it.letters,
+                )
+            }
+        }
+    }
+
+    private var mediaCursor: String? = null
+    private var mediaYearFilter: Int? = null
+    private var loadingMore = false
+    private val _mediaHasMore = MutableStateFlow(false)
+    val mediaHasMore = _mediaHasMore.asStateFlow()
+    private val _mediaYears = MutableStateFlow<List<Int>>(emptyList())
+    val mediaYears = _mediaYears.asStateFlow()
+    private val _mediaUnreadCount = MutableStateFlow(0)
+    val mediaUnreadCount = _mediaUnreadCount.asStateFlow()
+    private val _mediaYearFilterFlow = MutableStateFlow<Int?>(null)
+    val mediaYearFilterState = _mediaYearFilterFlow.asStateFlow()
+
+    /** 仅刷新时光列表（首屏 30 条 + 封面签名），保留已有缩略图签名 */
+    suspend fun refreshMedia(year: Int? = mediaYearFilter) {
+        mediaYearFilter = year
+        _mediaYearFilterFlow.value = year
         val previous = tokenStore.snapshot.media
-        val page = call { api.media(limit = 30) }
+        val page = call { api.media(limit = 30, year = year) }
         mediaCursor = page.nextCursor
+        _mediaHasMore.value = page.nextCursor != null
         val signed = runCatching {
-            signMedia(sortMediaByRecordDate(page.items), previous)
+            signMediaCovers(sortMediaByRecordDate(page.items), previous)
         }.getOrDefault(previous)
         tokenStore.update { it.copy(media = signed) }
     }
 
-    private var mediaCursor: String? = null
-    private var loadingMore = false
+    suspend fun setMediaYearFilter(year: Int?) {
+        if (mediaYearFilter == year) return
+        refreshMedia(year)
+    }
+
+    suspend fun refreshMediaYears() {
+        val years = runCatching { call { api.mediaYears() }.years }.getOrDefault(emptyList())
+        _mediaYears.value = years
+    }
+
+    suspend fun refreshMediaUnreadSummary() {
+        if (!tokenStore.snapshot.linked) {
+            _mediaUnreadCount.value = 0
+            return
+        }
+        val summary = runCatching { call { api.mediaUnreadSummary() } }.getOrNull() ?: return
+        _mediaUnreadCount.value = summary.count
+    }
+
+    suspend fun fetchUnreadMedia(cursor: String? = null, limit: Int = 30): MediaUnreadPage {
+        val page = call { api.mediaUnread(cursor = cursor, limit = limit) }
+        val previous = tokenStore.snapshot.media
+        val signed = runCatching {
+            signMediaCovers(sortMediaByRecordDate(page.items), previous)
+        }.getOrDefault(page.items)
+        _mediaUnreadCount.value = page.count
+        return page.copy(items = signed)
+    }
+
+    suspend fun markMediaRead(id: String) {
+        val summary = runCatching { call { api.markMediaRead(id) } }.getOrNull() ?: return
+        _mediaUnreadCount.value = summary.count
+    }
+
+    suspend fun markAllUnreadMediaRead() {
+        val summary = runCatching {
+            call { api.markMediaReadBatch(MarkMediaReadRequest(all = true)) }
+        }.getOrNull() ?: return
+        _mediaUnreadCount.value = summary.count
+    }
 
     /** 加载更多媒体（cursor 分页）；返回是否成功加载了更多数据 */
     suspend fun loadMoreMedia(): Boolean {
-        val cursor = mediaCursor ?: return false
+        val cursor = mediaCursor ?: run {
+            _mediaHasMore.value = false
+            return false
+        }
         if (loadingMore) return false
         loadingMore = true
         try {
-            val page = call { api.media(cursor = cursor, limit = 30) }
+            val page = call { api.media(cursor = cursor, limit = 30, year = mediaYearFilter) }
             mediaCursor = page.nextCursor
-            if (page.items.isEmpty()) return false
+            _mediaHasMore.value = page.nextCursor != null
+            if (page.items.isEmpty()) {
+                _mediaHasMore.value = false
+                return false
+            }
             val previous = tokenStore.snapshot.media
             val signed = runCatching {
-                signMedia(page.items, previous)
+                signMediaCovers(page.items, previous)
             }.getOrDefault(page.items)
             val merged = previous + signed
             tokenStore.update { it.copy(media = sortMediaByRecordDate(merged)) }
@@ -385,7 +493,8 @@ class AppRepository @Inject constructor(
                 .thenByDescending { it.createdAt },
         )
 
-    private suspend fun signMedia(
+    /** 列表只签封面 cover，详情页再 ensureMediaOriginals。 */
+    private suspend fun signMediaCovers(
         items: List<MediaItem>,
         previous: List<MediaItem> = emptyList(),
     ): List<MediaItem> = coroutineScope {
@@ -396,10 +505,17 @@ class AppRepository @Inject constructor(
                 if (prev != null && canReuseSignedThumbs(item, prev)) {
                     mergeSignedThumbs(item, prev)
                 } else {
-                    val signedAssets = item.assets.map { part ->
-                        async { signAssetForList(part) }
-                    }.awaitAll()
-                    item.copy(assets = signedAssets)
+                    val cover = item.cover ?: return@async item
+                    val signedCover = signAssetForList(cover)
+                    item.copy(
+                        assets = item.assets.map { part ->
+                            if (part.id == signedCover.id || part.assetId == signedCover.assetId) {
+                                signedCover
+                            } else {
+                                part
+                            }
+                        },
+                    )
                 }
             }
         }.awaitAll()

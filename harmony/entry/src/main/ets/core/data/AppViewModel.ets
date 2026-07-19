@@ -10,7 +10,7 @@ import { isUnauthorized } from '../network/NetworkErrors'
 import { MediaPicker, PickedMediaFile } from '../media/MediaPicker'
 import {
   AppState, AnniversaryType, LetterType, MediaItem, MediaFileInput,
-  UserLookupResponse, MediaAssetOrderItem,
+  UserLookupResponse, MediaAssetOrderItem, MediaUnreadPage,
 } from '../model/Models'
 import { common } from '@kit.AbilityKit'
 import { DateUtils } from '../util/DateUtils'
@@ -69,6 +69,8 @@ export class AppViewModel {
   pendingComposeFiles: MediaFileInput[] = []
   /** Deep-link invite code captured before login. */
   pendingInviteCode: string | null = null
+  /** Unread sheet / cross-list open: detail page may not be in current media cache. */
+  pendingOpenMedia: MediaItem | null = null
   /** Auto-clear top notices (已保存 / 已删除 / errors) after 2s. */
   private noticeClearTimer: number = -1
   private static readonly NOTICE_DISMISS_MS: number = 2000
@@ -132,6 +134,9 @@ export class AppViewModel {
     AppViewModel.instance = new AppViewModel(repository, tokenStore, httpClient)
     AppViewModel.instance.context = context
     AppViewModel.instance.mediaPicker = new MediaPicker(context)
+    repository.setSecondaryReadyListener(() => {
+      AppViewModel.instance?.bumpUi()
+    })
     return AppViewModel.instance
   }
 
@@ -164,7 +169,7 @@ export class AppViewModel {
     }
     try {
       await this.repository.restoreSession()
-      await this.pullPartnerActivityNotices()
+      await this.refreshMediaUnreadBadge()
     } catch (error) {
       const err = error instanceof Error ? error : new Error(String(error))
       if (isUnauthorized(err) || !this.tokenStore.snapshot.accessToken) {
@@ -182,26 +187,75 @@ export class AppViewModel {
     if (!this.tokenStore.snapshot.accessToken) return
     try {
       await this.repository.refreshAll()
-      await this.pullPartnerActivityNotices()
+      await this.refreshMediaUnreadBadge()
       this.bumpUi()
     } catch (_e) { /* quiet */ }
   }
 
-  private async pullPartnerActivityNotices(): Promise<void> {
-    if (!this.tokenStore.snapshot.linked) return
-    const items = await this.repository.fetchUnreadPartnerActivity()
-    if (items.length === 0) return
-    const ids = items.map((i) => i.id)
-    await this.repository.markPartnerActivityRead(ids)
-    const titles = items.slice(0, 8).map((e) => e.title).filter((t) => t.length > 0)
-    if (titles.length > 0) {
-      this.noticeMessage = titles.join(' · ')
-      this.armNoticeAutoDismiss()
+  get mediaUnreadCount(): number {
+    return this.repository.mediaUnreadCount
+  }
+
+  get mediaHasMore(): boolean {
+    return this.repository.mediaHasMore
+  }
+
+  get mediaYears(): number[] {
+    return this.repository.mediaYears
+  }
+
+  get mediaYearFilter(): number | null {
+    return this.repository.mediaYearFilterState
+  }
+
+  private async refreshMediaUnreadBadge(): Promise<void> {
+    try {
+      await this.repository.refreshMediaUnreadSummary()
+    } catch (_e) { /* ignore */ }
+  }
+
+  async setMediaYearFilter(year: number | null): Promise<void> {
+    try {
+      await this.repository.setMediaYearFilter(year)
+      this.bumpUi()
+    } catch (error) {
+      const err = error instanceof Error ? error : new Error(String(error))
+      if (!isUnauthorized(err)) {
+        this.errorMessage = err.message ?? '筛选失败'
+        this.armNoticeAutoDismiss()
+        this.bumpUi()
+      }
     }
+  }
+
+  async refreshMediaYears(): Promise<void> {
+    try {
+      await this.repository.refreshMediaYears()
+      this.bumpUi()
+    } catch (_e) { /* ignore */ }
+  }
+
+  async loadUnreadMediaPage(cursor: string | null): Promise<MediaUnreadPage | null> {
+    try {
+      return await this.repository.fetchUnreadMedia(cursor)
+    } catch (_e) {
+      return null
+    }
+  }
+
+  async markAllUnreadMediaRead(): Promise<void> {
+    try {
+      await this.repository.markAllUnreadMediaRead()
+      this.bumpUi()
+    } catch (_e) { /* ignore */ }
   }
 
   selectTab(tab: MainTab): void {
     this.selectedTab = tab
+    if (tab === MainTab.TIMELINE) {
+      void this.refreshMediaYears()
+      void this.refreshMediaUnreadBadge().then(() => this.bumpUi())
+    }
     this.bumpUi()
   }
 
@@ -398,6 +452,11 @@ export class AppViewModel {
   }
 
   async openMediaDetail(item: MediaItem): Promise<MediaItem> {
+    // 打开即视为已读（对方发布/修改的时光）
+    try {
+      await this.repository.markMediaRead(item.id)
+      this.bumpUi()
+    } catch (_e) { /* ignore */ }
     try {
       return await this.repository.ensureMediaOriginals(item)
     } catch (error) {
@@ -407,6 +466,27 @@ export class AppViewModel {
       }
       return item
     }
+  }
+
+  async fetchMediaDetail(id: string): Promise<MediaItem | null> {
+    try {
+      return await this.repository.fetchMediaDetail(id)
+    } catch (_e) {
+      return null
+    }
+  }
+
+  prepareOpenMedia(item: MediaItem): void {
+    this.pendingOpenMedia = item
+  }
+
+  consumePendingOpenMedia(id: string): MediaItem | null {
+    const pending = this.pendingOpenMedia
+    if (pending && pending.id === id) {
+      this.pendingOpenMedia = null
+      return pending
+    }
+    return null
   }
 
   async signAssetUrl(assetId: string): Promise<string> {

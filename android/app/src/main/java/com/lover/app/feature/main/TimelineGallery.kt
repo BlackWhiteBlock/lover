@@ -124,6 +124,7 @@ internal fun TimelineGalleryContent(
     onMedia: (MediaItem) -> Unit,
     uploadingCard: @Composable (PendingMediaUpload) -> Unit,
     onLoadMore: () -> Unit = {},
+    hasMore: Boolean = false,
 ) {
     val featured = media.firstOrNull()
     val restPlans = remember(media) {
@@ -193,21 +194,29 @@ internal fun TimelineGalleryContent(
             }
         }
 
-        // 触底加载更多
-        if (media.size >= 30) {
-            item(key = "load-more-sentinel") {
-                androidx.compose.foundation.layout.Box(
+        // 触底：有下一页才加载；否则显示「没有更多」
+        if (media.isNotEmpty()) {
+            item(key = "timeline-footer") {
+                Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(48.dp),
-                    contentAlignment = androidx.compose.ui.Alignment.Center,
+                        .height(56.dp),
+                    contentAlignment = Alignment.Center,
                 ) {
-                    androidx.compose.material3.CircularProgressIndicator(
-                        modifier = Modifier.size(24.dp),
-                        strokeWidth = 2.dp,
-                        color = LocalMood.current.soft,
-                    )
-                    LaunchedEffect(Unit) { onLoadMore() }
+                    if (hasMore) {
+                        androidx.compose.material3.CircularProgressIndicator(
+                            modifier = Modifier.size(24.dp),
+                            strokeWidth = 2.dp,
+                            color = LocalMood.current.soft,
+                        )
+                        LaunchedEffect(media.size, hasMore) { onLoadMore() }
+                    } else {
+                        Text(
+                            "没有更多时光记录",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = LocalMood.current.stone,
+                        )
+                    }
                 }
             }
         }

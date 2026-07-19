@@ -102,6 +102,7 @@ data class MediaItem(
     val mediaDate: String,
     val uploaderId: String? = null,
     val createdAt: String = "",
+    val updatedAt: String = "",
     val assets: List<MediaAssetPart> = emptyList(),
 ) {
     val cover: MediaAssetPart? get() = assets.minByOrNull { it.sortOrder } ?: assets.firstOrNull()
@@ -295,6 +296,17 @@ data class AppState(
     val date: String? = null,
 )
 @Serializable data class ItemPage<T>(val items: List<T>, val nextCursor: String? = null)
+@Serializable data class MediaYearsResponse(val years: List<Int> = emptyList())
+@Serializable data class MediaUnreadSummary(val count: Int = 0, val hasUnread: Boolean = false)
+@Serializable data class MediaUnreadPage(
+    val items: List<MediaItem> = emptyList(),
+    val nextCursor: String? = null,
+    val count: Int = 0,
+)
+@Serializable data class MarkMediaReadRequest(
+    val ids: List<String>? = null,
+    val all: Boolean? = null,
+)
 @Serializable data class TokenAssetRequest(
     val fileName: String,
     val mimeType: String,

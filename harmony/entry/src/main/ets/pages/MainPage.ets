@@ -161,15 +161,27 @@ struct MainPage {
         Row() {
           ForEach(this.navItems(), (item: NavItem) => {
             Column({ space: 2 }) {
-              Image(item.iconRes as Resource)
-                .width(22)
-                .height(22)
-                .objectFit(ImageFit.Contain)
-                .fillColor(this.currentIndex === (item.tab as number) ? this.mood.soft : this.mood.stone)
-                .scale({
-                  x: this.currentIndex === (item.tab as number) ? 1.06 : 1,
-                  y: this.currentIndex === (item.tab as number) ? 1.06 : 1,
-                })
+              Stack({ alignContent: Alignment.TopEnd }) {
+                Image(item.iconRes as Resource)
+                  .width(22)
+                  .height(22)
+                  .objectFit(ImageFit.Contain)
+                  .fillColor(this.currentIndex === (item.tab as number) ? this.mood.soft : this.mood.stone)
+                  .scale({
+                    x: this.currentIndex === (item.tab as number) ? 1.06 : 1,
+                    y: this.currentIndex === (item.tab as number) ? 1.06 : 1,
+                  })
+                if (item.tab === MainTab.TIMELINE && this.vm.mediaUnreadCount > 0) {
+                  Row()
+                    .width(8)
+                    .height(8)
+                    .borderRadius(4)
+                    .backgroundColor('#E53935')
+                    .margin({ top: -2, right: -3 })
+                }
+              }
+              .width(26)
+              .height(24)
               if (this.currentIndex === (item.tab as number)) {
                 Row()
                   .width(12)
@@ -189,7 +201,7 @@ struct MainPage {
             .justifyContent(FlexAlign.Center)
             .alignItems(HorizontalAlign.Center)
             .onClick(() => this.selectTab(item.tab))
-          }, (item: NavItem) => `${item.label}_${this.uiEpoch}`)
+          }, (item: NavItem) => `${item.label}_${this.uiEpoch}_${this.vm.mediaUnreadCount}`)
         }
         .width('100%')
         .padding({ left: 8, right: 8, top: 6, bottom: 6 })
@@ -371,6 +383,11 @@ struct TimelineTabContent {
   @Prop @Watch('onEpoch') uiEpoch: number
   @State mediaItems: MediaItem[] = []
   @State pendingUploads: PendingMediaUpload[] = []
+  @State unreadCount: number = 0
+  @State years: number[] = []
+  @State selectedYear: number | null = null
+  @State hasMore: boolean = false
+  @State showUnreadSheet: boolean = false
   private vm: AppViewModel = AppViewModel.getInstance()
 
   aboutToAppear(): void { this.reload() }
@@ -379,6 +396,47 @@ struct TimelineTabContent {
   reload(): void {
     this.mediaItems = [...this.vm.data.media]
     this.pendingUploads = [...this.vm.pendingMediaUploads]
+    this.unreadCount = this.vm.mediaUnreadCount
+    this.years = [...this.vm.mediaYears]
+    this.selectedYear = this.vm.mediaYearFilter
+    this.hasMore = this.vm.mediaHasMore
+  }
+
+  emptyHint(): string {
+    if (this.selectedYear !== null) {
+      return '这一年还没有时光记录'
+    }
+    return this.mood.solo ? '选择照片或视频，记录这一刻' : '选择照片或视频，记录共同的故事'
+  }
+
+  @Builder
+  unreadHeaderAction() {
+    if (!this.mood.solo) {
+      Stack({ alignContent: Alignment.TopEnd }) {
+        Image($r('app.media.ic_notifications'))
+          .width(22)
+          .height(22)
+          .fillColor(this.mood.soft)
+        if (this.unreadCount > 0) {
+          Text(this.unreadCount > 99 ? '99+' : `${this.unreadCount}`)
+            .fontSize(9)
+            .fontWeight(FontWeight.Bold)
+            .fontColor(Colors.white)
+            .padding({ left: 4, right: 4 })
+            .constraintSize({ minWidth: 16, minHeight: 16 })
+            .textAlign(TextAlign.Center)
+            .borderRadius(8)
+            .backgroundColor('#E53935')
+            .margin({ top: -4, right: -6 })
+        }
+      }
+      .padding({ left: 12, right: 12, top: 8, bottom: 8 })
+      .borderRadius(18)
+      .backgroundColor(this.mood.softSurface)
+      .onClick(() => {
+        this.showUnreadSheet = true
+      })
+    }
   }
 
   build() {
@@ -387,7 +445,20 @@ struct TimelineTabContent {
         mood: this.mood,
         title: this.mood.solo ? '时光' : '相爱时光',
         subtitle: this.mood.solo ? 'Quiet Moments' : 'Visual Memories',
+        actionBuilder: this.unreadHeaderAction,
       })
+
+      if (this.years.length > 0) {
+        TimelineYearFilterRow({
+          mood: this.mood,
+          years: this.years,
+          selectedYear: this.selectedYear,
+          onYearSelected: (year: number | null) => {
+            void this.vm.setMediaYearFilter(year)
+          },
+        })
+      }
+
       if (this.mediaItems.length === 0 && this.pendingUploads.length === 0) {
         Column({ space: 12 }) {
           Image($r('app.media.ic_nav_photo_library'))
@@ -395,7 +466,7 @@ struct TimelineTabContent {
             .height(58)
             .fillColor(this.mood.soft)
             .opacity(0.55)
-          Text(this.mood.solo ? '选择照片或视频，记录这一刻' : '选择照片或视频，记录共同的故事')
+          Text(this.emptyHint())
             .fontSize(FontSizes.bodyMedium)
             .fontFamily(Fonts.LATO)
             .fontColor(this.mood.stone)
@@ -411,12 +482,319 @@ struct TimelineTabContent {
           mood: this.mood,
           media: this.mediaItems,
           pendingUploads: this.pendingUploads,
+          hasMore: this.hasMore,
           onLoadMore: () => this.vm.loadMoreMedia(),
         })
       }
     }
     .width('100%')
     .height('100%')
+    .bindSheet($$this.showUnreadSheet, this.UnreadMediaSheetBuilder(), {
+      height: SheetSize.LARGE,
+      dragBar: true,
+      showClose: true,
+      backgroundColor: this.mood.background,
+      preferType: SheetType.BOTTOM,
+      onDisappear: () => {
+        this.showUnreadSheet = false
+      },
+    })
+  }
+
+  @Builder
+  UnreadMediaSheetBuilder() {
+    UnreadMediaSheet({
+      mood: this.mood,
+      onClose: () => {
+        this.showUnreadSheet = false
+      },
+      onOpenItem: (item: MediaItem) => {
+        this.showUnreadSheet = false
+        this.vm.prepareOpenMedia(item)
+        AppNav.pushMediaDetail(item.id)
+      },
+      onMarkAllRead: () => {
+        void this.vm.markAllUnreadMediaRead()
+      },
+    })
+  }
+}
+
+@Component
+struct TimelineYearFilterRow {
+  @Prop mood: MoodPalette
+  @Prop years: number[] = []
+  @Prop selectedYear: number | null = null
+  onYearSelected: (year: number | null) => void = (_y: number | null) => {}
+
+  build() {
+    Scroll() {
+      Row({ space: 8 }) {
+        Text('全部')
+          .fontSize(FontSizes.labelSmall)
+          .fontFamily(Fonts.LATO)
+          .padding({ left: 14, right: 14, top: 8, bottom: 8 })
+          .borderRadius(16)
+          .backgroundColor(this.selectedYear === null ? this.mood.blush : this.mood.softSurface)
+          .fontColor(this.selectedYear === null ? this.mood.soft : this.mood.stone)
+          .onClick(() => this.onYearSelected(null))
+
+        ForEach(this.years, (year: number) => {
+          Text(`${year}年`)
+            .fontSize(FontSizes.labelSmall)
+            .fontFamily(Fonts.LATO)
+            .padding({ left: 14, right: 14, top: 8, bottom: 8 })
+            .borderRadius(16)
+            .backgroundColor(this.selectedYear === year ? this.mood.blush : this.mood.softSurface)
+            .fontColor(this.selectedYear === year ? this.mood.soft : this.mood.stone)
+            .onClick(() => this.onYearSelected(year))
+        }, (year: number) => `year_${year}`)
+      }
+      .padding({ left: 18, right: 18, top: 4, bottom: 4 })
+    }
+    .scrollable(ScrollDirection.Horizontal)
+    .scrollBar(BarState.Off)
+    .edgeEffect(EdgeEffect.Spring)
+    .width('100%')
+  }
+}
+
+@Component
+struct UnreadMediaSheet {
+  @Prop mood: MoodPalette
+  onClose: () => void = () => {}
+  onOpenItem: (item: MediaItem) => void = (_i: MediaItem) => {}
+  onMarkAllRead: () => void = () => {}
+
+  @State items: MediaItem[] = []
+  @State nextCursor: string | null = null
+  @State totalCount: number = 0
+  @State loading: boolean = true
+  @State loadingMore: boolean = false
+  private vm: AppViewModel = AppViewModel.getInstance()
+
+  aboutToAppear(): void {
+    void this.refreshFirstPage()
+  }
+
+  async refreshFirstPage(): Promise<void> {
+    this.loading = true
+    const page = await this.vm.loadUnreadMediaPage(null)
+    this.items = page?.items ?? []
+    this.nextCursor = page?.nextCursor ?? null
+    this.totalCount = page?.count ?? 0
+    this.loading = false
+  }
+
+  async loadMore(): Promise<void> {
+    if (this.loadingMore || !this.nextCursor) {
+      return
+    }
+    this.loadingMore = true
+    const page = await this.vm.loadUnreadMediaPage(this.nextCursor)
+    if (page) {
+      const existing: Record<string, boolean> = {}
+      for (let i = 0; i < this.items.length; i++) {
+        existing[this.items[i].id] = true
+      }
+      const merged = [...this.items]
+      for (let i = 0; i < page.items.length; i++) {
+        if (!existing[page.items[i].id]) {
+          merged.push(page.items[i])
+        }
+      }
+      this.items = merged
+      this.nextCursor = page.nextCursor
+      this.totalCount = page.count
+    } else {
+      this.nextCursor = null
+    }
+    this.loadingMore = false
+  }
+
+  build() {
+    Column() {
+      Row() {
+        Column({ space: 4 }) {
+          Text('未读时光')
+            .fontSize(FontSizes.titleLarge)
+            .fontFamily(Fonts.GARAMOND)
+            .fontColor(this.mood.accent)
+          Text(this.totalCount > 0 ? `共 ${this.totalCount} 条对方更新` : '暂无未读')
+            .fontSize(FontSizes.bodySmall)
+            .fontFamily(Fonts.LATO)
+            .fontColor(this.mood.stone)
+        }
+        .layoutWeight(1)
+        .alignItems(HorizontalAlign.Start)
+
+        if (this.items.length > 0) {
+          Text('全部已读')
+            .fontSize(FontSizes.bodyMedium)
+            .fontFamily(Fonts.LATO)
+            .fontColor(this.mood.soft)
+            .padding({ left: 8, right: 8, top: 8, bottom: 8 })
+            .onClick(() => {
+              this.onMarkAllRead()
+              this.items = []
+              this.nextCursor = null
+              this.totalCount = 0
+            })
+        }
+      }
+      .width('100%')
+      .padding({ bottom: 12 })
+
+      if (this.loading) {
+        Column() {
+          LoadingProgress()
+            .width(28)
+            .height(28)
+            .color(this.mood.soft)
+        }
+        .width('100%')
+        .layoutWeight(1)
+        .justifyContent(FlexAlign.Center)
+      } else if (this.items.length === 0) {
+        Column({ space: 12 }) {
+          Image($r('app.media.ic_notifications'))
+            .width(48)
+            .height(48)
+            .fillColor(this.mood.soft)
+            .opacity(0.55)
+          Text('对方的新时光会出现在这里')
+            .fontSize(FontSizes.bodyMedium)
+            .fontFamily(Fonts.LATO)
+            .fontColor(this.mood.stone)
+        }
+        .width('100%')
+        .layoutWeight(1)
+        .justifyContent(FlexAlign.Center)
+        .alignItems(HorizontalAlign.Center)
+      } else {
+        List({ space: 10 }) {
+          ForEach(this.items, (item: MediaItem) => {
+            ListItem() {
+              UnreadMediaRow({
+                mood: this.mood,
+                item: item,
+                onClick: () => this.onOpenItem(item),
+              })
+            }
+          }, (item: MediaItem) => item.id)
+
+          ListItem() {
+            Column() {
+              if (this.nextCursor) {
+                LoadingProgress()
+                  .width(22)
+                  .height(22)
+                  .color(this.mood.soft)
+                  .onAppear(() => {
+                    void this.loadMore()
+                  })
+              } else {
+                Text('没有更多未读')
+                  .fontSize(FontSizes.bodySmall)
+                  .fontFamily(Fonts.LATO)
+                  .fontColor(this.mood.stone)
+              }
+            }
+            .width('100%')
+            .height(48)
+            .justifyContent(FlexAlign.Center)
+          }
+        }
+        .width('100%')
+        .layoutWeight(1)
+        .scrollBar(BarState.Off)
+        .edgeEffect(EdgeEffect.Spring)
+      }
+    }
+    .width('100%')
+    .height('100%')
+    .padding({ left: 18, right: 18, top: 8, bottom: 28 })
+  }
+}
+
+@Component
+struct UnreadMediaRow {
+  @Prop mood: MoodPalette
+  @Prop item: MediaItem = new MediaItem()
+  onClick: () => void = () => {}
+
+  private thumb(): string {
+    return MediaItem.thumbUrlOf(this.item)
+  }
+
+  private title(): string {
+    const cap = (this.item.caption ?? '').trim()
+    return cap.length > 0 ? cap : '未读时光'
+  }
+
+  build() {
+    Row({ space: 12 }) {
+      Stack({ alignContent: Alignment.Center }) {
+        if (this.thumb().length > 0) {
+          Image(this.thumb())
+            .width(64)
+            .height(64)
+            .borderRadius(14)
+            .objectFit(ImageFit.Cover)
+        } else {
+          Column() {
+            Image($r('app.media.ic_nav_photo_library'))
+              .width(28)
+              .height(28)
+              .fillColor(this.mood.stone)
+          }
+          .width(64)
+          .height(64)
+          .borderRadius(14)
+          .backgroundColor(this.mood.blush)
+          .justifyContent(FlexAlign.Center)
+          .alignItems(HorizontalAlign.Center)
+        }
+        if (MediaItem.isVideoOf(this.item)) {
+          Image($r('app.media.ic_nav_photo_library'))
+            .width(18)
+            .height(18)
+            .fillColor(Colors.white)
+            .padding(2)
+            .borderRadius(10)
+            .backgroundColor('rgba(0,0,0,0.35)')
+        }
+      }
+      .width(64)
+      .height(64)
+
+      Column({ space: 4 }) {
+        Text(this.title())
+          .fontSize(FontSizes.bodyMedium)
+          .fontFamily(Fonts.LATO)
+          .fontColor(this.mood.accent)
+          .maxLines(2)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+          .width('100%')
+        Text((this.item.mediaDate ?? '').substring(0, 10))
+          .fontSize(FontSizes.bodySmall)
+          .fontFamily(Fonts.LATO)
+          .fontColor(this.mood.stone)
+      }
+      .layoutWeight(1)
+      .alignItems(HorizontalAlign.Start)
+
+      Row()
+        .width(8)
+        .height(8)
+        .borderRadius(4)
+        .backgroundColor('#E53935')
+    }
+    .width('100%')
+    .padding(10)
+    .borderRadius(18)
+    .backgroundColor(this.mood.softSurface)
+    .onClick(() => this.onClick())
   }
 }
 

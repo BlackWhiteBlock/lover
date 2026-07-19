@@ -19,6 +19,7 @@ import type {
   CreateUnbindingRequest, UnbindingRequest,
   ItemPage, DailyQuote, PartnerActivityPage, MarkActivityReadRequest,
   MarkActivityReadResponse, CoupleSpace,
+  MediaYearsResponse, MediaUnreadSummary, MediaUnreadPage, MarkMediaReadRequest,
 } from '../model/Models'
 
 export class ApiService {
@@ -136,13 +137,48 @@ export class ApiService {
 
   // ─── Media ──────────────────────────────────────────
 
-  async media(cursor: string | null = null, limit: number = 100): Promise<ItemPage<MediaItem>> {
+  async media(
+    cursor: string | null = null,
+    limit: number = 30,
+    year: number | null = null,
+  ): Promise<ItemPage<MediaItem>> {
     const params = new Map<string, string>()
     params.set('limit', limit.toString())
     if (cursor) {
       params.set('cursor', cursor)
     }
+    if (year !== null && year !== undefined) {
+      params.set('year', year.toString())
+    }
     return this.http.get<ItemPage<MediaItem>>('api/media', params)
+  }
+
+  async mediaYears(): Promise<MediaYearsResponse> {
+    return this.http.get<MediaYearsResponse>('api/media/years')
+  }
+
+  async mediaUnreadSummary(): Promise<MediaUnreadSummary> {
+    return this.http.get<MediaUnreadSummary>('api/media/unread-summary')
+  }
+
+  async mediaUnread(
+    cursor: string | null = null,
+    limit: number = 30,
+  ): Promise<MediaUnreadPage> {
+    const params = new Map<string, string>()
+    params.set('limit', limit.toString())
+    if (cursor) {
+      params.set('cursor', cursor)
+    }
+    return this.http.get<MediaUnreadPage>('api/media/unread', params)
+  }
+
+  async markMediaRead(id: string): Promise<MediaUnreadSummary> {
+    return this.http.post<MediaUnreadSummary>(`api/media/${id}/read`, {} as Object)
+  }
+
+  async markMediaReadBatch(request: MarkMediaReadRequest): Promise<MediaUnreadSummary> {
+    return this.http.post<MediaUnreadSummary>('api/media/read', request as Object)
   }
 
   async createMedia(request: CreateMediaRequest): Promise<MediaItem> {

@@ -25,6 +25,8 @@ struct AuthPage {
   @State pnvsReady: boolean = false
   @State showSms: boolean = false
   @State pnvsBusy: boolean = false
+  /** launching=拉授权页；loggingIn=已拿 token，正在服务端取号/建会话 */
+  @State pnvsPhase: string = ''
   @State pnvsHint: string = ''
   private vm: AppViewModel = AppViewModel.getInstance()
   private timerId: number = -1
@@ -69,7 +71,7 @@ struct AuthPage {
       } else {
         this.markPnvsUnavailable('本机号登录暂不可用（需放入 numberauth_standard.har），请使用验证码')
       }
-    } catch (_e) {
+    } catch {
       this.markPnvsUnavailable('无法获取本机号登录配置，请检查网络与后端')
     }
   }
@@ -137,6 +139,7 @@ struct AuthPage {
       return
     }
     this.pnvsBusy = true
+    this.pnvsPhase = 'launching'
     this.errorMsg = ''
     PnvsAuthHelper.getInstance().getLoginToken(8000, (ok: boolean, tokenOrMsg: string) => {
       if (!ok) {
@@ -145,8 +148,11 @@ struct AuthPage {
         }
         this.showSms = true
         this.pnvsBusy = false
+        this.pnvsPhase = ''
         return
       }
+      // 授权页已关闭；此后耗时主要是服务端 GetMobile + 拉会话/首页数据，不是运营商认证页
+      this.pnvsPhase = 'loggingIn'
       this.vm.loginWithPnvsToken(tokenOrMsg).then(() => {
         this.navigateAfterLogin()
       }).catch((e: Error) => {
@@ -154,8 +160,22 @@ struct AuthPage {
         this.showSms = true
       }).finally(() => {
         this.pnvsBusy = false
+        this.pnvsPhase = ''
       })
     })
+  }
+
+  private pnvsButtonLabel(): string {
+    if (this.pnvsPhase === 'launching') {
+      return '正在拉起…'
+    }
+    if (this.pnvsPhase === 'loggingIn') {
+      return '正在登录…'
+    }
+    if (this.pnvsReady) {
+      return '本机号码一键登录'
+    }
+    return '本机号码一键登录（暂不可用）'
   }
 
   async sendSms(): Promise<void> {
@@ -255,9 +275,7 @@ struct AuthPage {
 
           SoftPrimaryButton({
             mood: this.mood,
-            label: this.pnvsBusy
-              ? '正在拉起…'
-              : (this.pnvsReady ? '本机号码一键登录' : '本机号码一键登录（暂不可用）'),
+            label: this.pnvsButtonLabel(),
             isEnabled: this.pnvsReady && !this.pnvsBusy,
             onTap: () => this.oneClickLogin(),
           })

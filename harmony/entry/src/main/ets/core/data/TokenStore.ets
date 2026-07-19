@@ -78,6 +78,7 @@ export class TokenStore {
       newItem.mediaDate = item.mediaDate
       newItem.uploaderId = item.uploaderId
       newItem.createdAt = item.createdAt
+      newItem.updatedAt = item.updatedAt
       newItem.assets = item.assets.map((part) => {
         const np = new MediaAssetPart()
         np.id = part.id

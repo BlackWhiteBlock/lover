@@ -41,6 +41,12 @@ const idParams = z.object({ id: z.string().uuid() }).strict();
 const pageQuery = z.object({
   cursor: z.string().min(1).optional(),
   limit: z.coerce.number().int().min(1).max(100).default(30),
+  year: z.coerce.number().int().min(1970).max(2100).optional(),
+}).strict();
+
+const unreadPageQuery = z.object({
+  cursor: z.string().min(1).optional(),
+  limit: z.coerce.number().int().min(1).max(100).default(30),
 }).strict();
 
 type MediaRow = {
@@ -49,6 +55,7 @@ type MediaRow = {
   mediaDate: string;
   uploaderId: string;
   createdAt: Date | string;
+  updatedAt: Date | string;
 };
 
 type MediaAssetRow = {
@@ -92,16 +99,24 @@ export function registerMedia(app: FastifyInstance, context: AppContext, auth: A
     const query = pageQuery.parse(request.query);
     const cursor = parseMediaCursor(query.cursor);
     const result = await db.query<MediaRow>(
-      `select id, caption, media_date as "mediaDate", uploader_id as "uploaderId", created_at as "createdAt"
+      `select id, caption, media_date as "mediaDate", uploader_id as "uploaderId",
+              created_at as "createdAt", updated_at as "updatedAt"
        from media_items
        where space_id = any($1::uuid[])
+         and ($4::int is null or extract(year from media_date)::int = $4)
          and (
            $2::date is null
            or (media_date, created_at) < ($2::date, $3::timestamptz)
          )
        order by media_date desc, created_at desc
-       limit $4`,
-      [spaceIds, cursor?.mediaDate ?? null, cursor?.createdAt ?? null, query.limit + 1],
+       limit $5`,
+      [
+        spaceIds,
+        cursor?.mediaDate ?? null,
+        cursor?.createdAt ?? null,
+        query.year ?? null,
+        query.limit + 1,
+      ],
     );
     const hasMore = result.rows.length > query.limit;
     const rows = hasMore ? result.rows.slice(0, query.limit) : result.rows;
@@ -110,6 +125,132 @@ export function registerMedia(app: FastifyInstance, context: AppContext, auth: A
       items,
       nextCursor: hasMore ? encodeMediaCursor(rows.at(-1) as MediaRow) : null,
     };
+  });
+
+  /** 有时光记录的年份列表（降序），供筛选芯片 */
+  app.get('/api/media/years', { preHandler: auth }, async (request) => {
+    const spaceIds = await readableSpaceIds(context, request.user.id);
+    const result = await db.query<{ year: number }>(
+      `select distinct extract(year from media_date)::int as year
+       from media_items
+       where space_id = any($1::uuid[])
+       order by year desc`,
+      [spaceIds],
+    );
+    return { years: result.rows.map((row) => row.year) };
+  });
+
+  /** 未读摘要：首次访问建立基线（历史不算未读） */
+  app.get('/api/media/unread-summary', { preHandler: auth }, async (request) => {
+    await ensureMediaUnreadBaseline(context, request.user.id);
+    const spaceIds = await readableSpaceIds(context, request.user.id);
+    const result = await db.query<{ count: string }>(
+      `select count(*)::text as count
+       from media_items m
+       join media_unread_baselines b on b.user_id = $1
+       where m.space_id = any($2::uuid[])
+         and m.uploader_id <> $1
+         and greatest(m.created_at, m.updated_at) > b.baseline_at
+         and not exists (
+           select 1 from media_item_reads r
+           where r.user_id = $1
+             and r.media_item_id = m.id
+             and r.read_at >= greatest(m.created_at, m.updated_at)
+         )`,
+      [request.user.id, spaceIds],
+    );
+    const count = Number(result.rows[0]?.count ?? 0);
+    return { count, hasUnread: count > 0 };
+  });
+
+  app.get('/api/media/unread', { preHandler: auth }, async (request) => {
+    await ensureMediaUnreadBaseline(context, request.user.id);
+    const spaceIds = await readableSpaceIds(context, request.user.id);
+    const query = unreadPageQuery.parse(request.query);
+    const offset = query.cursor ? Number(query.cursor) : 0;
+    const safeOffset = Number.isFinite(offset) && offset >= 0 ? Math.floor(offset) : 0;
+    const result = await db.query<MediaRow>(
+      `select m.id, m.caption, m.media_date as "mediaDate", m.uploader_id as "uploaderId",
+              m.created_at as "createdAt", m.updated_at as "updatedAt"
+       from media_items m
+       join media_unread_baselines b on b.user_id = $1
+       where m.space_id = any($2::uuid[])
+         and m.uploader_id <> $1
+         and greatest(m.created_at, m.updated_at) > b.baseline_at
+         and not exists (
+           select 1 from media_item_reads r
+           where r.user_id = $1
+             and r.media_item_id = m.id
+             and r.read_at >= greatest(m.created_at, m.updated_at)
+         )
+       order by greatest(m.created_at, m.updated_at) desc, m.id desc
+       limit $3 offset $4`,
+      [request.user.id, spaceIds, query.limit + 1, safeOffset],
+    );
+    const hasMore = result.rows.length > query.limit;
+    const rows = hasMore ? result.rows.slice(0, query.limit) : result.rows;
+    const items = await hydrateMediaItems(context, rows);
+    return {
+      items,
+      nextCursor: hasMore ? String(safeOffset + rows.length) : null,
+      count: await countUnreadMedia(context, request.user.id, spaceIds),
+    };
+  });
+
+  app.post('/api/media/:id/read', { preHandler: auth }, async (request) => {
+    const spaceIds = await readableSpaceIds(context, request.user.id);
+    const { id } = idParams.parse(request.params);
+    const row = await findMediaRow(context, spaceIds, id);
+    if (!row) throw notFound('媒体记录不存在');
+    await ensureMediaUnreadBaseline(context, request.user.id);
+    await db.query(
+      `insert into media_item_reads(user_id, media_item_id, read_at)
+       values ($1, $2, now())
+       on conflict (user_id, media_item_id)
+       do update set read_at = excluded.read_at`,
+      [request.user.id, id],
+    );
+    const count = await countUnreadMedia(context, request.user.id, spaceIds);
+    return { ok: true, count, hasUnread: count > 0 };
+  });
+
+  app.post('/api/media/read', { preHandler: auth }, async (request) => {
+    const body = z.object({
+      ids: z.array(z.string().uuid()).max(100).optional(),
+      all: z.boolean().optional(),
+    }).strict().refine(
+      (value) => value.all === true || (value.ids != null && value.ids.length > 0),
+      '请指定 ids 或 all=true',
+    ).parse(request.body ?? {});
+    await ensureMediaUnreadBaseline(context, request.user.id);
+    const spaceIds = await readableSpaceIds(context, request.user.id);
+    if (body.all) {
+      await db.query(
+        `insert into media_item_reads(user_id, media_item_id, read_at)
+         select $1, m.id, now()
+         from media_items m
+         join media_unread_baselines b on b.user_id = $1
+         where m.space_id = any($2::uuid[])
+           and m.uploader_id <> $1
+           and greatest(m.created_at, m.updated_at) > b.baseline_at
+         on conflict (user_id, media_item_id)
+         do update set read_at = excluded.read_at`,
+        [request.user.id, spaceIds],
+      );
+    } else {
+      await db.query(
+        `insert into media_item_reads(user_id, media_item_id, read_at)
+         select $1, m.id, now()
+         from media_items m
+         where m.space_id = any($2::uuid[])
+           and m.id = any($3::uuid[])
+         on conflict (user_id, media_item_id)
+         do update set read_at = excluded.read_at`,
+        [request.user.id, spaceIds, body.ids],
+      );
+    }
+    const count = await countUnreadMedia(context, request.user.id, spaceIds);
+    return { ok: true, count, hasUnread: count > 0 };
   });
 
   app.get('/api/media/:id', { preHandler: auth }, async (request) => {
@@ -133,7 +274,8 @@ export function registerMedia(app: FastifyInstance, context: AppContext, auth: A
       const inserted = await client.query<MediaRow>(
         `insert into media_items(space_id, uploader_id, caption, media_date, ownership, couple_link_id)
          values ($1, $2, $3, $4, $5, $6)
-         returning id, caption, media_date as "mediaDate", uploader_id as "uploaderId", created_at as "createdAt"`,
+         returning id, caption, media_date as "mediaDate", uploader_id as "uploaderId",
+                   created_at as "createdAt", updated_at as "updatedAt"`,
         [
           target.spaceId,
           request.user.id,
@@ -208,6 +350,10 @@ export function registerMedia(app: FastifyInstance, context: AppContext, auth: A
           spaceId: target.spaceId,
           order: input.assetOrder,
         });
+        await client.query(
+          `update media_items set updated_at = now() where id = $1`,
+          [id],
+        );
         return;
       }
 
@@ -229,6 +375,10 @@ export function registerMedia(app: FastifyInstance, context: AppContext, auth: A
           `delete from media_item_assets
            where media_item_id = $1 and id = any($2::uuid[])`,
           [id, input.removeAssetPartIds],
+        );
+        await client.query(
+          `update media_items set updated_at = now() where id = $1`,
+          [id],
         );
       }
       if (input.addAssets?.length) {
@@ -259,6 +409,10 @@ export function registerMedia(app: FastifyInstance, context: AppContext, auth: A
             [id, sortOrder++, part.type, part.assetId, part.thumbnailAssetId ?? null],
           );
         }
+        await client.query(
+          `update media_items set updated_at = now() where id = $1`,
+          [id],
+        );
       }
     });
 
@@ -363,7 +517,8 @@ async function applyAssetOrder(
 export async function listRecentMedia(context: AppContext, spaceIds: string | string[], limit = 6) {
   const ids = Array.isArray(spaceIds) ? spaceIds : [spaceIds];
   const result = await context.db.query<MediaRow>(
-    `select id, caption, media_date as "mediaDate", uploader_id as "uploaderId", created_at as "createdAt"
+    `select id, caption, media_date as "mediaDate", uploader_id as "uploaderId",
+            created_at as "createdAt", updated_at as "updatedAt"
      from media_items where space_id = any($1::uuid[])
      order by media_date desc, created_at desc
      limit $2`,
@@ -381,11 +536,44 @@ async function findMedia(context: AppContext, spaceIds: string[], id: string) {
 
 async function findMediaRow(context: AppContext, spaceIds: string[], id: string) {
   const result = await context.db.query<MediaRow>(
-    `select id, caption, media_date as "mediaDate", uploader_id as "uploaderId", created_at as "createdAt"
+    `select id, caption, media_date as "mediaDate", uploader_id as "uploaderId",
+            created_at as "createdAt", updated_at as "updatedAt"
      from media_items where id = $1 and space_id = any($2::uuid[])`,
     [id, spaceIds],
   );
   return result.rows[0] ?? null;
+}
+
+async function ensureMediaUnreadBaseline(context: AppContext, userId: string) {
+  await context.db.query(
+    `insert into media_unread_baselines(user_id, baseline_at)
+     values ($1, now())
+     on conflict (user_id) do nothing`,
+    [userId],
+  );
+}
+
+async function countUnreadMedia(
+  context: AppContext,
+  userId: string,
+  spaceIds: string[],
+): Promise<number> {
+  const result = await context.db.query<{ count: string }>(
+    `select count(*)::text as count
+     from media_items m
+     join media_unread_baselines b on b.user_id = $1
+     where m.space_id = any($2::uuid[])
+       and m.uploader_id <> $1
+       and greatest(m.created_at, m.updated_at) > b.baseline_at
+       and not exists (
+         select 1 from media_item_reads r
+         where r.user_id = $1
+           and r.media_item_id = m.id
+           and r.read_at >= greatest(m.created_at, m.updated_at)
+       )`,
+    [userId, spaceIds],
+  );
+  return Number(result.rows[0]?.count ?? 0);
 }
 
 async function hydrateMediaItems(context: AppContext, rows: MediaRow[]) {
@@ -419,6 +607,7 @@ async function hydrateMediaItems(context: AppContext, rows: MediaRow[]) {
       mediaDate: formatMediaDate(row.mediaDate),
       uploaderId: row.uploaderId,
       createdAt: formatCreatedAt(row.createdAt),
+      updatedAt: formatCreatedAt(row.updatedAt ?? row.createdAt),
       assets: itemAssets,
     };
   });

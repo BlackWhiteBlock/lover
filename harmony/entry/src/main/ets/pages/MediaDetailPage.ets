@@ -45,7 +45,14 @@ struct MediaDetailPage {
   }
 
   async loadMedia(): Promise<void> {
-    const found = this.vm.data.media.find((m: MediaItem) => m.id === this.mediaId)
+    let found = this.vm.consumePendingOpenMedia(this.mediaId)
+    if (!found) {
+      found = this.vm.data.media.find((m: MediaItem) => m.id === this.mediaId) ?? null
+    }
+    // 未读列表等入口可能不在当前年份筛选缓存里，回退拉详情
+    if (!found) {
+      found = await this.vm.fetchMediaDetail(this.mediaId)
+    }
     if (!found) {
       this.loading = false
       return

@@ -83,7 +83,7 @@ class MainViewModel @Inject constructor(
                             noticeStore.error(error.message ?: "刷新失败，已显示缓存")
                         }
                     }
-                pullPartnerActivityNotices()
+                refreshMediaUnreadBadge()
             }
             _restoreComplete.value = true
         }
@@ -133,18 +133,36 @@ class MainViewModel @Inject constructor(
     fun refreshSessionQuietly() = viewModelScope.launch {
         if (repository.state.value.accessToken == null) return@launch
         runCatching { repository.refreshAll() }
-        pullPartnerActivityNotices()
+        refreshMediaUnreadBadge()
     }
 
-    private suspend fun pullPartnerActivityNotices() {
-        if (!repository.state.value.linked) return
-        val items = repository.fetchUnreadPartnerActivity()
-        if (items.isEmpty()) return
-        val ids = items.map { it.id }
-        repository.markPartnerActivityRead(ids = ids)
-        items.take(8).forEach { event ->
-            noticeStore.info(event.title)
-        }
+    val mediaUnreadCount = repository.mediaUnreadCount
+    val mediaHasMore = repository.mediaHasMore
+    val mediaYears = repository.mediaYears
+    val mediaYearFilter = repository.mediaYearFilterState
+
+    private suspend fun refreshMediaUnreadBadge() {
+        runCatching { repository.refreshMediaUnreadSummary() }
+    }
+
+    fun setMediaYearFilter(year: Int?) = viewModelScope.launch {
+        runCatching { repository.setMediaYearFilter(year) }
+            .onFailure { error ->
+                if (!error.isUnauthorized()) {
+                    noticeStore.error(error.message ?: "筛选失败")
+                }
+            }
+    }
+
+    fun refreshMediaYears() = viewModelScope.launch {
+        runCatching { repository.refreshMediaYears() }
+    }
+
+    suspend fun loadUnreadMediaPage(cursor: String?): MediaUnreadPage? =
+        runCatching { repository.fetchUnreadMedia(cursor) }.getOrNull()
+
+    fun markAllUnreadMediaRead() = viewModelScope.launch {
+        runCatching { repository.markAllUnreadMediaRead() }
     }
 
     fun markCoupleThemeRevealShown(linkId: String) = viewModelScope.launch {
@@ -153,9 +171,15 @@ class MainViewModel @Inject constructor(
 
     fun selectTab(tab: MainTab) {
         _selectedTab.value = tab
+        if (tab == MainTab.TIMELINE) {
+            refreshMediaYears()
+            viewModelScope.launch { refreshMediaUnreadBadge() }
+        }
     }
 
     fun openMediaDetail(item: MediaItem, onReady: (MediaItem) -> Unit) = viewModelScope.launch {
+        // 打开即视为已读（对方发布/修改的时光）
+        runCatching { repository.markMediaRead(item.id) }
         runCatching { repository.ensureMediaOriginals(item) }
             .onSuccess(onReady)
             .onFailure { error ->
