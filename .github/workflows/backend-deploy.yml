@@ -295,11 +295,9 @@ jobs:
           npm ci
           npm run build
 
-          set -a
-          # shellcheck disable=SC1091
-          . ./.env
-          set +a
-
+          # Do NOT `source .env` here: PNVS/JWT/Qiniu secrets often contain
+          # shell-special characters and break deploy (e.g. unquoted JSON / quotes).
+          # Node loads .env via dotenv for migrate + runtime.
           npm run db:migrate
 
           mkdir -p data/uploads
@@ -313,7 +311,9 @@ jobs:
           pm2 save || true
 
           sleep 3
-          HEALTH_PORT="${PORT:-$DEPLOY_PORT}"
+          # Read PORT safely without sourcing the whole file.
+          HEALTH_PORT="$(grep -E '^PORT=' .env | tail -n1 | cut -d= -f2- | tr -d '[:space:]\"' || true)"
+          HEALTH_PORT="${HEALTH_PORT:-$DEPLOY_PORT}"
           echo "Checking lover-backend health on port $HEALTH_PORT (PM2=$PM2_APP_NAME)"
           if ! curl -fsS "http://127.0.0.1:$HEALTH_PORT/health"; then
             echo "Health check failed. PM2 status:"
