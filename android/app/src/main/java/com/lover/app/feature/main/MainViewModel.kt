@@ -260,6 +260,10 @@ class MainViewModel @Inject constructor(
         repository.updatePersonalCard(spaceName.trim(), avatarUri)
     }
 
+    fun updateAvatar(avatarUri: Uri) = launchAction("头像已更新") {
+        repository.updateAvatar(avatarUri)
+    }
+
     suspend fun lookupUser(phone: String): UserLookupResponse =
         repository.lookupUser(phone)
 

@@ -233,7 +233,8 @@ export function registerCouples(app: FastifyInstance, context: AppContext, auth:
     };
   });
 
-  app.patch('/api/couple-space', { preHandler: auth }, async (request) => {
+  // Harmony 客户端更新接口走 POST（PATCH 在部分 SDK 不可用）
+  const patchCoupleSpace = async (request: { user: { id: string }; body: unknown }) => {
     const personalId = await personalSpaceId(context, request.user.id);
     const input = updateSpaceSchema.parse(request.body);
     const result = await db.query(
@@ -244,7 +245,9 @@ export function registerCouples(app: FastifyInstance, context: AppContext, auth:
     );
     if (!result.rowCount) throw notFound('个人空间不存在');
     return result.rows[0];
-  });
+  };
+  app.patch('/api/couple-space', { preHandler: auth }, patchCoupleSpace);
+  app.post('/api/couple-space', { preHandler: auth }, patchCoupleSpace);
 
   /**
    * 绑定前预览：按手机号查询已完成建档的用户昵称/头像。
@@ -290,7 +293,7 @@ export function registerCouples(app: FastifyInstance, context: AppContext, auth:
     };
   });
 
-  app.patch('/api/couple-link', { preHandler: auth }, async (request) => {
+  const patchCoupleLink = async (request: { user: { id: string }; body: unknown }) => {
     const link = await getActiveCoupleLink(context, request.user.id);
     if (!link) throw forbidden('请先完成伴侣绑定');
     const input = updateLinkSchema.parse(request.body);
@@ -317,7 +320,9 @@ export function registerCouples(app: FastifyInstance, context: AppContext, auth:
       togetherDate: refreshed!.togetherDate,
       name: space.rows[0]?.name ?? null,
     };
-  });
+  };
+  app.patch('/api/couple-link', { preHandler: auth }, patchCoupleLink);
+  app.post('/api/couple-link', { preHandler: auth }, patchCoupleLink);
 
   app.post('/api/couple-binds', {
     preHandler: auth,

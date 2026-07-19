@@ -132,6 +132,8 @@ export interface JsonObject {
   url?: string | null
   
   // Patch fields
+  avatarAssetId?: string | null
+  coupleCoverAssetId?: string | null
   clearCoupleCover?: boolean | null
   
   // Media fields

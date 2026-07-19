@@ -312,7 +312,7 @@ export function registerMedia(app: FastifyInstance, context: AppContext, auth: A
     return reply.code(201).send(hydrated[0]);
   });
 
-  app.patch('/api/media/:id', { preHandler: auth }, async (request) => {
+  const patchMediaHandler = async (request: { user: { id: string }; params: unknown; body: unknown }) => {
     const spaceIds = await readableSpaceIds(context, request.user.id);
     const { id } = idParams.parse(request.params);
     const input = mediaUpdate.parse(request.body);
@@ -420,7 +420,9 @@ export function registerMedia(app: FastifyInstance, context: AppContext, auth: A
     if (!refreshed) throw notFound('媒体记录不存在');
     const hydrated = await hydrateMediaItems(context, [refreshed]);
     return hydrated[0];
-  });
+  };
+  app.patch('/api/media/:id', { preHandler: auth }, patchMediaHandler);
+  app.post('/api/media/:id', { preHandler: auth }, patchMediaHandler);
 
   app.delete('/api/media/:id', { preHandler: auth }, async (request) => {
     const spaceIds = await readableSpaceIds(context, request.user.id);

@@ -282,7 +282,8 @@ export function registerAuth(app: FastifyInstance, context: AppContext) {
     };
   });
 
-  app.patch('/api/me', { preHandler: createAuthHandler(context) }, async (request) => {
+  // Harmony 部分 SDK 无法可靠发送 PATCH，客户端会回退 POST；两端方法共用同一处理。
+  const patchMeHandler = async (request: FastifyRequest) => {
     const input = patchMeSchema.parse(request.body);
     if (input.avatarAssetId !== undefined) {
       await assertPersonalImageAsset(context, request.user.id, input.avatarAssetId, '头像');
@@ -318,7 +319,10 @@ export function registerAuth(app: FastifyInstance, context: AppContext) {
     );
     const profile = updated.rows[0]!;
     return { user: await presentMeUser(context, profile, request.user.id) };
-  });
+  };
+  const meAuth = { preHandler: createAuthHandler(context) };
+  app.patch('/api/me', meAuth, patchMeHandler);
+  app.post('/api/me', meAuth, patchMeHandler);
 }
 
 export function createAuthHandler(context: AppContext): AuthHandler {

@@ -641,6 +641,12 @@ export class AppViewModel {
     })
   }
 
+  async updateAvatar(avatarFile: MediaFileInput, localPreviewUrl: string = ''): Promise<void> {
+    await this.launchAction('头像已更新', async () => {
+      await this.repository.updateAvatar(avatarFile, localPreviewUrl)
+    })
+  }
+
   async lookupUser(phone: string): Promise<UserLookupResponse> {
     return this.repository.lookupUser(phone)
   }

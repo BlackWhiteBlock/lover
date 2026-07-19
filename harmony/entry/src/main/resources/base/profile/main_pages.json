@@ -11,6 +11,7 @@
     "pages/AnniversaryComposePage",
     "pages/LetterComposePage",
     "pages/MediaComposePage",
-    "pages/SpaceEditPage"
+    "pages/SpaceEditPage",
+    "pages/AvatarEditPage"
   ]
 }

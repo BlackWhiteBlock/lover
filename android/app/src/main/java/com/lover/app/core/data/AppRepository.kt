@@ -230,6 +230,14 @@ class AppRepository @Inject constructor(
         refreshAll()
     }
 
+    /** 仅更新本账号个人头像（绑定 / 未绑定均可） */
+    suspend fun updateAvatar(avatarUri: Uri) {
+        val assetId = uploadAvatar(avatarUri)
+        val user = call { api.patchMe(PatchMeRequest(avatarAssetId = assetId)) }.user
+        tokenStore.update { it.copy(user = user) }
+        refreshAll()
+    }
+
     suspend fun lookupUser(phone: String): UserLookupResponse =
         call { api.lookupUser(phone.trim()) }
 

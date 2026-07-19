@@ -52,6 +52,28 @@ struct MainPage {
     if ((this.vm.selectedTab as number) >= 0 && (this.vm.selectedTab as number) <= 4) {
       this.currentIndex = this.vm.selectedTab as number
     }
+    this.startSyncTimer()
+  }
+
+  /** 从 AvatarEditPage 等子页返回时 aboutToAppear 不一定再触发，用 onPageShow 拉最新状态 */
+  onPageShow(): void {
+    this.syncFromVm()
+    this.startSyncTimer()
+    // 再 bump 一次，确保 ProfileTabContent @Watch(onEpoch) 一定会 reload
+    if (this.currentIndex === (MainTab.PROFILE as number)) {
+      this.vm.bumpUi()
+      this.syncFromVm()
+    }
+  }
+
+  aboutToDisappear(): void {
+    this.stopSyncTimer()
+  }
+
+  private startSyncTimer(): void {
+    if (this.syncTimer !== -1) {
+      return
+    }
     this.syncTimer = setInterval(() => {
       if (this.uiEpoch !== this.vm.uiEpoch ||
         this.errorMessage !== this.vm.errorMessage ||
@@ -63,7 +85,7 @@ struct MainPage {
     }, 400)
   }
 
-  aboutToDisappear(): void {
+  private stopSyncTimer(): void {
     if (this.syncTimer !== -1) {
       clearInterval(this.syncTimer)
       this.syncTimer = -1
@@ -1079,13 +1101,47 @@ struct ProfileTabContent {
   @Prop @Watch('onEpoch') uiEpoch: number
   @State confirmAction: string = ''
   @State unbindReason: string = ''
+  @State meNicknameState: string = '我'
+  @State meAvatarUrl: string = ''
+  @State coverUrlState: string = ''
+  @State spaceNameState: string = '我的小宇宙'
+  @State partnerNicknameState: string = 'TA'
+  @State partnerAvatarUrl: string = ''
+  @State lovingDaysState: number = -1
+  @State togetherDateState: string = ''
+  @State boundSpaceName: string = '我们'
+  @State hasPartnerState: boolean = false
   private vm: AppViewModel = AppViewModel.getInstance()
 
-  aboutToAppear(): void {}
-  onEpoch(): void {}
+  aboutToAppear(): void { this.reload() }
+  onEpoch(): void { this.reload() }
+
+  reload(): void {
+    const nextAvatar = this.vm.data.user?.avatarUrl ?? ''
+    // 先清空再赋值，确保 @State 即使 URL 相近也能驱动子组件刷新
+    if (this.meAvatarUrl === nextAvatar && nextAvatar.length > 0) {
+      this.meAvatarUrl = ''
+    }
+    this.meNicknameState = this.vm.data.user?.nickname ?? '我'
+    this.meAvatarUrl = nextAvatar
+    this.coverUrlState = this.vm.data.user?.coupleCoverUrl ?? ''
+    const partner = this.partner()
+    this.hasPartnerState = this.vm.data.linked && partner !== null
+    this.partnerNicknameState = partner?.nickname ?? 'TA'
+    this.partnerAvatarUrl = partner?.avatarUrl ?? ''
+    this.lovingDaysState = this.vm.data.lovingDays !== null ? this.vm.data.lovingDays as number : -1
+    this.togetherDateState = this.vm.data.couple?.togetherDate ?? ''
+    this.boundSpaceName = this.vm.data.couple?.name ?? '我们'
+    const n = this.vm.data.couple?.name
+    if (n && n.trim().length > 0) {
+      this.spaceNameState = n
+    } else {
+      this.spaceNameState = this.mood.solo ? '我的小宇宙' : '我们的小宇宙'
+    }
+  }
 
   private hasPartner(): boolean {
-    return this.vm.data.linked && this.partner() !== null
+    return this.hasPartnerState
   }
 
   private partner(): CoupleMember | null {
@@ -1100,14 +1156,6 @@ struct ProfileTabContent {
       }
     }
     return null
-  }
-
-  private spaceNameSolo(): string {
-    const n = this.vm.data.couple?.name
-    if (n && n.trim().length > 0) {
-      return n
-    }
-    return this.mood.solo ? '我的小宇宙' : '我们的小宇宙'
   }
 
   private incoming(): IncomingBindRequest | null {
@@ -1134,22 +1182,6 @@ struct ProfileTabContent {
     return this.vm.data.couple?.pendingUnbinding ?? null
   }
 
-  private meNickname(): string {
-    return this.vm.data.user?.nickname ?? '我'
-  }
-
-  private meAvatar(): string {
-    return this.vm.data.user?.avatarUrl ?? ''
-  }
-
-  private coverUrl(): string {
-    return this.vm.data.user?.coupleCoverUrl ?? ''
-  }
-
-  private lovingDaysValue(): number {
-    return this.vm.data.lovingDays !== null ? this.vm.data.lovingDays as number : -1
-  }
-
   build() {
     Stack() {
       Scroll() {
@@ -1164,9 +1196,9 @@ struct ProfileTabContent {
             if (this.incoming() !== null) {
               IncomingBindCard({
                 mood: this.mood,
-                spaceName: this.spaceNameSolo(),
-                meNickname: this.meNickname(),
-                meAvatarUrl: this.meAvatar(),
+                spaceName: this.spaceNameState,
+                meNickname: this.meNicknameState,
+                meAvatarUrl: this.meAvatarUrl,
                 inviterNickname: this.incoming()!.requesterNickname,
                 inviterAvatarUrl: this.incoming()!.requesterAvatarUrl ?? '',
                 inviterLabel: bindInviterLabel(
@@ -1174,15 +1206,16 @@ struct ProfileTabContent {
                   this.incoming()!.requesterPhone,
                 ),
                 onEdit: () => AppNav.push('pages/SpaceEditPage'),
+                onMeAvatarClick: () => AppNav.push('pages/AvatarEditPage'),
                 onAccept: () => this.vm.acceptBind(this.incoming()!.id),
                 onReject: () => this.vm.rejectBind(this.incoming()!.id),
               })
             } else {
               EmptyCoupleCard({
                 mood: this.mood,
-                spaceName: this.spaceNameSolo(),
-                meNickname: this.meNickname(),
-                meAvatarUrl: this.meAvatar(),
+                spaceName: this.spaceNameState,
+                meNickname: this.meNicknameState,
+                meAvatarUrl: this.meAvatarUrl,
                 hasOutgoing: this.outgoing() !== null,
                 outgoingNickname: this.outgoing()?.targetNickname ?? '',
                 outgoingAvatarUrl: this.outgoing()?.targetAvatarUrl ?? '',
@@ -1190,6 +1223,7 @@ struct ProfileTabContent {
                   ? bindInviterLabel(this.outgoing()!.targetNickname, this.outgoing()!.targetPhone)
                   : '',
                 onEdit: () => AppNav.push('pages/SpaceEditPage'),
+                onMeAvatarClick: () => AppNav.push('pages/AvatarEditPage'),
                 onBind: () => AppNav.push('pages/CouplePage'),
                 onCancelOutgoing: () => {
                   const id = this.outgoing()?.id
@@ -1202,15 +1236,16 @@ struct ProfileTabContent {
           } else {
             BoundCoupleCard({
               mood: this.mood,
-              spaceName: this.vm.data.couple?.name ?? '我们',
-              togetherDate: this.vm.data.couple?.togetherDate ?? '',
-              lovingDays: this.lovingDaysValue(),
-              meNickname: this.meNickname(),
-              meAvatarUrl: this.meAvatar(),
-              partnerNickname: this.partner()!.nickname,
-              partnerAvatarUrl: this.partner()!.avatarUrl ?? '',
-              coupleCoverUrl: this.coverUrl(),
+              spaceName: this.boundSpaceName,
+              togetherDate: this.togetherDateState,
+              lovingDays: this.lovingDaysState,
+              meNickname: this.meNicknameState,
+              meAvatarUrl: this.meAvatarUrl,
+              partnerNickname: this.partnerNicknameState,
+              partnerAvatarUrl: this.partnerAvatarUrl,
+              coupleCoverUrl: this.coverUrlState,
               onEdit: () => AppNav.push('pages/SpaceEditPage'),
+              onMeAvatarClick: () => AppNav.push('pages/AvatarEditPage'),
             })
           }
 

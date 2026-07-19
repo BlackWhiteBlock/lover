@@ -77,7 +77,9 @@ export function registerAnniversaries(app: FastifyInstance, context: AppContext,
     return reply.code(201).send(withCountdown(row));
   });
 
-  app.patch('/api/anniversaries/:id', { preHandler: auth }, async (request) => {
+  const patchAnniversaryHandler = async (request: {
+    user: { id: string }; params: unknown; body: unknown;
+  }) => {
     const spaceIds = await readableSpaceIds(context, request.user.id);
     const { id } = idSchema.parse(request.params);
     const input = updateSchema.parse(request.body);
@@ -94,7 +96,9 @@ export function registerAnniversaries(app: FastifyInstance, context: AppContext,
     );
     if (!result.rowCount) throw notFound('纪念日不存在或无权编辑');
     return withCountdown(result.rows[0]!);
-  });
+  };
+  app.patch('/api/anniversaries/:id', { preHandler: auth }, patchAnniversaryHandler);
+  app.post('/api/anniversaries/:id', { preHandler: auth }, patchAnniversaryHandler);
 
   app.delete('/api/anniversaries/:id', { preHandler: auth }, async (request) => {
     const spaceIds = await readableSpaceIds(context, request.user.id);

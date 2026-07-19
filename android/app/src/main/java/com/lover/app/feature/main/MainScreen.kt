@@ -1702,6 +1702,7 @@ private fun ProfilePage(
     var reason by rememberSaveable { mutableStateOf("") }
     var showBindSheet by rememberSaveable { mutableStateOf(false) }
     var showEditCard by rememberSaveable { mutableStateOf(false) }
+    var showAvatarEdit by rememberSaveable { mutableStateOf(false) }
     val partner = state.couple?.members?.firstOrNull { it.id != state.user?.id }
     val hasPartner = state.linked && partner != null
     val pending = state.couple?.pendingUnbinding
@@ -1735,6 +1736,7 @@ private fun ProfilePage(
                         inviterAvatarUrl = invite.requesterAvatarUrl,
                         inviterLabel = bindInviterLabel(invite.requesterNickname, invite.requesterPhone),
                         onEdit = { showEditCard = true },
+                        onMeAvatarClick = { showAvatarEdit = true },
                         onAccept = { viewModel.acceptBind(invite.id) },
                         onReject = { viewModel.rejectBind(invite.id) },
                     )
@@ -1745,6 +1747,7 @@ private fun ProfilePage(
                         meAvatarUrl = state.user?.avatarUrl,
                         outgoing = outgoing?.takeIf { it.id.isNotBlank() },
                         onEdit = { showEditCard = true },
+                        onMeAvatarClick = { showAvatarEdit = true },
                         onBind = { showBindSheet = true },
                         onCancelOutgoing = outgoing?.id?.takeIf { it.isNotBlank() }?.let { id ->
                             { viewModel.cancelBind(id) }
@@ -1762,6 +1765,7 @@ private fun ProfilePage(
                     partnerAvatarUrl = partner.avatarUrl,
                     coupleCoverUrl = state.user?.coupleCoverUrl,
                     onEdit = { showEditCard = true },
+                    onMeAvatarClick = { showAvatarEdit = true },
                 )
             }
         }
@@ -1839,6 +1843,18 @@ private fun ProfilePage(
         }
     }
 
+    if (showAvatarEdit) {
+        AvatarEditSheet(
+            nickname = state.user?.nickname ?: "我",
+            currentAvatarUrl = state.user?.avatarUrl,
+            onDismiss = { showAvatarEdit = false },
+            onSave = { uri ->
+                viewModel.updateAvatar(uri)
+                showAvatarEdit = false
+            },
+        )
+    }
+
     confirm?.let { action ->
         AlertDialog(
             onDismissRequest = { confirm = null },
@@ -1907,6 +1923,7 @@ private fun EmptyCoupleCard(
     meAvatarUrl: String?,
     outgoing: OutgoingBindRequest?,
     onEdit: () -> Unit,
+    onMeAvatarClick: () -> Unit,
     onBind: () -> Unit,
     onCancelOutgoing: (() -> Unit)?,
 ) {
@@ -1943,6 +1960,7 @@ private fun EmptyCoupleCard(
                     leftAvatarUrl = meAvatarUrl,
                     rightNickname = outgoing.targetNickname.ifBlank { outgoingLabel ?: "对方" },
                     rightAvatarUrl = outgoing.targetAvatarUrl,
+                    onLeftAvatarClick = onMeAvatarClick,
                 )
             } else {
                 CoupleBondVisual(
@@ -1951,6 +1969,7 @@ private fun EmptyCoupleCard(
                     leftAvatarUrl = meAvatarUrl,
                     rightNickname = "?",
                     rightAvatarUrl = null,
+                    onLeftAvatarClick = onMeAvatarClick,
                 )
             }
             Text(spaceName, style = MaterialTheme.typography.headlineMedium)
@@ -1997,6 +2016,7 @@ private fun IncomingBindCard(
     inviterAvatarUrl: String?,
     inviterLabel: String,
     onEdit: () -> Unit,
+    onMeAvatarClick: () -> Unit,
     onAccept: () -> Unit,
     onReject: () -> Unit,
 ) {
@@ -2029,6 +2049,7 @@ private fun IncomingBindCard(
                 leftAvatarUrl = inviterAvatarUrl,
                 rightNickname = meNickname ?: "我",
                 rightAvatarUrl = meAvatarUrl,
+                onRightAvatarClick = onMeAvatarClick,
             )
             Text(spaceName, style = MaterialTheme.typography.headlineMedium)
             Text(
@@ -2069,6 +2090,7 @@ private fun BoundCoupleCard(
     partnerAvatarUrl: String?,
     coupleCoverUrl: String?,
     onEdit: () -> Unit,
+    onMeAvatarClick: () -> Unit,
 ) {
     Card(
         colors = CardDefaults.cardColors(containerColor = LocalMood.current.blush.copy(alpha = 0.85f)),
@@ -2104,6 +2126,7 @@ private fun BoundCoupleCard(
                     rightNickname = partnerNickname,
                     rightAvatarUrl = partnerAvatarUrl,
                     coupleCoverUrl = coupleCoverUrl,
+                    onLeftAvatarClick = onMeAvatarClick,
                 )
                 Text(spaceName, style = MaterialTheme.typography.headlineMedium)
                 Text(
@@ -2134,6 +2157,8 @@ private fun CoupleBondVisual(
     rightNickname: String,
     rightAvatarUrl: String?,
     coupleCoverUrl: String? = null,
+    onLeftAvatarClick: (() -> Unit)? = null,
+    onRightAvatarClick: (() -> Unit)? = null,
 ) {
     when (mode) {
         CoupleBondMode.Bound -> {
@@ -2143,35 +2168,37 @@ private fun CoupleBondVisual(
             ) {
                 if (!coupleCoverUrl.isNullOrBlank()) {
                     CoupleCoverAvatar(coverUrl = coupleCoverUrl)
-                } else {
+                    Spacer(modifier = Modifier.height(12.dp))
+                }
+                Box(
+                    modifier = Modifier.fillMaxWidth(),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    // 72 + 72 - 14 overlap = 130；用固定宽居中，避免 offset 造成视觉偏左
                     Box(
-                        modifier = Modifier.fillMaxWidth(),
-                        contentAlignment = Alignment.Center,
+                        modifier = Modifier
+                            .width(130.dp)
+                            .height(72.dp),
                     ) {
-                        // 72 + 72 - 14 overlap = 130；用固定宽居中，避免 offset 造成视觉偏左
-                        Box(
+                        PersonAvatar(
+                            nickname = leftNickname,
+                            avatarUrl = leftAvatarUrl,
+                            onClick = onLeftAvatarClick,
                             modifier = Modifier
-                                .width(130.dp)
-                                .height(72.dp),
-                        ) {
-                            PersonAvatar(
-                                nickname = leftNickname,
-                                avatarUrl = leftAvatarUrl,
-                                modifier = Modifier
-                                    .align(Alignment.CenterStart)
-                                    .size(72.dp),
-                            )
-                            PersonAvatar(
-                                nickname = rightNickname,
-                                avatarUrl = rightAvatarUrl,
-                                modifier = Modifier
-                                    .align(Alignment.CenterEnd)
-                                    .size(72.dp),
-                            )
-                        }
+                                .align(Alignment.CenterStart)
+                                .size(72.dp),
+                        )
+                        PersonAvatar(
+                            nickname = rightNickname,
+                            avatarUrl = rightAvatarUrl,
+                            onClick = onRightAvatarClick,
+                            modifier = Modifier
+                                .align(Alignment.CenterEnd)
+                                .size(72.dp),
+                        )
                     }
                 }
-                Spacer(Modifier.height(10.dp))
+                Spacer(modifier = Modifier.height(10.dp))
                 Text(
                     "${displayName(leftNickname)} · ${displayName(rightNickname)}",
                     color = LocalMood.current.stone,
@@ -2188,11 +2215,19 @@ private fun CoupleBondVisual(
                 horizontalArrangement = Arrangement.Center,
                 modifier = Modifier.fillMaxWidth(),
             ) {
-                PersonAvatarWithName(nickname = leftNickname, avatarUrl = leftAvatarUrl)
+                PersonAvatarWithName(
+                    nickname = leftNickname,
+                    avatarUrl = leftAvatarUrl,
+                    onAvatarClick = onLeftAvatarClick,
+                )
                 Box(modifier = Modifier.padding(top = 28.dp, start = 6.dp, end = 6.dp)) {
                     LinkingPulse()
                 }
-                PersonAvatarWithName(nickname = rightNickname, avatarUrl = rightAvatarUrl)
+                PersonAvatarWithName(
+                    nickname = rightNickname,
+                    avatarUrl = rightAvatarUrl,
+                    onAvatarClick = onRightAvatarClick,
+                )
             }
         }
         CoupleBondMode.Empty -> {
@@ -2201,12 +2236,17 @@ private fun CoupleBondVisual(
                 horizontalArrangement = Arrangement.Center,
                 modifier = Modifier.fillMaxWidth(),
             ) {
-                PersonAvatarWithName(nickname = leftNickname, avatarUrl = leftAvatarUrl)
-                Spacer(Modifier.width(18.dp))
+                PersonAvatarWithName(
+                    nickname = leftNickname,
+                    avatarUrl = leftAvatarUrl,
+                    onAvatarClick = onLeftAvatarClick,
+                )
+                Spacer(modifier = Modifier.width(18.dp))
                 PersonAvatarWithName(
                     nickname = rightNickname,
                     avatarUrl = null,
                     placeholderMark = true,
+                    onAvatarClick = onRightAvatarClick,
                 )
             }
         }
@@ -2241,6 +2281,7 @@ private fun PersonAvatarWithName(
     nickname: String,
     avatarUrl: String?,
     placeholderMark: Boolean = false,
+    onAvatarClick: (() -> Unit)? = null,
 ) {
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -2250,9 +2291,10 @@ private fun PersonAvatarWithName(
             nickname = nickname,
             avatarUrl = avatarUrl,
             placeholderMark = placeholderMark,
+            onClick = onAvatarClick,
             modifier = Modifier.size(72.dp),
         )
-        Spacer(Modifier.height(8.dp))
+        Spacer(modifier = Modifier.height(8.dp))
         Text(
             if (placeholderMark) "待绑定" else displayName(nickname),
             color = LocalMood.current.stone,
@@ -2332,10 +2374,18 @@ private fun PersonAvatar(
     avatarUrl: String?,
     modifier: Modifier = Modifier,
     placeholderMark: Boolean = false,
+    onClick: (() -> Unit)? = null,
 ) {
     val initial = displayName(nickname).take(1).ifBlank { "我" }
     Box(
         modifier
+            .then(
+                if (onClick != null) {
+                    Modifier.clickable(onClick = onClick)
+                } else {
+                    Modifier
+                },
+            )
             .background(Color.White, CircleShape)
             .border(2.dp, Color.White, CircleShape)
             .padding(3.dp),
@@ -2369,6 +2419,99 @@ private fun PersonAvatar(
                     )
                 }
             }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun AvatarEditSheet(
+    nickname: String,
+    currentAvatarUrl: String?,
+    onDismiss: () -> Unit,
+    onSave: (Uri) -> Unit,
+) {
+    var draftAvatarUri by remember { mutableStateOf<Uri?>(null) }
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val pickAvatar = rememberLauncherForActivityResult(PickGalleryImage()) { uri ->
+        if (uri != null) draftAvatarUri = uri
+    }
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
+        containerColor = LocalMood.current.background,
+        shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
+    ) {
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 24.dp)
+                .padding(bottom = 32.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Text(
+                "修改个人头像",
+                style = MaterialTheme.typography.headlineMedium,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Text(
+                "选择一张照片作为你的个人头像，绑定后双方都能看到",
+                color = LocalMood.current.stone,
+                modifier = Modifier.fillMaxWidth(),
+            )
+
+            Box(
+                modifier = Modifier
+                    .size(120.dp)
+                    .clip(CircleShape)
+                    .background(LocalMood.current.blush)
+                    .clickable { pickAvatar.launch(Unit) },
+                contentAlignment = Alignment.Center,
+            ) {
+                when {
+                    draftAvatarUri != null -> {
+                        AsyncImage(
+                            model = draftAvatarUri,
+                            contentDescription = "头像预览",
+                            modifier = Modifier.fillMaxSize(),
+                            contentScale = ContentScale.Crop,
+                        )
+                    }
+                    !currentAvatarUrl.isNullOrBlank() -> {
+                        val context = LocalContext.current
+                        AsyncImage(
+                            model = signedMediaImageRequest(context, currentAvatarUrl),
+                            contentDescription = nickname,
+                            modifier = Modifier.fillMaxSize(),
+                            contentScale = ContentScale.Crop,
+                        )
+                    }
+                    else -> {
+                        Text(
+                            displayName(nickname).take(1).ifBlank { "我" },
+                            color = Color.White,
+                            style = MaterialTheme.typography.displaySmall,
+                        )
+                    }
+                }
+            }
+            Text(
+                "点击选择新头像",
+                color = LocalMood.current.stone,
+                style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.clickable { pickAvatar.launch(Unit) },
+            )
+
+            Button(
+                onClick = { draftAvatarUri?.let(onSave) },
+                enabled = draftAvatarUri != null,
+                modifier = Modifier.fillMaxWidth().height(52.dp),
+                shape = RoundedCornerShape(22.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = LocalMood.current.soft),
+            ) { Text("保存头像") }
         }
     }
 }

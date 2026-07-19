@@ -61,13 +61,25 @@ function withAlpha(hex: string, alpha: number): string {
 export struct PersonAvatar {
   @Prop mood: MoodPalette
   @Prop nickname: string = '我'
-  @Prop avatarUrl: string = ''
+  @Prop @Watch('onAvatarUrl') avatarUrl: string = ''
   @Prop sizeVp: number = 72
   @Prop placeholderMark: boolean = false
+  @State private displayUrl: string = ''
+  @State private imageEpoch: number = 0
+  onAvatarClick: (() => void) | null = null
+
+  aboutToAppear(): void {
+    this.displayUrl = this.avatarUrl
+  }
 
   private initial(): string {
     const n = displayName(this.nickname)
     return n.length > 0 ? n.substring(0, 1) : '我'
+  }
+
+  onAvatarUrl(): void {
+    this.displayUrl = this.avatarUrl
+    this.imageEpoch = this.imageEpoch + 1
   }
 
   build() {
@@ -80,12 +92,14 @@ export struct PersonAvatar {
         .border({ width: 2, color: Colors.white })
 
       Stack({ alignContent: Alignment.Center }) {
-        if (this.avatarUrl.length > 0 && !this.placeholderMark) {
-          Image(this.avatarUrl)
-            .width('100%')
-            .height('100%')
-            .objectFit(ImageFit.Cover)
-            .borderRadius((this.sizeVp - 6) / 2)
+        if (this.displayUrl.length > 0 && !this.placeholderMark) {
+          ForEach([`${this.imageEpoch}_${this.displayUrl}`], (_imgKey: string) => {
+            Image(this.displayUrl)
+              .width('100%')
+              .height('100%')
+              .objectFit(ImageFit.Cover)
+              .borderRadius((this.sizeVp - 6) / 2)
+          }, (imgKey: string) => imgKey)
         } else if (this.placeholderMark) {
           Text('?')
             .fontSize(FontSizes.headlineMedium)
@@ -106,6 +120,11 @@ export struct PersonAvatar {
     }
     .width(this.sizeVp)
     .height(this.sizeVp)
+    .onClick(() => {
+      if (this.onAvatarClick) {
+        this.onAvatarClick()
+      }
+    })
   }
 }
 
@@ -115,6 +134,7 @@ struct PersonAvatarWithName {
   @Prop nickname: string = '我'
   @Prop avatarUrl: string = ''
   @Prop placeholderMark: boolean = false
+  onAvatarClick: (() => void) | null = null
 
   build() {
     Column({ space: 8 }) {
@@ -124,6 +144,7 @@ struct PersonAvatarWithName {
         avatarUrl: this.avatarUrl,
         sizeVp: 72,
         placeholderMark: this.placeholderMark,
+        onAvatarClick: this.onAvatarClick,
       })
       Text(this.placeholderMark ? '待绑定' : displayName(this.nickname))
         .fontSize(FontSizes.bodySmall)
@@ -228,10 +249,15 @@ export struct CoupleBondVisual {
   @Prop mood: MoodPalette
   @Prop mode: CoupleBondMode = CoupleBondMode.Empty
   @Prop leftNickname: string = '我'
-  @Prop leftAvatarUrl: string = ''
+  @Prop @Watch('onLeftAvatar') leftAvatarUrl: string = ''
   @Prop rightNickname: string = '?'
-  @Prop rightAvatarUrl: string = ''
+  @Prop @Watch('onRightAvatar') rightAvatarUrl: string = ''
   @Prop coupleCoverUrl: string = ''
+  onLeftAvatarClick: (() => void) | null = null
+  onRightAvatarClick: (() => void) | null = null
+
+  onLeftAvatar(): void {}
+  onRightAvatar(): void {}
 
   build() {
     if (this.mode === CoupleBondMode.Bound) {
@@ -251,26 +277,27 @@ export struct CoupleBondVisual {
               .objectFit(ImageFit.Cover)
               .backgroundColor(withAlpha(this.mood.soft, 0.9))
           }
-        } else {
-          Stack() {
-            PersonAvatar({
-              mood: this.mood,
-              nickname: this.leftNickname,
-              avatarUrl: this.leftAvatarUrl,
-              sizeVp: 72,
-            })
-              .position({ x: 0, y: 0 })
-            PersonAvatar({
-              mood: this.mood,
-              nickname: this.rightNickname,
-              avatarUrl: this.rightAvatarUrl,
-              sizeVp: 72,
-            })
-              .position({ x: 58, y: 0 })
-          }
-          .width(130)
-          .height(72)
         }
+        Stack() {
+          PersonAvatar({
+            mood: this.mood,
+            nickname: this.leftNickname,
+            avatarUrl: this.leftAvatarUrl,
+            sizeVp: 72,
+            onAvatarClick: this.onLeftAvatarClick,
+          })
+            .position({ x: 0, y: 0 })
+          PersonAvatar({
+            mood: this.mood,
+            nickname: this.rightNickname,
+            avatarUrl: this.rightAvatarUrl,
+            sizeVp: 72,
+            onAvatarClick: this.onRightAvatarClick,
+          })
+            .position({ x: 58, y: 0 })
+        }
+        .width(130)
+        .height(72)
         Text(`${displayName(this.leftNickname)} · ${displayName(this.rightNickname)}`)
           .fontSize(FontSizes.bodyMedium)
           .fontFamily(Fonts.LATO)
@@ -287,6 +314,7 @@ export struct CoupleBondVisual {
           mood: this.mood,
           nickname: this.leftNickname,
           avatarUrl: this.leftAvatarUrl,
+          onAvatarClick: this.onLeftAvatarClick,
         })
         LinkingPulse({ mood: this.mood })
           .margin({ top: 28, left: 6, right: 6 })
@@ -294,6 +322,7 @@ export struct CoupleBondVisual {
           mood: this.mood,
           nickname: this.rightNickname,
           avatarUrl: this.rightAvatarUrl,
+          onAvatarClick: this.onRightAvatarClick,
         })
       }
       .width('100%')
@@ -305,6 +334,7 @@ export struct CoupleBondVisual {
           mood: this.mood,
           nickname: this.leftNickname,
           avatarUrl: this.leftAvatarUrl,
+          onAvatarClick: this.onLeftAvatarClick,
         })
         PersonAvatarWithName({
           mood: this.mood,
@@ -346,16 +376,18 @@ export struct EmptyCoupleCard {
   @Prop mood: MoodPalette
   @Prop spaceName: string = '我的小宇宙'
   @Prop meNickname: string = '我'
-  @Prop meAvatarUrl: string = ''
+  @Prop @Watch('onMeAvatar') meAvatarUrl: string = ''
   @Prop @Watch('onOutgoing') hasOutgoing: boolean = false
   @Prop outgoingNickname: string = ''
   @Prop outgoingAvatarUrl: string = ''
   @Prop outgoingLabel: string = ''
   onEdit: () => void = () => {}
+  onMeAvatarClick: () => void = () => {}
   onBind: () => void = () => {}
   onCancelOutgoing: () => void = () => {}
 
   onOutgoing(): void {}
+  onMeAvatar(): void {}
 
   build() {
     Stack({ alignContent: Alignment.TopEnd }) {
@@ -368,6 +400,7 @@ export struct EmptyCoupleCard {
             leftAvatarUrl: this.meAvatarUrl,
             rightNickname: this.outgoingNickname.length > 0 ? this.outgoingNickname : (this.outgoingLabel.length > 0 ? this.outgoingLabel : '对方'),
             rightAvatarUrl: this.outgoingAvatarUrl,
+            onLeftAvatarClick: () => this.onMeAvatarClick(),
           })
         } else {
           CoupleBondVisual({
@@ -377,6 +410,7 @@ export struct EmptyCoupleCard {
             leftAvatarUrl: this.meAvatarUrl,
             rightNickname: '?',
             rightAvatarUrl: '',
+            onLeftAvatarClick: () => this.onMeAvatarClick(),
           })
         }
 
@@ -434,13 +468,16 @@ export struct IncomingBindCard {
   @Prop mood: MoodPalette
   @Prop spaceName: string = '我的小宇宙'
   @Prop meNickname: string = '我'
-  @Prop meAvatarUrl: string = ''
+  @Prop @Watch('onMeAvatar') meAvatarUrl: string = ''
   @Prop inviterNickname: string = '对方'
   @Prop inviterAvatarUrl: string = ''
   @Prop inviterLabel: string = '对方'
   onEdit: () => void = () => {}
+  onMeAvatarClick: () => void = () => {}
   onAccept: () => void = () => {}
   onReject: () => void = () => {}
+
+  onMeAvatar(): void {}
 
   build() {
     Stack({ alignContent: Alignment.TopEnd }) {
@@ -452,6 +489,7 @@ export struct IncomingBindCard {
           leftAvatarUrl: this.inviterAvatarUrl,
           rightNickname: this.meNickname,
           rightAvatarUrl: this.meAvatarUrl,
+          onRightAvatarClick: () => this.onMeAvatarClick(),
         })
         Text(this.spaceName)
           .fontSize(FontSizes.headlineMedium)
@@ -505,11 +543,14 @@ export struct BoundCoupleCard {
   @Prop togetherDate: string = ''
   @Prop lovingDays: number = -1
   @Prop meNickname: string = '我'
-  @Prop meAvatarUrl: string = ''
+  @Prop @Watch('onMeAvatar') meAvatarUrl: string = ''
   @Prop partnerNickname: string = 'TA'
   @Prop partnerAvatarUrl: string = ''
   @Prop coupleCoverUrl: string = ''
   onEdit: () => void = () => {}
+  onMeAvatarClick: () => void = () => {}
+
+  onMeAvatar(): void {}
 
   private daysOrNull(): number | null {
     return this.lovingDays >= 0 ? this.lovingDays : null
@@ -530,6 +571,7 @@ export struct BoundCoupleCard {
           rightNickname: this.partnerNickname,
           rightAvatarUrl: this.partnerAvatarUrl,
           coupleCoverUrl: this.coupleCoverUrl,
+          onLeftAvatarClick: () => this.onMeAvatarClick(),
         })
         Text(this.spaceName)
           .fontSize(FontSizes.headlineMedium)

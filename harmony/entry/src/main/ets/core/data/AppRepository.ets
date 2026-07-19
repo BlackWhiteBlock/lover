@@ -270,12 +270,97 @@ export class AppRepository {
       this.api.updateCoupleSpace({ name: trimmed } as UpdateCoupleSpaceRequest)
     )
     if (avatarFile) {
-      const assetId = await this.uploadAsset(
-        avatarFile.fileName, avatarFile.mimeType, avatarFile.data.byteLength, avatarFile.data, 'avatar',
-      )
-      await this.call(() => this.api.patchMe({ avatarAssetId: assetId } as PatchMeRequest))
+      await this.applyAvatarUpload(avatarFile, '')
+    } else {
+      await this.refreshAll()
     }
+  }
+
+  /** 仅更新本账号个人头像（绑定 / 未绑定均可） */
+  async updateAvatar(avatarFile: MediaFileInput, localPreviewUrl: string = ''): Promise<void> {
+    await this.applyAvatarUpload(avatarFile, localPreviewUrl)
+  }
+
+  /**
+   * 上传头像资产 → PATCH /api/me → 写入本地 user → refresh。
+   * localPreviewUrl：鸿蒙 Image 有时不刷新网络图，用本地 file:// 兜底立刻可见。
+   */
+  private async applyAvatarUpload(avatarFile: MediaFileInput, localPreviewUrl: string): Promise<void> {
+    if (avatarFile.isVideo) {
+      throw new BackendException('VALIDATION', '头像仅支持图片')
+    }
+    const previousUrl = this.tokenStore.snapshot.user?.avatarUrl ?? ''
+    const assetId = await this.uploadAsset(
+      avatarFile.fileName, avatarFile.mimeType, avatarFile.data.byteLength, avatarFile.data, 'avatar',
+    )
+    // 显式 JsonMap，避免 ArkTS 对 interface 字面量 JSON.stringify 丢字段
+    const body: JsonMap = {}
+    body.avatarAssetId = assetId
+    const patched = await this.call(() => this.api.patchMe(body as PatchMeRequest))
+    const userJson: JsonMap | null | undefined = patched.user
+    if (!userJson) {
+      throw new BackendException('VALIDATION', '头像更新失败：服务端未返回用户信息')
+    }
+    let user = User.fromJson(userJson)
+    user = this.withAvatarDisplayUrl(user, localPreviewUrl, previousUrl)
+    this.tokenStore.update((s) => {
+      s.user = user
+      return s
+    })
     await this.refreshAll()
+    const after = this.tokenStore.snapshot.user
+    if (!after) {
+      return
+    }
+    const afterUrl = after.avatarUrl ?? ''
+    // refresh 后若地址没变或为空，回落到本地预览，保证「我们」页立刻可见
+    if (afterUrl.length === 0 || afterUrl === previousUrl) {
+      if (localPreviewUrl.length > 0) {
+        const next = this.cloneUser(after)
+        next.avatarUrl = localPreviewUrl
+        this.tokenStore.update((s) => {
+          s.user = next
+          return s
+        })
+      }
+    } else {
+      const next = this.withAvatarDisplayUrl(this.cloneUser(after), '', previousUrl)
+      this.tokenStore.update((s) => {
+        s.user = next
+        return s
+      })
+    }
+  }
+
+  private cloneUser(user: User): User {
+    const raw: JsonMap = {}
+    raw.id = user.id
+    raw.phone = user.phone
+    raw.nickname = user.nickname
+    raw.avatarUrl = user.avatarUrl
+    raw.coupleCoverUrl = user.coupleCoverUrl
+    raw.gender = user.gender
+    raw.birthday = user.birthday
+    raw.profileCompleted = user.profileCompleted
+    raw.personalSpaceId = user.personalSpaceId
+    raw.createdAt = user.createdAt
+    return User.fromJson(raw)
+  }
+
+  private withAvatarDisplayUrl(user: User, localPreviewUrl: string, previousUrl: string): User {
+    const next = this.cloneUser(user)
+    let url = next.avatarUrl ?? ''
+    if (url.length === 0 || url === previousUrl) {
+      if (localPreviewUrl.length > 0) {
+        next.avatarUrl = localPreviewUrl
+        return next
+      }
+    }
+    if (url.startsWith('http://') || url.startsWith('https://')) {
+      const sep = url.includes('?') ? '&' : '?'
+      next.avatarUrl = `${url}${sep}_ts=${Date.now()}`
+    }
+    return next
   }
 
   async lookupUser(phone: string): Promise<UserLookupResponse> {

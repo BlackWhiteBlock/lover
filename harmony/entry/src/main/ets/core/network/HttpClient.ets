@@ -70,7 +70,7 @@ export class HttpClient {
 
   private async doRequest(
     url: string,
-    method: http.RequestMethod,
+    method: http.RequestMethod | string,
     body?: string,
     extraHeaders?: Record<string, string>,
     authRetry: number = 0,
@@ -81,7 +81,7 @@ export class HttpClient {
     try {
       const httpRequest = http.createHttp()
       const options: http.HttpRequestOptions = {
-        method: method,
+        method: method as http.RequestMethod,
         header: headers,
         connectTimeout: 30000,
         readTimeout: 30000,
@@ -213,7 +213,10 @@ export class HttpClient {
 
   async patch<T>(url: string, data?: Object): Promise<T> {
     const body = data ? JSON.stringify(data) : undefined
-    const result = await this.doRequest(url, http.RequestMethod.PATCH, body)
+    // 部分 Harmony SDK 的 RequestMethod.PATCH 为 undefined，会退化成 GET，
+    // 并把 JSON body 拼进 query（日志：GET /api/me?{"avatarAssetId":"..."}），且仍返回 200。
+    // 因此鸿蒙更新接口统一走 POST；后端对同路径同时挂载了 POST 别名。
+    const result = await this.doRequest(url, http.RequestMethod.POST, body)
     return result as T
   }
 
