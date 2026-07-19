@@ -1,6 +1,7 @@
 package com.lover.app.feature.auth
 
 import android.app.Activity
+import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.lover.app.core.auth.PnvsLoginHelper
@@ -37,6 +38,9 @@ class AuthViewModel @Inject constructor(
     private val _pnvsBusy = MutableStateFlow(false)
     val pnvsBusy = _pnvsBusy.asStateFlow()
 
+    private val _pnvsHint = MutableStateFlow<String?>(null)
+    val pnvsHint = _pnvsHint.asStateFlow()
+
     private var countdownJob: Job? = null
 
     init {
@@ -46,15 +50,13 @@ class AuthViewModel @Inject constructor(
     fun preparePnvs() {
         viewModelScope.launch {
             if (!pnvsLoginHelper.isSdkAvailable()) {
-                _pnvsReady.value = false
-                _showSmsFallback.value = true
+                markPnvsUnavailable("本机号登录需先放入阿里云号码认证 SDK（见 app/libs/README）")
                 return@launch
             }
             runCatching { repository.fetchPnvsSdkInfo() }
                 .onSuccess { info ->
                     if (!info.enabled || info.secretInfo.isBlank()) {
-                        _pnvsReady.value = false
-                        _showSmsFallback.value = true
+                        markPnvsUnavailable("服务端未开启本机号登录，请检查 PNVS 配置")
                         return@onSuccess
                     }
                     suspendCancellableCoroutine { cont ->
@@ -62,19 +64,29 @@ class AuthViewModel @Inject constructor(
                             secretInfo = info.secretInfo,
                             privacyUrl = info.privacyUrl,
                             termsUrl = info.termsUrl,
+                            onLog = { Log.i(TAG, it) },
                         ) { ready ->
                             if (cont.isActive) cont.resume(ready)
                         }
                     }.also { ready ->
                         _pnvsReady.value = ready
-                        if (!ready) _showSmsFallback.value = true
+                        if (ready) {
+                            _pnvsHint.value = null
+                        } else {
+                            markPnvsUnavailable("本机号登录暂不可用，请使用验证码")
+                        }
                     }
                 }
                 .onFailure {
-                    _pnvsReady.value = false
-                    _showSmsFallback.value = true
+                    markPnvsUnavailable("无法获取本机号登录配置，请检查网络与后端")
                 }
         }
+    }
+
+    private fun markPnvsUnavailable(hint: String) {
+        _pnvsReady.value = false
+        _pnvsHint.value = hint
+        _showSmsFallback.value = true
     }
 
     fun showSmsFallback() {
@@ -88,7 +100,10 @@ class AuthViewModel @Inject constructor(
             _pnvsBusy.value = true
             noticeStore.clear()
             val tokenResult = suspendCancellableCoroutine { cont ->
-                pnvsLoginHelper.getLoginToken(activity) { result ->
+                pnvsLoginHelper.getLoginToken(
+                    activity = activity,
+                    onLog = { Log.i(TAG, it) },
+                ) { result ->
                     if (cont.isActive) cont.resume(result)
                 }
             }
@@ -141,5 +156,9 @@ class AuthViewModel @Inject constructor(
         noticeStore.clear()
         runCatching { repository.login(phone.trim(), code.trim()) }
             .onFailure { _message.value = it.message }
+    }
+
+    companion object {
+        private const val TAG = "AuthPnvs"
     }
 }

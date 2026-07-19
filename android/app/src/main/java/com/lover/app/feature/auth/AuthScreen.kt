@@ -54,6 +54,7 @@ fun AuthScreen(viewModel: AuthViewModel) {
     val pnvsReady by viewModel.pnvsReady.collectAsState()
     val showSms by viewModel.showSmsFallback.collectAsState()
     val pnvsBusy by viewModel.pnvsBusy.collectAsState()
+    val pnvsHint by viewModel.pnvsHint.collectAsState()
     val activity = LocalContext.current as? Activity
 
     Box(
@@ -89,29 +90,40 @@ fun AuthScreen(viewModel: AuthViewModel) {
                     Text("欢迎回来", style = MaterialTheme.typography.headlineMedium)
                     Text("用手机号进入两个人的专属世界", color = Stone)
 
-                    if (pnvsReady) {
-                        Button(
-                            onClick = {
-                                if (activity != null) viewModel.oneClickLogin(activity)
+                    Button(
+                        onClick = {
+                            if (activity != null) viewModel.oneClickLogin(activity)
+                        },
+                        modifier = Modifier.fillMaxWidth().height(52.dp),
+                        enabled = pnvsReady && !pnvsBusy && activity != null,
+                        shape = RoundedCornerShape(22.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = Rose),
+                    ) {
+                        Text(
+                            when {
+                                pnvsBusy -> "正在拉起…"
+                                pnvsReady -> "本机号码一键登录"
+                                else -> "本机号码一键登录（暂不可用）"
                             },
-                            modifier = Modifier.fillMaxWidth().height(52.dp),
-                            enabled = !pnvsBusy && activity != null,
-                            shape = RoundedCornerShape(22.dp),
-                            colors = ButtonDefaults.buttonColors(containerColor = Rose),
+                        )
+                    }
+                    pnvsHint?.let {
+                        Text(
+                            it,
+                            color = Stone,
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                    }
+                    if (!showSms) {
+                        TextButton(
+                            onClick = { viewModel.showSmsFallback() },
+                            modifier = Modifier.fillMaxWidth(),
                         ) {
-                            Text(if (pnvsBusy) "正在拉起…" else "本机号码一键登录")
-                        }
-                        if (!showSms) {
-                            TextButton(
-                                onClick = { viewModel.showSmsFallback() },
-                                modifier = Modifier.fillMaxWidth(),
-                            ) {
-                                Text("其他手机号 / 验证码登录", color = Stone)
-                            }
+                            Text("其他手机号 / 验证码登录", color = Stone)
                         }
                     }
 
-                    if (showSms || !pnvsReady) {
+                    if (showSms) {
                         SoftTextField(
                             value = phone,
                             onValueChange = { phone = it.filter(Char::isDigit).take(11) },

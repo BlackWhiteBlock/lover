@@ -92,7 +92,13 @@
             </intent-filter>
         </activity>
 
-        <!-- 阿里云号码认证授权页（全屏模式可不改 theme；保留 WebView / 协议二次弹窗） -->
+        <!-- 阿里云号码认证：LoginAuthActivity 必须注册，否则会 600002 唤起授权页失败 -->
+        <activity
+            android:name="com.mobile.auth.gatewayauth.LoginAuthActivity"
+            android:configChanges="orientation|keyboardHidden|screenSize"
+            android:exported="false"
+            android:launchMode="singleTop"
+            android:screenOrientation="behind" />
         <activity
             android:name="com.mobile.auth.gatewayauth.activity.AuthWebVeiwActivity"
             android:configChanges="orientation|keyboardHidden|screenSize"
@@ -105,7 +111,7 @@
             android:exported="false"
             android:launchMode="singleTop"
             android:screenOrientation="behind"
-            android:theme="@style/Theme.AppCompat.Dialog" />
+            android:theme="@style/authsdk_activity_dialog" />
     </application>
 </manifest>
 

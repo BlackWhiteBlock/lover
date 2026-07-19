@@ -25,6 +25,7 @@ struct AuthPage {
   @State pnvsReady: boolean = false
   @State showSms: boolean = false
   @State pnvsBusy: boolean = false
+  @State pnvsHint: string = ''
   private vm: AppViewModel = AppViewModel.getInstance()
   private timerId: number = -1
   private normalizingPhone: boolean = false
@@ -42,12 +43,17 @@ struct AuthPage {
     }
   }
 
+  private markPnvsUnavailable(hint: string): void {
+    this.pnvsReady = false
+    this.pnvsHint = hint
+    this.showSms = true
+  }
+
   private async preparePnvs(): Promise<void> {
     try {
       const info = await this.vm.repository.fetchPnvsSdkInfo()
       if (!info.enabled || info.secretInfo.length === 0) {
-        this.pnvsReady = false
-        this.showSms = true
+        this.markPnvsUnavailable('服务端未开启本机号登录，请检查 PNVS 配置')
         return
       }
       const ctx = getContext(this) as common.UIAbilityContext
@@ -58,12 +64,13 @@ struct AuthPage {
         info.termsUrl,
       )
       this.pnvsReady = ok
-      if (!ok) {
-        this.showSms = true
+      if (ok) {
+        this.pnvsHint = ''
+      } else {
+        this.markPnvsUnavailable('本机号登录暂不可用（需放入 numberauth_standard.har），请使用验证码')
       }
     } catch (_e) {
-      this.pnvsReady = false
-      this.showSms = true
+      this.markPnvsUnavailable('无法获取本机号登录配置，请检查网络与后端')
     }
   }
 
@@ -246,28 +253,35 @@ struct AuthPage {
             .fontColor(Colors.stone)
             .width('100%')
 
-          if (this.pnvsReady) {
-            SoftPrimaryButton({
-              mood: this.mood,
-              label: this.pnvsBusy ? '正在拉起…' : '本机号码一键登录',
-              isEnabled: !this.pnvsBusy,
-              onTap: () => this.oneClickLogin(),
-            })
-            if (!this.showSms) {
-              Text('其他手机号 / 验证码登录')
-                .fontSize(FontSizes.bodyMedium)
-                .fontFamily(Fonts.LATO)
-                .fontColor(Colors.stone)
-                .width('100%')
-                .textAlign(TextAlign.Center)
-                .padding({ top: 4, bottom: 4 })
-                .onClick(() => {
-                  this.showSms = true
-                })
-            }
+          SoftPrimaryButton({
+            mood: this.mood,
+            label: this.pnvsBusy
+              ? '正在拉起…'
+              : (this.pnvsReady ? '本机号码一键登录' : '本机号码一键登录（暂不可用）'),
+            isEnabled: this.pnvsReady && !this.pnvsBusy,
+            onTap: () => this.oneClickLogin(),
+          })
+          if (this.pnvsHint.length > 0) {
+            Text(this.pnvsHint)
+              .fontSize(FontSizes.bodySmall)
+              .fontFamily(Fonts.LATO)
+              .fontColor(Colors.stone)
+              .width('100%')
+          }
+          if (!this.showSms) {
+            Text('其他手机号 / 验证码登录')
+              .fontSize(FontSizes.bodyMedium)
+              .fontFamily(Fonts.LATO)
+              .fontColor(Colors.stone)
+              .width('100%')
+              .textAlign(TextAlign.Center)
+              .padding({ top: 4, bottom: 4 })
+              .onClick(() => {
+                this.showSms = true
+              })
           }
 
-          if (this.showSms || !this.pnvsReady) {
+          if (this.showSms) {
             SoftTextField({
               mood: this.mood,
               label: '手机号',
