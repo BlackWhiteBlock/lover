@@ -283,8 +283,8 @@ jobs:
             echo "Keeping existing server .env (not overwritten by deploy)."
           fi
 
-          # Guard: .env PORT must not collide with Family default 4000.
-          ENV_PORT="$(grep -E '^PORT=' .env | tail -n1 | cut -d= -f2- | tr -d '[:space:]' || true)"
+          # Parse PORT= from .env (digits only). Never source .env in bash.
+          ENV_PORT="$(grep -E '^PORT=[0-9]+' .env | tail -n1 | cut -d= -f2 | tr -dc '0-9' || true)"
           if [ "$ENV_PORT" = "4000" ]; then
             echo "Refusing start: $DEPLOY_PATH/.env has PORT=4000 which collides with Family. Set PORT=4001 (or another free port)." >&2
             exit 1
@@ -311,10 +311,12 @@ jobs:
           pm2 save || true
 
           sleep 3
-          # Read PORT safely without sourcing the whole file.
-          HEALTH_PORT="$(grep -E '^PORT=' .env | tail -n1 | cut -d= -f2- | tr -d '[:space:]\"' || true)"
-          HEALTH_PORT="${HEALTH_PORT:-$DEPLOY_PORT}"
-          echo "Checking lover-backend health on port $HEALTH_PORT (PM2=$PM2_APP_NAME)"
+          # Prefer deploy workflow port; only use .env PORT when it is a valid integer.
+          HEALTH_PORT="$DEPLOY_PORT"
+          if [ -n "${ENV_PORT:-}" ]; then
+            HEALTH_PORT="$ENV_PORT"
+          fi
+          echo "Checking lover-backend health on port $HEALTH_PORT (PM2=$PM2_APP_NAME, env PORT=${ENV_PORT:-unset})"
           if ! curl -fsS "http://127.0.0.1:$HEALTH_PORT/health"; then
             echo "Health check failed. PM2 status:"
             pm2 describe "$PM2_APP_NAME" || true

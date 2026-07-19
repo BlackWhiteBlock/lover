@@ -1,7 +1,10 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import dotenv from 'dotenv';
 import pg from 'pg';
 import { orderedMigrationNames } from '../src/migrations.js';
+
+dotenv.config({ override: true });
 
 const databaseUrl = process.env.DATABASE_URL ?? 'postgres://postgres:postgres@localhost:5432/lover';
 const migrationsDir = path.resolve(process.cwd(), 'db/migrations');

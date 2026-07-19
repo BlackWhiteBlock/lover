@@ -1,6 +1,10 @@
 import path from 'node:path';
-import 'dotenv/config';
+import dotenv from 'dotenv';
 import { z } from 'zod';
+
+// Prefer on-disk .env over stale PM2/shell vars (pm2 restart --update-env
+// no longer sources .env in deploy, so file must win).
+dotenv.config({ override: true });
 
 const booleanString = z.enum(['true', 'false']).transform((value) => value === 'true');
 
@@ -37,7 +41,13 @@ const envSchema = z.object({
   QINIU_DOWNLOAD_DOMAIN: z.string().default(''),
   QINIU_DOWNLOAD_EXPIRES_SECONDS: z.coerce.number().int().min(60).max(86400).default(3600),
   QINIU_IMAGE_THUMB_FOP: z.string().default('imageMogr2/auto-orient/thumbnail/800x/format/webp/quality/75'),
-  PUBLIC_BASE_URL: z.string().url().default('http://localhost:4000'),
+  PUBLIC_BASE_URL: z.preprocess((raw) => {
+    if (typeof raw !== 'string') return 'http://localhost:4000';
+    const trimmed = raw.trim();
+    if (!trimmed) return 'http://localhost:4000';
+    if (!/^https?:\/\//i.test(trimmed)) return `https://${trimmed}`;
+    return trimmed;
+  }, z.string().url()),
   CORS_ORIGIN: z.string().default('http://localhost:5173'),
   LOG_LEVEL: z.string().default('info'),
   TRUST_PROXY: booleanString.default(false),
