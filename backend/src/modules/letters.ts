@@ -81,7 +81,6 @@ export function registerLetters(app: FastifyInstance, context: AppContext, auth:
   const { db } = context;
 
   app.get('/api/letters/unread-summary', { preHandler: auth }, async (request) => {
-    await ensureLetterUnreadBaseline(context, request.user.id);
     const spaceIds = await readableSpaceIds(context, request.user.id);
     const count = await countUnreadLetters(context, request.user.id, spaceIds);
     return { count, hasUnread: count > 0 };
@@ -117,7 +116,6 @@ export function registerLetters(app: FastifyInstance, context: AppContext, auth:
     if (!unlocked) {
       throw badRequest('LETTER_LOCKED', '信件尚未解锁，暂时不能拆开');
     }
-    await ensureLetterUnreadBaseline(context, request.user.id);
     await db.query(
       `insert into letter_item_reads(user_id, letter_id, opened_at)
        values ($1, $2, now())
@@ -265,15 +263,7 @@ async function findLetter(
   return result.rows[0] ?? null;
 }
 
-async function ensureLetterUnreadBaseline(context: AppContext, userId: string) {
-  await context.db.query(
-    `insert into letter_unread_baselines(user_id, baseline_at)
-     values ($1, now())
-     on conflict (user_id) do nothing`,
-    [userId],
-  );
-}
-
+/** 未读 = 对方发来、已解锁、本人尚未拆开（与列表「未拆」一致） */
 async function countUnreadLetters(
   context: AppContext,
   userId: string,
@@ -282,13 +272,8 @@ async function countUnreadLetters(
   const result = await context.db.query<{ count: string }>(
     `select count(*)::text as count
      from letters l
-     join letter_unread_baselines b on b.user_id = $1
      where l.space_id = any($2::uuid[])
        and l.sender_id <> $1
-       and (
-         l.created_at > b.baseline_at
-         or (l.unlock_at is not null and l.unlock_at > b.baseline_at)
-       )
        and (
          l.type = 'instant'
          or (l.unlock_at is not null and l.unlock_at <= now())

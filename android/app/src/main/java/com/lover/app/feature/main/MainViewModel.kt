@@ -84,6 +84,7 @@ class MainViewModel @Inject constructor(
                         }
                     }
                 refreshMediaUnreadBadge()
+                refreshLetterUnreadBadge()
             }
             _restoreComplete.value = true
         }

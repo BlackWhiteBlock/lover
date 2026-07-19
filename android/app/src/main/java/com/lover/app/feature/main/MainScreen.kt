@@ -190,7 +190,9 @@ fun MainScreen(
                         onSelect = viewModel::selectTab,
                         soloMode = !state.linked,
                         timelineUnread = mediaUnreadCount > 0,
-                        lettersUnread = letterUnreadCount > 0,
+                        // API 计数 + 本地未拆列表兜底，避免摘要未刷新时红点缺失
+                        lettersUnread = letterUnreadCount > 0 ||
+                            state.letters.any { it.isSealedFor(state.user?.id) },
                     )
                 }
             },

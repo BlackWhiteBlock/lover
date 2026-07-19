@@ -84,6 +84,21 @@ struct MainPage {
     }
   }
 
+  /** API 未读数 + 本地未拆列表兜底 */
+  hasLetterUnread(): boolean {
+    if (this.vm.letterUnreadCount > 0) {
+      return true
+    }
+    const me = this.vm.data.user?.id ?? null
+    const letters = this.vm.data.letters
+    for (let i = 0; i < letters.length; i++) {
+      if (Letter.isSealedFor(letters[i], me)) {
+        return true
+      }
+    }
+    return false
+  }
+
   navItems(): NavItem[] {
     const linked = this.vm.data.linked
     const items: NavItem[] = []
@@ -173,7 +188,7 @@ struct MainPage {
                     y: this.currentIndex === (item.tab as number) ? 1.06 : 1,
                   })
                 if ((item.tab === MainTab.TIMELINE && this.vm.mediaUnreadCount > 0) ||
-                  (item.tab === MainTab.LETTERS && this.vm.letterUnreadCount > 0)) {
+                  (item.tab === MainTab.LETTERS && this.hasLetterUnread())) {
                   Row()
                     .width(8)
                     .height(8)
@@ -203,7 +218,7 @@ struct MainPage {
             .justifyContent(FlexAlign.Center)
             .alignItems(HorizontalAlign.Center)
             .onClick(() => this.selectTab(item.tab))
-          }, (item: NavItem) => `${item.label}_${this.uiEpoch}_${this.vm.mediaUnreadCount}_${this.vm.letterUnreadCount}`)
+          }, (item: NavItem) => `${item.label}_${this.uiEpoch}_${this.vm.mediaUnreadCount}_${this.hasLetterUnread()}`)
         }
         .width('100%')
         .padding({ left: 8, right: 8, top: 6, bottom: 6 })
