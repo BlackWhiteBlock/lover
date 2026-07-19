@@ -1,7 +1,7 @@
 /**
- * Auth — mirrors Android AuthScreen.kt
- * Unauthenticated: always CoupleMood (soloMode=false on Android).
+ * Auth — mirrors Android AuthScreen (一键登录为主 + 短信兜底)
  */
+import { common } from '@kit.AbilityKit'
 import { AppNav } from '../core/nav/AppNav'
 import { AppViewModel } from '../core/data/AppViewModel'
 import { CoupleMood, Colors, FontSizes } from '../core/design/Theme'
@@ -10,11 +10,11 @@ import { Fonts } from '../core/design/Fonts'
 import { LoverWordmark } from '../core/design/LoverBrand'
 import { SoftTextField, SoftPrimaryButton } from '../core/design/SoftInputs'
 import { ensureBrandFonts } from '../core/design/BrandFonts'
+import { PnvsAuthHelper } from '../core/auth/PnvsAuthHelper'
 
 @Entry
 @Component
 struct AuthPage {
-  /** Android: accessToken == null → soloMode false → CoupleMood */
   @State mood: MoodPalette = CoupleMood
   @State @Watch('onPhoneWatch') phone: string = ''
   @State @Watch('onCodeWatch') code: string = ''
@@ -22,6 +22,9 @@ struct AuthPage {
   @State countdown: number = 0
   @State errorMsg: string = ''
   @State fontEpoch: number = 0
+  @State pnvsReady: boolean = false
+  @State showSms: boolean = false
+  @State pnvsBusy: boolean = false
   private vm: AppViewModel = AppViewModel.getInstance()
   private timerId: number = -1
   private normalizingPhone: boolean = false
@@ -30,11 +33,37 @@ struct AuthPage {
   aboutToAppear(): void {
     ensureBrandFonts()
     this.fontEpoch += 1
+    this.preparePnvs()
   }
 
   aboutToDisappear(): void {
     if (this.timerId !== -1) {
       clearInterval(this.timerId)
+    }
+  }
+
+  private async preparePnvs(): Promise<void> {
+    try {
+      const info = await this.vm.repository.fetchPnvsSdkInfo()
+      if (!info.enabled || info.secretInfo.length === 0) {
+        this.pnvsReady = false
+        this.showSms = true
+        return
+      }
+      const ctx = getContext(this) as common.UIAbilityContext
+      const ok = PnvsAuthHelper.getInstance().prepare(
+        ctx,
+        info.secretInfo,
+        info.privacyUrl,
+        info.termsUrl,
+      )
+      this.pnvsReady = ok
+      if (!ok) {
+        this.showSms = true
+      }
+    } catch (_e) {
+      this.pnvsReady = false
+      this.showSms = true
     }
   }
 
@@ -88,6 +117,40 @@ struct AuthPage {
     return this.phone.length === 11 && this.code.length === 6 && !this.loading
   }
 
+  private navigateAfterLogin(): void {
+    if (!this.vm.data.profileCompleted) {
+      AppNav.replace('pages/OnboardingPage')
+    } else {
+      AppNav.replace('pages/MainPage')
+    }
+  }
+
+  oneClickLogin(): void {
+    if (this.pnvsBusy || !this.pnvsReady) {
+      return
+    }
+    this.pnvsBusy = true
+    this.errorMsg = ''
+    PnvsAuthHelper.getInstance().getLoginToken(8000, (ok: boolean, tokenOrMsg: string) => {
+      if (!ok) {
+        if (tokenOrMsg.indexOf('取消') < 0) {
+          this.errorMsg = tokenOrMsg
+        }
+        this.showSms = true
+        this.pnvsBusy = false
+        return
+      }
+      this.vm.loginWithPnvsToken(tokenOrMsg).then(() => {
+        this.navigateAfterLogin()
+      }).catch((e: Error) => {
+        this.errorMsg = e.message ?? '登录失败'
+        this.showSms = true
+      }).finally(() => {
+        this.pnvsBusy = false
+      })
+    })
+  }
+
   async sendSms(): Promise<void> {
     if (!this.canSend()) {
       if (this.phone.length !== 11) {
@@ -128,11 +191,7 @@ struct AuthPage {
     this.errorMsg = ''
     try {
       await this.vm.login(this.phone, this.code)
-      if (!this.vm.data.profileCompleted) {
-        AppNav.replace('pages/OnboardingPage')
-      } else {
-        AppNav.replace('pages/MainPage')
-      }
+      this.navigateAfterLogin()
     } catch (e) {
       this.errorMsg = e instanceof Error ? e.message : '登录失败'
     } finally {
@@ -142,7 +201,6 @@ struct AuthPage {
 
   build() {
     Stack() {
-      // Blush → background (Android Brush.verticalGradient)
       Column()
         .width('100%')
         .height('100%')
@@ -154,7 +212,6 @@ struct AuthPage {
           ],
         })
 
-      // Peach orb — Android offset(230.dp, -40.dp) size 210, alpha 0.45
       Column()
         .width(210)
         .height(210)
@@ -164,7 +221,6 @@ struct AuthPage {
         .position({ x: 230, y: -40 })
         .hitTestBehavior(HitTestMode.None)
 
-      // Centered column, max 440
       Column() {
         LoverWordmark({
           mood: this.mood,
@@ -190,43 +246,72 @@ struct AuthPage {
             .fontColor(Colors.stone)
             .width('100%')
 
-          SoftTextField({
-            mood: this.mood,
-            label: '手机号',
-            value: $phone,
-            placeholder: '请输入手机号',
-            maxLength: 11,
-            inputType: InputType.PhoneNumber,
-          })
-
-          Row({ space: 10 }) {
-            Column() {
-              SoftTextField({
-                mood: this.mood,
-                label: '验证码',
-                value: $code,
-                placeholder: '',
-                maxLength: 6,
-                inputType: InputType.Number,
-              })
+          if (this.pnvsReady) {
+            SoftPrimaryButton({
+              mood: this.mood,
+              label: this.pnvsBusy ? '正在拉起…' : '本机号码一键登录',
+              isEnabled: !this.pnvsBusy,
+              onTap: () => this.oneClickLogin(),
+            })
+            if (!this.showSms) {
+              Text('其他手机号 / 验证码登录')
+                .fontSize(FontSizes.bodyMedium)
+                .fontFamily(Fonts.LATO)
+                .fontColor(Colors.stone)
+                .width('100%')
+                .textAlign(TextAlign.Center)
+                .padding({ top: 4, bottom: 4 })
+                .onClick(() => {
+                  this.showSms = true
+                })
             }
-            .layoutWeight(1)
-
-            // FilledTonalButton: Blush / Rose, height 56, radius 20, padding top 8
-            Button(this.countdown > 0 ? `${this.countdown}s` : '获取')
-              .height(56)
-              .padding({ left: 18, right: 18 })
-              .margin({ top: 8 })
-              .borderRadius(20)
-              .backgroundColor(Colors.blush)
-              .fontColor(Colors.rose)
-              .fontSize(FontSizes.bodyMedium)
-              .fontFamily(Fonts.LATO)
-              .enabled(this.canSend())
-              .onClick(() => this.sendSms())
           }
-          .width('100%')
-          .alignItems(VerticalAlign.Bottom)
+
+          if (this.showSms || !this.pnvsReady) {
+            SoftTextField({
+              mood: this.mood,
+              label: '手机号',
+              value: $phone,
+              placeholder: '请输入手机号',
+              maxLength: 11,
+              inputType: InputType.PhoneNumber,
+            })
+
+            Row({ space: 10 }) {
+              Column() {
+                SoftTextField({
+                  mood: this.mood,
+                  label: '验证码',
+                  value: $code,
+                  placeholder: '',
+                  maxLength: 6,
+                  inputType: InputType.Number,
+                })
+              }
+              .layoutWeight(1)
+
+              Button(this.countdown > 0 ? `${this.countdown}s` : '获取')
+                .height(56)
+                .padding({ left: 18, right: 18 })
+                .margin({ top: 8 })
+                .borderRadius(20)
+                .backgroundColor(Colors.blush)
+                .fontColor(Colors.rose)
+                .fontSize(FontSizes.bodyMedium)
+                .fontFamily(Fonts.LATO)
+                .enabled(this.canSend())
+                .onClick(() => this.sendSms())
+            }
+            .width('100%')
+            .alignItems(VerticalAlign.Bottom)
+
+            SoftPrimaryButton({
+              mood: this.mood,
+              label: this.loading ? '登录中…' : '登录 / 注册',
+              isEnabled: this.canLogin(),
+              onTap: () => this.login(),
+            })
+          }
 
           if (this.errorMsg.length > 0) {
             Text(this.errorMsg)
@@ -235,13 +320,6 @@ struct AuthPage {
               .fontColor(Colors.error)
               .width('100%')
           }
-
-          SoftPrimaryButton({
-            mood: this.mood,
-            label: this.loading ? '登录中…' : '登录 / 注册',
-            isEnabled: this.canLogin(),
-            onTap: () => this.login(),
-          })
         }
         .width('100%')
         .padding(26)

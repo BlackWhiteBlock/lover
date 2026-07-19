@@ -10,6 +10,7 @@ import {
   AppState, User, CoupleSpace, MediaItem, MediaAssetPart, Anniversary, Letter,
   MediaType, AnniversaryType, LetterType,
   SendSmsResponse, AuthResponse, MeResponse, OnboardingResponse,
+  PnvsSdkInfoResponse, PnvsLoginRequest,
   UserLookupResponse, AcceptBindResponse, BootstrapResponse,
   CreateMediaAssetRequest, MediaAssetOrderItem,
   IncomingBindRequest, OutgoingBindRequest,
@@ -52,6 +53,20 @@ export class AppRepository {
     const auth = await this.call(() =>
       this.api.login({ phone: phone.trim(), code: code.trim() } as LoginRequest)
     )
+    await this.applyAuthSession(auth)
+  }
+
+  async fetchPnvsSdkInfo(): Promise<PnvsSdkInfoResponse> {
+    return this.call(() => this.api.pnvsSdkInfo('harmony'))
+  }
+
+  async loginWithPnvsToken(loginToken: string): Promise<void> {
+    const req: PnvsLoginRequest = { loginToken: loginToken }
+    const auth = await this.call(() => this.api.pnvsLogin(req))
+    await this.applyAuthSession(auth)
+  }
+
+  private async applyAuthSession(auth: AuthResponse): Promise<void> {
     await this.tokenStore.saveTokens(auth.accessToken, auth.refreshToken)
     try {
       const me = await this.call(() => this.api.me())

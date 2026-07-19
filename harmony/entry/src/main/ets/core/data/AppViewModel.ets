@@ -216,6 +216,11 @@ export class AppViewModel {
     this.bumpUi()
   }
 
+  async loginWithPnvsToken(loginToken: string): Promise<void> {
+    await this.repository.loginWithPnvsToken(loginToken)
+    this.bumpUi()
+  }
+
   async logout(): Promise<void> {
     this.clearMessages()
     try {

@@ -1,10 +1,13 @@
 import { createHash, randomInt, randomUUID } from 'node:crypto';
+import { readFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
+import path from 'node:path';
 import type { SendSmsRequest, SendSmsResponse } from '@alicloud/dysmsapi20170525';
 import type { $OpenApiUtil } from '@alicloud/openapi-core';
 import bcrypt from 'bcryptjs';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import jwt, { type SignOptions } from 'jsonwebtoken';
+import type { PoolClient } from 'pg';
 import { z } from 'zod';
 import type { AppContext, AuthHandler, AuthUser, AccessClaims } from '../types.js';
 import { AppError, badRequest, forbidden, unauthorized } from '../errors.js';
@@ -12,8 +15,20 @@ import { personalSpaceId } from './spaces.js';
 import { presentUserAvatar } from './userAvatar.js';
 
 const require = createRequire(import.meta.url);
+const legalDir = path.resolve(process.cwd(), 'legal');
+
 type SmsClient = {
   sendSms(request: SendSmsRequest): Promise<SendSmsResponse>;
+};
+
+type PnvsClient = {
+  getMobile(request: { accessToken?: string }): Promise<{
+    body?: {
+      code?: string;
+      message?: string;
+      getMobileResultDTO?: { mobile?: string };
+    };
+  }>;
 };
 
 const phoneSchema = z.string().trim().transform(normalizePhone).refine(
@@ -24,6 +39,13 @@ const sendSchema = z.object({ phone: phoneSchema }).strict();
 const loginSchema = z.object({
   phone: phoneSchema,
   code: z.string().regex(/^\d{6}$/),
+  nickname: z.string().trim().min(1).max(30).optional(),
+}).strict();
+const pnvsSdkInfoSchema = z.object({
+  platform: z.enum(['android', 'harmony']),
+}).strict();
+const pnvsLoginSchema = z.object({
+  loginToken: z.string().trim().min(8).max(2048),
   nickname: z.string().trim().min(1).max(30).optional(),
 }).strict();
 const refreshSchema = z.object({ refreshToken: z.string().min(1) }).strict();
@@ -100,6 +122,47 @@ function tokenHash(token: string) {
 export function registerAuth(app: FastifyInstance, context: AppContext) {
   const { db, config } = context;
 
+  app.get('/legal/privacy', async (_request, reply) => {
+    const html = await readFile(path.join(legalDir, 'privacy.html'), 'utf8');
+    return reply.type('text/html; charset=utf-8').send(html);
+  });
+  app.get('/legal/terms', async (_request, reply) => {
+    const html = await readFile(path.join(legalDir, 'terms.html'), 'utf8');
+    return reply.type('text/html; charset=utf-8').send(html);
+  });
+
+  app.get('/api/auth/pnvs/sdk-info', {
+    config: { rateLimit: { max: 60, timeWindow: '1 minute' } },
+  }, async (request) => {
+    const query = pnvsSdkInfoSchema.parse(request.query);
+    const secretInfo = query.platform === 'android'
+      ? config.pnvs.androidSdkSecret
+      : config.pnvs.harmonySdkSecret;
+    const enabled = Boolean(config.pnvs.enabled && secretInfo);
+    return {
+      enabled,
+      platform: query.platform,
+      secretInfo: enabled ? secretInfo : '',
+      privacyUrl: `${config.publicBaseUrl}/legal/privacy`,
+      termsUrl: `${config.publicBaseUrl}/legal/terms`,
+    };
+  });
+
+  app.post('/api/auth/pnvs/login', {
+    config: { rateLimit: { max: 20, timeWindow: '10 minutes' } },
+  }, async (request, reply) => {
+    if (!config.pnvs.enabled) {
+      throw badRequest('PNVS_DISABLED', '本机号登录暂未开启，请使用短信验证码');
+    }
+    if (!config.sms.aliyun.accessKeyId || !config.sms.aliyun.accessKeySecret) {
+      throw badRequest('PNVS_MISCONFIGURED', '号码认证服务未正确配置');
+    }
+    const input = pnvsLoginSchema.parse(request.body);
+    const phone = await fetchMobileFromPnvs(context, input.loginToken);
+    const result = await issueAuthSession(context, phone, input.nickname);
+    return reply.code(result.isNewUser ? 201 : 200).send(result);
+  });
+
   app.post('/api/auth/sms/send', {
     config: {
       rateLimit: config.sms.provider === 'dev'
@@ -158,47 +221,7 @@ export function registerAuth(app: FastifyInstance, context: AppContext) {
         [codeId],
       );
       if (!consumed.rowCount) throw unauthorized('验证码已使用');
-      let userResult = await client.query<AuthUser>(
-        `select id, phone, nickname, avatar_url as "avatarUrl",
-                gender, birthday::text as birthday,
-                profile_completed as "profileCompleted",
-                personal_space_id as "personalSpaceId",
-                created_at as "createdAt"
-         from users where phone = $1`,
-        [input.phone],
-      );
-      const isNewUser = !userResult.rowCount;
-      if (isNewUser) {
-        userResult = await client.query<AuthUser>(
-          `insert into users(phone, nickname) values ($1, $2)
-           returning id, phone, nickname, avatar_url as "avatarUrl",
-                     gender, birthday::text as birthday,
-                     profile_completed as "profileCompleted",
-                     personal_space_id as "personalSpaceId",
-                     created_at as "createdAt"`,
-          [input.phone, input.nickname ?? `用户${input.phone.slice(-4)}`],
-        );
-      }
-      const user = userResult.rows[0]!;
-      // 单端登录：新登录立即作废该用户其它未过期会话，旧设备下次请求会 401。
-      await client.query(
-        `update auth_sessions
-         set revoked_at = now()
-         where user_id = $1 and revoked_at is null`,
-        [user.id],
-      );
-      const sessionId = randomUUID();
-      const refreshToken = signRefresh(context, user.id, sessionId);
-      await client.query(
-        `insert into auth_sessions(id, user_id, refresh_token_hash, expires_at)
-         values ($1, $2, $3, now() + make_interval(days => $4))`,
-        [sessionId, user.id, tokenHash(refreshToken), config.jwt.refreshTtlDays],
-      );
-      return {
-        user: { ...user, createdAt: presentCreatedAt(user.createdAt as Date | string | null | undefined) },
-        isNewUser,
-        ...tokens(context, user.id, sessionId, refreshToken),
-      };
+      return issueAuthSessionWithClient(context, client, input.phone, input.nickname);
     });
     return reply.code(result.isNewUser ? 201 : 200).send(result);
   });
@@ -322,6 +345,99 @@ export function createAuthHandler(context: AppContext): AuthHandler {
     request.user = result.rows[0]!;
     request.sessionId = claims.sid;
   };
+}
+
+async function issueAuthSession(
+  context: AppContext,
+  phone: string,
+  nickname?: string,
+) {
+  return context.db.transaction(async (client) =>
+    issueAuthSessionWithClient(context, client, phone, nickname));
+}
+
+async function issueAuthSessionWithClient(
+  context: AppContext,
+  client: PoolClient,
+  phone: string,
+  nickname?: string,
+) {
+  let userResult = await client.query<AuthUser>(
+    `select id, phone, nickname, avatar_url as "avatarUrl",
+            gender, birthday::text as birthday,
+            profile_completed as "profileCompleted",
+            personal_space_id as "personalSpaceId",
+            created_at as "createdAt"
+     from users where phone = $1`,
+    [phone],
+  );
+  const isNewUser = !userResult.rowCount;
+  if (isNewUser) {
+    userResult = await client.query<AuthUser>(
+      `insert into users(phone, nickname) values ($1, $2)
+       returning id, phone, nickname, avatar_url as "avatarUrl",
+                 gender, birthday::text as birthday,
+                 profile_completed as "profileCompleted",
+                 personal_space_id as "personalSpaceId",
+                 created_at as "createdAt"`,
+      [phone, nickname ?? `用户${phone.slice(-4)}`],
+    );
+  }
+  const user = userResult.rows[0]!;
+  // 单端登录：新登录立即作废该用户其它未过期会话，旧设备下次请求会 401。
+  await client.query(
+    `update auth_sessions
+     set revoked_at = now()
+     where user_id = $1 and revoked_at is null`,
+    [user.id],
+  );
+  const sessionId = randomUUID();
+  const refreshToken = signRefresh(context, user.id, sessionId);
+  await client.query(
+    `insert into auth_sessions(id, user_id, refresh_token_hash, expires_at)
+     values ($1, $2, $3, now() + make_interval(days => $4))`,
+    [sessionId, user.id, tokenHash(refreshToken), context.config.jwt.refreshTtlDays],
+  );
+  return {
+    user: { ...user, createdAt: presentCreatedAt(user.createdAt as Date | string | null | undefined) },
+    isNewUser,
+    ...tokens(context, user.id, sessionId, refreshToken),
+  };
+}
+
+async function fetchMobileFromPnvs(context: AppContext, loginToken: string): Promise<string> {
+  const DypnsMod = require('@alicloud/dypnsapi20170525') as {
+    default?: new (config: $OpenApiUtil.Config) => PnvsClient;
+    GetMobileRequest: new (opts: { accessToken?: string }) => { accessToken?: string };
+  };
+  const Client = DypnsMod.default
+    ?? (DypnsMod as unknown as new (config: $OpenApiUtil.Config) => PnvsClient);
+  const { $OpenApiUtil } = require('@alicloud/openapi-core') as typeof import('@alicloud/openapi-core');
+  const client = new Client(
+    new $OpenApiUtil.Config({
+      accessKeyId: context.config.sms.aliyun.accessKeyId,
+      accessKeySecret: context.config.sms.aliyun.accessKeySecret,
+      endpoint: 'dypnsapi.aliyuncs.com',
+    }),
+  );
+  const request = new DypnsMod.GetMobileRequest({ accessToken: loginToken });
+  let response: Awaited<ReturnType<PnvsClient['getMobile']>>;
+  try {
+    response = await client.getMobile(request);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw unauthorized(`本机号取号失败：${message}`);
+  }
+  const body = response.body;
+  if (!body || body.code !== 'OK') {
+    throw unauthorized(body?.message || '本机号取号失败，请改用短信验证码');
+  }
+  const mobile = body.getMobileResultDTO?.mobile?.trim() ?? '';
+  const phone = normalizePhone(mobile);
+  if (!/^1[3-9]\d{9}$/.test(phone)) {
+    throw unauthorized('取号结果无效，请改用短信验证码');
+  }
+  return phone;
 }
 
 function tokens(context: AppContext, userId: string, sessionId: string, refreshToken: string) {

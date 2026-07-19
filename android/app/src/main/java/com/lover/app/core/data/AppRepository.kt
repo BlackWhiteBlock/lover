@@ -40,6 +40,18 @@ class AppRepository @Inject constructor(
 
     suspend fun login(phone: String, code: String) {
         val auth = call { api.login(LoginRequest(phone.trim(), code.trim())) }
+        applyAuthSession(auth)
+    }
+
+    suspend fun fetchPnvsSdkInfo(): PnvsSdkInfoResponse =
+        call { api.pnvsSdkInfo("android") }
+
+    suspend fun loginWithPnvsToken(loginToken: String) {
+        val auth = call { api.pnvsLogin(PnvsLoginRequest(loginToken = loginToken)) }
+        applyAuthSession(auth)
+    }
+
+    private suspend fun applyAuthSession(auth: AuthResponse) {
         tokenStore.saveTokens(auth.accessToken, auth.refreshToken)
         try {
             applyMe(call { api.me() }, clearContent = true)

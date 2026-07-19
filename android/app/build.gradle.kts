@@ -157,6 +157,10 @@ dependencies {
     implementation("androidx.media3:media3-ui:1.10.1")
     implementation("sh.calvin.reorderable:reorderable:2.5.1")
 
+    // 阿里云号码认证：将控制台下载的 3 个 aar 放入 app/libs（见 libs/README.md）
+    implementation(fileTree(mapOf("dir" to "libs", "include" to listOf("*.aar"))))
+    implementation("androidx.appcompat:appcompat:1.7.0")
+
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.10.1")
 }

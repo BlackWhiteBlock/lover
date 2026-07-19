@@ -5,6 +5,7 @@
 import { HttpClient } from './HttpClient'
 import type {
   SendSmsRequest, SendSmsResponse, LoginRequest, AuthResponse,
+  PnvsSdkInfoResponse, PnvsLoginRequest,
   RefreshRequest, TokenResponse, OkResponse, MeResponse,
   PatchMeRequest, PatchMeResponse, OnboardingRequest, OnboardingResponse,
   UserLookupResponse, CreateBindRequest, BindRequestDto, AcceptBindResponse,
@@ -35,6 +36,14 @@ export class ApiService {
 
   async login(request: LoginRequest): Promise<AuthResponse> {
     return this.http.post<AuthResponse>('api/auth/sms/login', request)
+  }
+
+  async pnvsSdkInfo(platform: string): Promise<PnvsSdkInfoResponse> {
+    return this.http.get<PnvsSdkInfoResponse>(`api/auth/pnvs/sdk-info?platform=${platform}`)
+  }
+
+  async pnvsLogin(request: PnvsLoginRequest): Promise<AuthResponse> {
+    return this.http.post<AuthResponse>('api/auth/pnvs/login', request)
   }
 
   async refresh(request: RefreshRequest): Promise<TokenResponse> {

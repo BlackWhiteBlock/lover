@@ -732,6 +732,19 @@ export interface LoginRequest {
   nickname?: string | null
 }
 
+export interface PnvsSdkInfoResponse {
+  enabled: boolean
+  platform: string
+  secretInfo: string
+  privacyUrl: string
+  termsUrl: string
+}
+
+export interface PnvsLoginRequest {
+  loginToken: string
+  nickname?: string | null
+}
+
 export interface AuthResponse {
   user: JsonObject
   isNewUser: boolean

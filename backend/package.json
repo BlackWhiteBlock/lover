@@ -17,6 +17,7 @@
     "storage:diagnose-qiniu-read": "tsx scripts/diagnose-qiniu-read.ts"
   },
   "dependencies": {
+    "@alicloud/dypnsapi20170525": "^2.0.0",
     "@alicloud/dysmsapi20170525": "^4.6.0",
     "@alicloud/openapi-core": "^1.0.7",
     "@fastify/cors": "^11.3.0",

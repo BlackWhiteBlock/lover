@@ -22,6 +22,10 @@ const envSchema = z.object({
   ALIYUN_SMS_ACCESS_KEY_SECRET: z.string().default(''),
   ALIYUN_SMS_SIGN_NAME: z.string().default(''),
   ALIYUN_SMS_TEMPLATE_CODE: z.string().default(''),
+  // 号码认证（一键登录）：方案密钥下发给客户端；GetMobile 复用 ALIYUN_SMS_* AK
+  PNVS_ENABLED: booleanString.default(false),
+  PNVS_ANDROID_SDK_SECRET: z.string().default(''),
+  PNVS_HARMONY_SDK_SECRET: z.string().default(''),
   STORAGE_PROVIDER: z.enum(['local', 'qiniu']).default('local'),
   STORAGE_DIR: z.string().default(path.resolve(process.cwd(), 'data/uploads')),
   STORAGE_SIGNING_SECRET: z.string().min(16).default('dev-storage-secret-change-me'),
@@ -91,6 +95,15 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env) {
       if (!value.ALIYUN_SMS_SIGN_NAME) missing.push('ALIYUN_SMS_SIGN_NAME');
       if (!value.ALIYUN_SMS_TEMPLATE_CODE) missing.push('ALIYUN_SMS_TEMPLATE_CODE');
     }
+    if (value.PNVS_ENABLED) {
+      if (!value.ALIYUN_SMS_ACCESS_KEY_ID) missing.push('ALIYUN_SMS_ACCESS_KEY_ID (required for PNVS GetMobile)');
+      if (!value.ALIYUN_SMS_ACCESS_KEY_SECRET) {
+        missing.push('ALIYUN_SMS_ACCESS_KEY_SECRET (required for PNVS GetMobile)');
+      }
+      if (!value.PNVS_ANDROID_SDK_SECRET && !value.PNVS_HARMONY_SDK_SECRET) {
+        missing.push('PNVS_ANDROID_SDK_SECRET or PNVS_HARMONY_SDK_SECRET');
+      }
+    }
     if (missing.length) throw new Error(`Production configuration invalid: ${missing.join(', ')}`);
   }
   return {
@@ -116,6 +129,11 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env) {
         signName: value.ALIYUN_SMS_SIGN_NAME,
         templateCode: value.ALIYUN_SMS_TEMPLATE_CODE,
       },
+    },
+    pnvs: {
+      enabled: value.PNVS_ENABLED,
+      androidSdkSecret: value.PNVS_ANDROID_SDK_SECRET,
+      harmonySdkSecret: value.PNVS_HARMONY_SDK_SECRET,
     },
     storage: {
       provider: value.STORAGE_PROVIDER,

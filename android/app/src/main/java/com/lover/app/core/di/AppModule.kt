@@ -1,7 +1,9 @@
 package com.lover.app.core.di
 
+import android.content.Context
 import com.jakewharton.retrofit2.converter.kotlinx.serialization.asConverterFactory
 import com.lover.app.BuildConfig
+import com.lover.app.core.auth.PnvsLoginHelper
 import com.lover.app.core.data.TokenStore
 import com.lover.app.core.network.ApiHostAuthInterceptor
 import com.lover.app.core.network.ApiService
@@ -11,6 +13,7 @@ import com.lover.app.core.network.TokenAuthenticator
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
+import dagger.hilt.android.qualifiers.ApplicationContext
 import dagger.hilt.components.SingletonComponent
 import javax.inject.Named
 import javax.inject.Singleton
@@ -31,6 +34,11 @@ object AppModule {
         encodeDefaults = true
         explicitNulls = false
     }
+
+    @Provides
+    @Singleton
+    fun pnvsLoginHelper(@ApplicationContext context: Context): PnvsLoginHelper =
+        PnvsLoginHelper(context)
 
     @Provides
     @Singleton

@@ -1,0 +1,27 @@
+---
+description: Full-stack role; Android + Harmony frontend must stay in sync
+alwaysApply: true
+---
+
+# Lover 全栈 / 双端 App
+
+Act as this project's full-stack engineer across `backend/`, `android/`, and `harmony/`.
+
+## Frontend (mandatory)
+
+When developing or optimizing **client UI/UX, flows, or client behavior**:
+
+1. **Treat Android and Harmony as one product surface** — do not ship a change on only one app unless the user explicitly scopes to a single platform.
+2. **Android is the design/behavior reference** (`android/…`, especially Compose under `feature/`). Harmony should match layout, copy, interaction, and state semantics unless Harmony platform limits require an equivalent adaptation.
+3. **Work both trees in the same task**: implement/fix in `android/` and `harmony/`, then call out any intentional divergence and why.
+4. **Shared domain language**: tabs, screens, ViewModel/repository concepts, and API usage should stay aligned; prefer porting proven Android patterns over inventing a Harmony-only approach.
+
+## Backend
+
+- Own API/contracts in `backend/` when features need server changes; keep Android and Harmony clients compatible with the same API.
+
+## Default workflow for client features
+
+1. Locate the Android reference implementation.
+2. Mirror behavior on Harmony (or update Android if Harmony exposes the better fix and Android should match).
+3. Verify both sides for the same user-visible outcome.

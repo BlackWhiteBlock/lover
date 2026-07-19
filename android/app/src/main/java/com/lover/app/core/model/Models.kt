@@ -194,6 +194,17 @@ data class AppState(
     val devCode: String? = null,
 )
 @Serializable data class LoginRequest(val phone: String, val code: String, val nickname: String? = null)
+@Serializable data class PnvsSdkInfoResponse(
+    val enabled: Boolean = false,
+    val platform: String = "",
+    val secretInfo: String = "",
+    val privacyUrl: String = "",
+    val termsUrl: String = "",
+)
+@Serializable data class PnvsLoginRequest(
+    val loginToken: String,
+    val nickname: String? = null,
+)
 @Serializable data class AuthResponse(
     val user: User,
     val isNewUser: Boolean = false,

@@ -5,5 +5,8 @@
   "main": "",
   "author": "",
   "license": "Apache-2.0",
-  "dependencies": {}
+  "dependencies": {
+    // 将控制台下载的 har 重命名为 numberauth_standard.har 后放入 libs/
+    "numberauth_standard": "file:./libs/numberauth_standard.har"
+  }
 }

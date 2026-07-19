@@ -373,6 +373,30 @@ export const openApiDocument = {
         responses: { '200': jsonResp('TokenResponse', '登录成功'), '201': jsonResp('TokenResponse', '注册成功') },
       },
     },
+    '/api/auth/pnvs/sdk-info': {
+      get: {
+        tags: ['Auth'],
+        summary: '下发号码认证方案密钥与协议链接（登录前）',
+        parameters: [{
+          name: 'platform', in: 'query', required: true,
+          schema: { type: 'string', enum: ['android', 'harmony'] },
+        }],
+        responses: { '200': ok, '429': rateLimited },
+      },
+    },
+    '/api/auth/pnvs/login': {
+      post: {
+        tags: ['Auth'],
+        summary: '本机号一键登录/注册（服务端 GetMobile）',
+        responses: { '200': jsonResp('TokenResponse', '登录成功'), '201': jsonResp('TokenResponse', '注册成功') },
+      },
+    },
+    '/legal/privacy': {
+      get: { tags: ['Legal'], summary: '隐私政策占位页', responses: { '200': { description: 'HTML' } } },
+    },
+    '/legal/terms': {
+      get: { tags: ['Legal'], summary: '用户协议占位页', responses: { '200': { description: 'HTML' } } },
+    },
     '/api/auth/refresh': {
       post: {
         tags: ['Auth'], summary: '轮换刷新令牌',

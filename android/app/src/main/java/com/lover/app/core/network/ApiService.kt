@@ -20,6 +20,12 @@ interface ApiService {
     @POST("api/auth/sms/login")
     suspend fun login(@Body request: LoginRequest): AuthResponse
 
+    @GET("api/auth/pnvs/sdk-info")
+    suspend fun pnvsSdkInfo(@Query("platform") platform: String): PnvsSdkInfoResponse
+
+    @POST("api/auth/pnvs/login")
+    suspend fun pnvsLogin(@Body request: PnvsLoginRequest): AuthResponse
+
     @POST("api/auth/refresh")
     suspend fun refresh(@Body request: RefreshRequest): TokenResponse
 
