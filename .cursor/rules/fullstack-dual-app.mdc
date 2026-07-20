@@ -1,27 +1,28 @@
 ---
-description: Full-stack role; Android + Harmony frontend must stay in sync
+description: Full-stack role; Android + Harmony + iOS frontend must stay in sync
 alwaysApply: true
 ---
 
-# Lover 全栈 / 双端 App
+# Lover 全栈 / 三端 App
 
-Act as this project's full-stack engineer across `backend/`, `android/`, and `harmony/`.
+Act as this project's full-stack engineer across `backend/`, `android/`, `harmony/`, and `ios/`.
 
 ## Frontend (mandatory)
 
 When developing or optimizing **client UI/UX, flows, or client behavior**:
 
-1. **Treat Android and Harmony as one product surface** — do not ship a change on only one app unless the user explicitly scopes to a single platform.
-2. **Android is the design/behavior reference** (`android/…`, especially Compose under `feature/`). Harmony should match layout, copy, interaction, and state semantics unless Harmony platform limits require an equivalent adaptation.
-3. **Work both trees in the same task**: implement/fix in `android/` and `harmony/`, then call out any intentional divergence and why.
-4. **Shared domain language**: tabs, screens, ViewModel/repository concepts, and API usage should stay aligned; prefer porting proven Android patterns over inventing a Harmony-only approach.
+1. **Android is the design/behavior reference** (`android/…`, especially Compose under `feature/`). Harmony and iOS should match layout, copy, interaction, and state semantics unless platform limits require an equivalent adaptation.
+2. **Treat all three clients as one product surface** — do not ship a change on only one app unless the user explicitly scopes to a single platform.
+3. **Shared domain language**: tabs, screens, ViewModel/repository concepts, and API usage should stay aligned across all three platforms; prefer porting proven Android patterns over inventing platform-specific approaches.
+4. **iOS specifics**: see `.cursor/rules/ios-align-android.mdc` for iOS-specific constraints (SwiftUI, root state machine, token refresh).
 
 ## Backend
 
-- Own API/contracts in `backend/` when features need server changes; keep Android and Harmony clients compatible with the same API.
+- Own API/contracts in `backend/` when features need server changes; keep Android, Harmony, and iOS clients compatible with the same API.
 
 ## Default workflow for client features
 
 1. Locate the Android reference implementation.
-2. Mirror behavior on Harmony (or update Android if Harmony exposes the better fix and Android should match).
-3. Verify both sides for the same user-visible outcome.
+2. Mirror behavior on the target platform(s) (Harmony and/or iOS).
+3. Verify for the same user-visible outcome.
+4. Record any intentional divergence and why.

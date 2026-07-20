@@ -1,0 +1,55 @@
+---
+description: iOS development must align with Android as the single source of truth for UI/UX
+globs: ios/**
+alwaysApply: false
+---
+
+# iOS 对齐安卓 — 强制规则
+
+## 核心原则
+
+1. **安卓是唯一 UI/交互标准答案**。iOS 不是「随便做一个好看的」，而是镜像安卓的用户可见行为。
+2. **实现任何 iOS 功能前，必须先定位安卓参考文件**（`android/app/src/main/java/com/lover/app/` 下），再镜像其行为、文案、信息架构。
+3. **与安卓/鸿蒙共用同一 backend API**（`backend/`）。不新建 iOS 专属接口，除非后端真缺能力且已说明。
+4. **禁止 iOS 自创主流程**。导航结构、Tab 枚举、状态机必须对齐安卓 `MainActivity.kt` + `MainTab`。平台限制导致的差异必须写 **divergence 说明**。
+5. **本阶段只改 `ios/`**。不修改 `backend/`、`android/`、`harmony/`，除非明确要求改 API 合同。
+6. **不使用 Multitask / 并行多 Agent**。一次任务只做一个垂直切片，做完验收再开下一块。
+
+## 对齐检查清单（每次实现前）
+
+- [ ] 已读安卓对应 feature/ 或 core/ 文件
+- [ ] 文案与安卓一致（或有平台必要差异并已记录）
+- [ ] 状态机/导航路径与安卓一致
+- [ ] 错误提示、加载态、空态不劣于安卓
+- [ ] 未引入下一切片的半成品入口
+
+## 五 Tab 对齐（必须一致）
+
+安卓 `MainTab`：`HOME, TIMELINE, ANNIVERSARY, LETTERS, PROFILE`
+展示名：空间 / 时光 / 纪念 / 信封 / 我|我们（随绑定状态变化）
+
+## 技术栈约束
+
+| 层 | 选择 |
+|----|------|
+| UI | SwiftUI |
+| 最低版本 | iOS 17.0 |
+| 异步 | async/await |
+| 网络 | URLSession 薄封装（对齐 token 刷新语义） |
+| 本地会话 | Keychain(token) + UserDefaults(状态) |
+| 导航 | 根状态机(Splash/Auth/Onboarding/Main) + TabView |
+| 状态 | @Observable (Observation framework) |
+
+## Token 刷新规则
+
+- 401 -> 单飞 refresh（同一时刻只刷新一次）-> 重试原请求
+- refresh 失败 -> 清会话 -> UI 回登录页
+- 更新类接口确认真实发出 PATCH/POST（避免鸿蒙曾出现的 PATCH 退化问题）
+
+## Divergence 记录格式
+
+每个切片结束时，如有平台差异，在代码注释或总结中写明：
+
+```
+divergence: [描述差异] — 原因: [平台限制说明] — 替代方案: [iOS 等价实现]
+```
